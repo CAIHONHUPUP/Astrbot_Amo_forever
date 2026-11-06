@@ -58,8 +58,12 @@
     .bar-row .num { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
     .track { height: 6px; background: rgba(44, 39, 56, 0.08); border-radius: 99px; overflow: hidden; }
     .fill { display: block; height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, var(--pink), var(--pink2)); transition: width .5s ease; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-    .grid .card { padding: 14px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 8px; }
+    .grid .card { padding: 9px 12px; }
+    .grid .label { font-size: 11px; }
+    .grid .value { font-size: 15px; margin-top: 2px; }
+    .grid .sub { font-size: 11px; margin-top: 2px; }
+    .grid .status-track { margin-top: 6px; height: 6px; }
     .value { font-size: 17px; font-weight: 600; margin-top: 5px; line-height: 1.35; }
     .sub { color: var(--muted); font-size: 11.5px; line-height: 1.5; margin-top: 4px; }
     .threshold { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
@@ -175,6 +179,10 @@
       .setting-row { grid-template-columns: 1fr; }
       .setting-row .control { justify-content: flex-start; }
     }
+    #thresholdCard { padding: 12px; }
+    #thresholdCard .threshold { margin-top: 6px; }
+    #thresholdCard .threshold .track { height: 7px; }
+    #thresholdCard .threshold .num { font-size: 16px; }
     .card.clickable { cursor: pointer; transition: border-color .2s ease, transform .2s ease; }
     .card.clickable:hover { border-color: rgba(232, 72, 154, 0.35); }
     .status-track { margin-top: 9px; height: 8px; }
@@ -259,16 +267,18 @@
       <div class="card">
         <div class="label">天气</div>
         <div class="value" id="weather">—</div>
+        <div class="track status-track"><span class="fill" id="weatherBar"></span></div>
         <div class="sub" id="weatherSub"></div>
       </div>
       <div class="card">
         <div class="label">正在</div>
         <div class="value" id="activity">—</div>
+        <div class="track status-track"><span class="fill" id="activityBar"></span></div>
         <div class="sub" id="activitySub"></div>
       </div>
     </section>
 
-    <section class="card">
+    <section class="card" id="thresholdCard">
       <div class="label">心流阈值</div>
       <div class="threshold">
         <div class="track"><span class="fill" id="thresholdBar"></span></div>
@@ -724,17 +734,33 @@
 
       document.getElementById("weather").textContent = data.weather_text || "—";
       const weather = data.weather || {};
+      document.getElementById("weatherBar").style.width = Math.max(0, Math.min(100, Number(weather.humidity || 0))) + "%";
       document.getElementById("weatherSub").textContent = [weather.city, weather.humidity ? "湿度 " + weather.humidity + "%" : "", weather.wind || ""]
         .filter(Boolean).join(" · ");
 
       const activity = data.activity || {};
-      const city = (data.worldview && data.worldview.city) || weather.city || "";
+      const city = weather.city || (data.worldview && data.worldview.city) || "";
       const place = activity.place || "";
       const act = activity.activity || "—";
       document.getElementById("activity").textContent = [city, place, act].filter(Boolean).join(" · ");
       const windowText = activity.start && activity.end ? activity.start + "-" + activity.end : "";
       document.getElementById("activitySub").textContent =
         [windowText ? "日程 " + windowText : "", place ? "地点 " + place : ""].filter(Boolean).join(" · ");
+      const toMin = (value) => {
+        const parts = String(value || "").split(":");
+        return parts.length === 2 ? Number(parts[0]) * 60 + Number(parts[1]) : NaN;
+      };
+      let activityPct = 0;
+      const startMin = toMin(activity.start);
+      let endMin = toMin(activity.end);
+      if (Number.isFinite(startMin) && Number.isFinite(endMin)) {
+        if (endMin <= startMin) endMin += 1440;
+        const now = new Date();
+        let nowMin = now.getHours() * 60 + now.getMinutes();
+        if (nowMin < startMin && endMin > 1440) nowMin += 1440;
+        activityPct = Math.max(0, Math.min(100, (nowMin - startMin) / Math.max(1, endMin - startMin) * 100));
+      }
+      document.getElementById("activityBar").style.width = activityPct + "%";
 
       const threshold = data.threshold || {};
       const thresholdValue = Number(threshold.value || 0);
