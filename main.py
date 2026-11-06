@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.2.0
+我想永远陪着你 / 我想永远陪伴你 3.2.2
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.2.0"
+PLUGIN_VERSION = "3.2.2"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -1382,22 +1382,22 @@ class HumanState:
         ovulation_end = min(cycle_days - 1, ovulation_start + ovulation_window - 1)
         if day <= bleed_days:
             phase = "月经期"
-            tone = "身体沉沉的，容易累，也更容易委屈"
+            tone = self.p.cfg_str("period_menstrual_tone", "身体沉沉的，容易累，也更容易委屈")
             pain = min(9, 5 + max(0, bleed_days + 1 - day))
             reply_mult = 0.8
         elif day < ovulation_start:
             phase = "卵泡期"
-            tone = "身体轻快，心情慢慢变好"
+            tone = self.p.cfg_str("period_follicular_tone", "身体轻快，心情慢慢变好")
             pain = 1
             reply_mult = 1.05
         elif day <= ovulation_end:
             phase = "排卵期"
-            tone = "精力最好，也更想和人说话"
+            tone = self.p.cfg_str("period_ovulatory_tone", "精力最好，也更想和人说话")
             pain = 0
             reply_mult = 1.12
         else:
             phase = "黄体期"
-            tone = "容易烦躁、敏感，想要被哄"
+            tone = self.p.cfg_str("period_luteal_tone", "容易烦躁、敏感，想要被哄")
             pain = 3
             reply_mult = 0.88
         pain = max(0, min(10, pain + (md5_int(str(start) + str(day)) % 3) - 1))
@@ -1715,7 +1715,8 @@ class HumanState:
             "名字：%s" % world.get("name", ""),
             "年龄：%s" % world.get("age", ""),
             "城市：%s" % world.get("city", ""),
-            "职业：%s（%s）" % (world.get("occupation", ""), world.get("workplace", "")),
+            "职业：%s" % world.get("occupation", ""),
+            "任职：%s" % world.get("workplace", ""),
             "性格：%s" % world.get("personality", ""),
             "爱好：%s" % hobbies,
             "日常：%s" % world.get("daily_life", ""),
