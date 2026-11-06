@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.10.0
+## 3.0.0
 
 - 修复主动私聊：相恋关系每天至少一次，免打扰/睡眠日程下也保留这一次；
 - 修复主动私聊 pending 长期阻塞后续主动消息的问题；
@@ -11,7 +11,8 @@
 - 关系页签移到状态右侧；
 - 插件 INFO 日志静默，只保留 WARNING/ERROR；
 - 作者改为墨辞烟，仓库地址改为 https://github.com/GM888888456/amo_forever；
-- 补充 CHANGELOG，避免 AstrBot 的 “has no changelog file” 警告。
+- 补充 CHANGELOG，避免 AstrBot 的 “has no changelog file” 警告；
+- 版本号按“尾号 8 进位”规则从 2.8.8 分支修正为 3.0.0。
 
 ## 2.9.8
 
