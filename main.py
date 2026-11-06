@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 2.9.8
+我想永远陪着你 / 我想永远陪伴你 2.10.0
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "2.9.8"
+PLUGIN_VERSION = "2.10.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -3034,43 +3034,39 @@ class HumanCorePlugin(Star):
                 logger.warning("[amo] kb_manager 不支持 create_kb，无法创建知识库")
                 return None
             name = self._dialect_kb_name()
-            existing = await manager.get_kb_by_name(name)
-            if existing is not None:
-                logger.debug("[amo] 方言知识库已存在: %s" % name)
-                return existing
-
-            providers = []
-            getter = getattr(self.context, "get_all_embedding_providers", None)
-            if callable(getter):
+            kb = await manager.get_kb_by_name(name)
+            if kb is None:
+                providers = []
+                getter = getattr(self.context, "get_all_embedding_providers", None)
+                if callable(getter):
+                    try:
+                        providers = list(getter() or [])
+                    except Exception:
+                        providers = []
+                if not providers:
+                    pm = getattr(self.context, "provider_manager", None)
+                    providers = list(getattr(pm, "embedding_provider_insts", []) or [])
+                if not providers:
+                    logger.warning(
+                        "[amo] 没有可用的 Embedding 供应商，知识库未创建；"
+                        "请先在 AstrBot 模型提供商里配置 embedding"
+                    )
+                    return None
+                provider_id = self._embedding_provider_id(providers[0])
+                if not provider_id:
+                    logger.warning("[amo] Embedding 供应商没有有效 id，知识库未创建")
+                    return None
                 try:
-                    providers = list(getter() or [])
-                except Exception:
-                    providers = []
-            if not providers:
-                pm = getattr(self.context, "provider_manager", None)
-                providers = list(getattr(pm, "embedding_provider_insts", []) or [])
-            if not providers:
-                logger.warning(
-                    "[amo] 没有可用的 Embedding 供应商，知识库未创建；"
-                    "请先在 AstrBot 模型提供商里配置 embedding"
-                )
-                return None
-            provider_id = self._embedding_provider_id(providers[0])
-            if not provider_id:
-                logger.warning("[amo] Embedding 供应商没有有效 id，知识库未创建")
-                return None
-
-            try:
-                created = manager.create_kb(
-                    name,
-                    "陪伴角色方言与口语表达，用于聊天时的自然替换",
-                    emoji="🗣️",
-                    embedding_provider_id=provider_id,
-                )
-                kb = await created if inspect.isawaitable(created) else created
-            except Exception as exc:
-                logger.warning("[amo] 创建知识库 %s 失败: %s" % (name, exc), exc_info=True)
-                return None
+                    created = manager.create_kb(
+                        name,
+                        "陪伴角色方言与口语表达，用于聊天时的自然替换",
+                        emoji="🗣️",
+                        embedding_provider_id=provider_id,
+                    )
+                    kb = await created if inspect.isawaitable(created) else created
+                except Exception as exc:
+                    logger.warning("[amo] 创建知识库 %s 失败: %s" % (name, exc), exc_info=True)
+                    return None
 
             rows = []
             try:
@@ -3087,6 +3083,14 @@ class HumanCorePlugin(Star):
             ]
             if lines:
                 try:
+                    docs = await kb.list_documents(search="amo_dialect")
+                    for doc in docs or []:
+                        doc_id = getattr(doc, "doc_id", "") or getattr(doc, "id", "")
+                        if doc_id:
+                            await kb.delete_document(doc_id)
+                except Exception as exc:
+                    logger.warning("[amo] 清理旧方言文档失败: %s" % exc)
+                try:
                     await kb.upload_document(
                         "amo_dialect.txt",
                         "\n".join(lines).encode("utf-8"),
@@ -3095,7 +3099,7 @@ class HumanCorePlugin(Star):
                     )
                 except Exception as exc:
                     logger.warning("[amo] 方言知识库上传失败: %s" % exc, exc_info=True)
-            logger.debug("[amo] 知识库 %s 已创建，写入 %d 条方言" % (name, len(lines)))
+            logger.debug("[amo] 知识库 %s 已同步，写入 %d 条方言" % (name, len(lines)))
             return kb
         except Exception as exc:
             logger.warning("[amo] 方言知识库创建失败: %s" % exc, exc_info=True)
@@ -4859,7 +4863,7 @@ class HumanCorePlugin(Star):
             if not isinstance(pending, dict) or not pending.get("sent_at"):
                 continue
             age = now - to_float(pending.get("sent_at"), 0)
-            if age > 12 * 3600:
+            if age > 6 * 3600:
                 self.db.kv_set(self._pending_key(uid), {})
                 continue
             followup_after = max(5, self.cfg_int("proactive_followup_minutes", 30)) * 60
@@ -4914,8 +4918,7 @@ class HumanCorePlugin(Star):
         return "greet"
 
     async def _maybe_proactive(self):
-        if quiet_now(self.cfg_str("quiet_hours", "23:30-07:30")):
-            return
+        quiet = quiet_now(self.cfg_str("quiet_hours", "23:30-07:30"))
         try:
             profiles = self.db.proactive_profiles(limit=100)
         except Exception:
@@ -4931,27 +4934,39 @@ class HumanCorePlugin(Star):
         for profile in profiles:
             if not profile.get("private_umo"):
                 continue
-            if self.db.kv_get(self._pending_key(profile.get("uid")), None):
-                continue
             count = to_int(profile.get("proactive_count"))
             if profile.get("proactive_day") != today_str():
                 count = 0
             if count >= daily_max:
                 continue
+            relation = str(profile.get("relation") or "普通")
+            guaranteed = (
+                relation == "相恋"
+                and count == 0
+                and self.cfg_bool("proactive_daily_guarantee", True)
+                and datetime.now().hour >= 8
+            )
+            if quiet and not guaranteed:
+                continue
+            pending = self.db.kv_get(self._pending_key(profile.get("uid")), None)
+            if isinstance(pending, dict) and pending.get("sent_at"):
+                if now - to_float(pending.get("sent_at"), 0) < 6 * 3600:
+                    continue
+                self.db.kv_set(self._pending_key(profile.get("uid")), {})
             snap = self.state.snapshot()
             category = (snap.get("activity") or {}).get("category", "")
-            if category in ("sleep", "work", "study"):
+            if category in ("sleep", "work", "study") and not guaranteed:
                 continue
             forced = (
-                str(profile.get("relation") or "") == "相恋"
+                relation == "相恋"
                 and category in ("meal", "rest", "play", "commute")
                 and self._last_proactive_activity.get(str(profile.get("uid"))) != today_str() + ":" + str(datetime.now().hour)
             )
-            if not forced and now - to_float(profile.get("last_proactive", 0)) < interval:
+            if not guaranteed and not forced and now - to_float(profile.get("last_proactive", 0)) < interval:
                 continue
-            if not forced and random.random() > self.cfg_float("proactive_prob", 0.25):
+            if not guaranteed and not forced and random.random() > self.cfg_float("proactive_prob", 0.25):
                 continue
-            if self.cfg_bool("proactive_schedule_only", True) and category not in ("meal", "rest", "play", "commute"):
+            if not guaranteed and self.cfg_bool("proactive_schedule_only", True) and category not in ("meal", "rest", "play", "commute"):
                 continue
             kind = self._choose_proactive_kind(profile, snap, category)
             text = await self.llm.gen_proactive(
