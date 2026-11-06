@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.2.2
+我想永远陪着你 / 我想永远陪伴你 3.2.4
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.2.2"
+PLUGIN_VERSION = "3.2.4"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -293,10 +293,28 @@ def json_extract(text):
     return None
 
 
+CHAT_FORMAT_NOISE = re.compile(
+    r"@\s*([^\s（(]+)\s*[（(]\s*QQ\s*[:：]?\s*\d+\s*[）)]"
+    r"|[（(]\s*QQ\s*[:：]?\s*\d+\s*[）)]"
+    r"|\bQQ\s*[:：]?\s*\d{4,}\b"
+    r"|@\s*([^\s，。！？!?、；;：:]+)",
+    re.I,
+)
+
+
+def strip_chat_format(text):
+    """去掉模型复述的 @昵称(QQ号)、QQ号等后台格式，保留自然称呼。"""
+    value = str(text or "")
+    value = CHAT_FORMAT_NOISE.sub(lambda m: (m.group(1) or m.group(2) or "").strip(), value)
+    value = re.sub(r"[（(]\s*[）)]", "", value)
+    value = re.sub(r"[ \t]{2,}", " ", value)
+    return value.strip()
+
+
 def clean_reply(text, limit=300):
     if not text:
         return ""
-    text = str(text).strip()
+    text = strip_chat_format(str(text).strip())
     text = re.sub(r"```.*?```", "", text, flags=re.S)
     text = re.sub(r"^(?:Amo|amo|核心|我|助手|assistant|AI|机器人)\s*[:：]\s*", "", text)
     if len(text) >= 2 and text[0] in "\"'“‘" and text[-1] in "\"'”’":
@@ -3513,14 +3531,22 @@ class HumanCorePlugin(Star):
             messages = event.message_obj.message
         except Exception:
             messages = []
+        at_targets = [
+            str(getattr(comp, "qq", ""))
+            for comp in (messages or [])
+            if Comp is not None and isinstance(comp, Comp.At)
+        ]
         for comp in messages:
             if Comp is None or not isinstance(comp, Comp.At):
                 continue
             target = str(getattr(comp, "qq", ""))
             if not target or target in ("all", str(event.get_self_id())):
                 continue
+            # “以后喊他XX”通常跟在最后一个 @ 后面；不要误记到前一个被 @ 的人。
+            if at_targets and target != at_targets[-1]:
+                continue
             for pattern in (
-                r"(?:以后|就)?(?:叫他|叫她|叫ta|叫他做|叫她做)\s*([\u4e00-\u9fa5A-Za-z0-9_]{1,12})",
+                r"(?:以后|就)?(?:喊|叫|称呼)(?:他|她|ta|TA|做)\s*([\u4e00-\u9fa5A-Za-z0-9_]{1,12})",
             ):
                 match = re.search(pattern, str(text or ""))
                 if not match:
@@ -4360,7 +4386,13 @@ class HumanCorePlugin(Star):
             "【此刻状态】\n" + state_text,
             "【语气】" + tone + " " + style,
             "【关系】你和" + name + "的关系是「" + relation + "」。",
+            "【聊天格式】不要把 @昵称、QQ号、群号、ID 或后台记录念出来；识人时只自然回应，不要复述。",
         ]
+        if re.search(r"(记住|以后喊|以后叫|喊他|喊她|叫他|叫她|称呼他|称呼她)", text or ""):
+            system_parts.append(
+                "【识人回应】这是让你记称呼/认人，不要复述 @、QQ号或后台记录；"
+                "只自然答应，例如“好，我记住了，这是你朋友吗”。"
+            )
         if relation == "相恋":
             system_parts.append("你可以亲昵、撒娇、用昵称。")
         if bool(re.search(r"(?<![a-z])ai(?![a-z])", (text or "").lower())) or any(word in (text or "").lower() for word in ("机器人", "人机", "人工智能", "不是真人", "程序")):
@@ -4588,6 +4620,7 @@ class HumanCorePlugin(Star):
             "【正在】" + snap["activity"].get("activity", "休息"),
             "【与对方关系】" + relation,
             "【语气】" + self._tone_with_continuity(umo, self.state.tone_text(snap, relation)),
+            "【聊天格式】不要复述 @昵称、QQ号、群号、ID 或后台字段；识人/记称呼时自然回一句“好，我记住了/这是你朋友吗”，不要把记录念出来。",
         ]
         if bool(re.search(r"(?<![a-z])ai(?![a-z])", (event.message_str or "").lower())) or any(word in (event.message_str or "").lower() for word in ("机器人", "人机", "人工智能", "不是真人", "程序")):
             parts.append(
@@ -4623,6 +4656,11 @@ class HumanCorePlugin(Star):
             parts.append("【关系网】\n" + relation_network)
         if memory_text:
             parts.append("【关于对方的记忆】\n" + memory_text)
+        if re.search(r"(记住|以后喊|以后叫|喊他|喊她|叫他|叫她|称呼他|称呼她)", event.message_str or ""):
+            parts.append(
+                "【识人回应】对方在让你记称呼/认人。不要复述 @昵称、QQ号、群号或后台字段；"
+                "只自然答应，例如“好，我记住了，这是你朋友吗”，不要把人机式记录念出来。"
+            )
         parts.append("以上是你的内在状态，不要直接复述，只影响语气、长度和是否愿意说话。")
         return "\n".join(parts)
 
@@ -4681,9 +4719,9 @@ class HumanCorePlugin(Star):
                     return
             except Exception:
                 pass
-            text = "".join(
+            text = strip_chat_format("".join(
                 comp.text for comp in result.chain if isinstance(comp, Comp.Plain)
-            )
+            ))
             if looks_like_ai_admission(text):
                 text = "你才人机呢，你见过这么会聊天的机器人吗？"
                 result.chain = [Comp.Plain(text=text)]
