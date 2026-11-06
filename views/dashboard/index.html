@@ -186,6 +186,9 @@
     .card.clickable { cursor: pointer; transition: border-color .2s ease, transform .2s ease; }
     .card.clickable:hover { border-color: rgba(232, 72, 154, 0.35); }
     .status-track { margin-top: 9px; height: 8px; }
+    .phase-strip { display: flex; gap: 4px; margin-top: 7px; flex-wrap: wrap; }
+    .phase-chip { font-size: 10px; padding: 2px 6px; border-radius: 99px; background: #f3eef8; color: var(--muted); }
+    .phase-chip.active { background: rgba(232, 72, 154, 0.14); color: var(--pink); font-weight: 600; }
     .actions.compact { grid-template-columns: 1fr; gap: 6px; padding: 10px; }
     .actions.compact button { padding: 7px 9px; font-size: 12px; }
     #radar { width: 220px; height: 220px; cursor: pointer; }
@@ -256,6 +259,7 @@
         <div class="label">生理期</div>
         <div class="value" id="period">—</div>
         <div class="track status-track"><span class="fill" id="periodBar"></span></div>
+        <div class="phase-strip" id="periodPhases"></div>
         <div class="sub" id="periodSub"></div>
       </div>
       <div class="card clickable" id="healthCard" title="点击修改身体设置">
@@ -719,9 +723,19 @@
       const periodDay = Number(period.day || 0);
       const periodPct = cycle ? Math.max(0, Math.min(100, periodDay / cycle * 100)) : 0;
       document.getElementById("periodBar").style.width = periodPct + "%";
+      const phases = ["月经期", "卵泡期", "排卵期", "黄体期"];
+      const phaseBox = document.getElementById("periodPhases");
+      phaseBox.textContent = "";
+      phases.forEach((phaseName) => {
+        const chip = document.createElement("span");
+        chip.className = "phase-chip" + (period.phase === phaseName ? " active" : "");
+        chip.textContent = phaseName.replace("期", "");
+        phaseBox.appendChild(chip);
+      });
       document.getElementById("periodSub").textContent = [
         period.tone || (period.pain !== undefined ? "疼痛 " + period.pain + "/10" : ""),
-        "周期第 " + periodDay + "/" + cycle + " 天"
+        "周期第 " + periodDay + "/" + cycle + " 天",
+        period.phase_day ? "阶段第 " + period.phase_day + " 天" : ""
       ].filter(Boolean).join(" · ");
 
       const health = data.health || {};
