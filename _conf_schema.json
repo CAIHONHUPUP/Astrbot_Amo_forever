@@ -105,6 +105,28 @@
     "description": "排卵期窗口（天）",
     "default": 3
   },
+  "period_menstrual_tone": {
+    "type": "string",
+    "description": "月经期身体感受",
+    "hint": "提示词里描述她经期的身体和情绪",
+    "default": "身体沉沉的，容易累，也更容易委屈"
+  },
+  "period_follicular_tone": {
+    "type": "string",
+    "description": "卵泡期身体感受",
+    "default": "身体轻快，心情慢慢变好"
+  },
+  "period_ovulatory_tone": {
+    "type": "string",
+    "description": "排卵期身体感受",
+    "default": "精力最好，也更想和人说话"
+  },
+  "period_luteal_tone": {
+    "type": "string",
+    "description": "黄体期身体感受",
+    "hint": "黄体期通常在周期第 16-28 天，容易烦躁、敏感",
+    "default": "容易烦躁、敏感，想要被哄"
+  },
   "enable_sick_random": {
     "type": "bool",
     "description": "随机生病",
