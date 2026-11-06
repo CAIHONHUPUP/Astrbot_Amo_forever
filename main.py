@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.2.6
+我想永远陪着你 / 我想永远陪伴你 3.2.8
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.2.6"
+PLUGIN_VERSION = "3.2.8"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -4187,7 +4187,7 @@ class HumanCorePlugin(Star):
         self._disturb_until[key] = 0
         self._last_affect[key] = (now_ts(), "你主动发起聊天，语气自然亲昵")
 
-    def _recent_bot_initiated(self, umo, seconds=3 * 3600):
+    def _recent_bot_initiated(self, umo, seconds=3600):
         return now_ts() - to_float(getattr(self, "_bot_initiated", {}).get(str(umo), 0), 0) < seconds
 
     def _should_disturb(self, snap, umo, uid, text="", group=False):
