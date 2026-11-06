@@ -1,0 +1,1363 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#f8f6fc" />
+  <title>我想永远陪伴你</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg1: #f8f6fc;
+      --bg2: #eef3ff;
+      --card: #ffffff;
+      --line: #e7e2f0;
+      --text: #2c2738;
+      --muted: #857d94;
+      --pink: #e8489a;
+      --pink2: #f43f5e;
+      --ok: #0284c7;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; width: 100%; max-width: 100%; overflow-x: hidden; }
+    body {
+      width: 100%;
+      max-width: 100%;
+      overscroll-behavior-x: none;
+      background:
+        radial-gradient(1100px 500px at 12% -10%, rgba(232, 72, 154, 0.10), transparent 60%),
+        radial-gradient(900px 500px at 110% 0%, rgba(99, 102, 241, 0.08), transparent 60%),
+        linear-gradient(160deg, var(--bg1), var(--bg2));
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      padding: max(16px, env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+    }
+    .wrap { width: 100%; max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 4px 2px; }
+    .brand { display: flex; align-items: center; gap: 9px; font-size: 20px; font-weight: 650; letter-spacing: .5px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--pink); box-shadow: 0 0 10px rgba(232, 72, 154, .45); }
+    .clock { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      box-shadow: 0 10px 28px rgba(74, 58, 104, 0.08);
+    }
+    .label { color: var(--muted); font-size: 12px; letter-spacing: .4px; }
+    .hero-top { display: flex; justify-content: space-between; align-items: flex-end; }
+    .dominant { font-size: 25px; font-weight: 650; margin-top: 4px; }
+    .hero-score { color: var(--pink); font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .hero-score small { font-size: 12px; color: var(--muted); font-weight: 500; margin-left: 2px; }
+    canvas { display: block; margin: 2px auto 0; max-width: 100%; height: auto; }
+    .bars { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; margin-top: 6px; }
+    .bar-row { display: grid; grid-template-columns: 34px 1fr 30px; align-items: center; gap: 7px; font-size: 12px; }
+    .bar-row span:first-child { color: var(--muted); }
+    .bar-row .num { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+    .track { height: 6px; background: rgba(44, 39, 56, 0.08); border-radius: 99px; overflow: hidden; }
+    .fill { display: block; height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, var(--pink), var(--pink2)); transition: width .5s ease; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .grid .card { padding: 14px; }
+    .value { font-size: 17px; font-weight: 600; margin-top: 5px; line-height: 1.35; }
+    .sub { color: var(--muted); font-size: 11.5px; line-height: 1.5; margin-top: 4px; }
+    .threshold { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+    .threshold .track { flex: 1; height: 9px; }
+    .threshold .num { font-size: 18px; font-weight: 700; color: var(--pink); font-variant-numeric: tabular-nums; }
+    .schedule { list-style: none; padding: 0; margin: 10px 0 0; display: flex; flex-direction: column; gap: 7px; }
+    .schedule li { display: flex; gap: 10px; font-size: 12.5px; padding: 7px 9px; border-radius: 10px; background: rgba(44, 39, 56, 0.035); }
+    .schedule li.current { background: rgba(244, 114, 182, 0.14); border: 1px solid rgba(244, 114, 182, 0.32); }
+    .schedule .t { color: var(--muted); min-width: 82px; font-variant-numeric: tabular-nums; }
+    .schedule .a { flex: 1; }
+    .schedule .p { color: var(--muted); }
+    .schedule ul { list-style: none; padding: 0; margin: 6px 0 0 14px; display: flex; flex-direction: column; gap: 6px; }
+    .schedule li.expandable { cursor: pointer; }
+    .schedule li.lv2 { margin-left: 10px; }
+    .schedule li.lv3 { margin-left: 20px; font-size: 11.5px; opacity: .9; }
+    .schedule li.lv1 .a { font-weight: 600; }
+    .schedule li.lv1::before { content: "▸"; color: var(--muted); margin-right: 4px; }
+    .schedule li.lv1.open::before { content: "▾"; }
+    .schedule li.lv2::before { content: "·"; color: var(--muted); margin-right: 4px; }
+    .schedule .detail { color: var(--muted); font-size: 11px; margin-left: 4px; }
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    button {
+      appearance: none; border: 1px solid rgba(44, 39, 56, 0.12);
+      background: #fbfaff; color: var(--text);
+      border-radius: 12px; padding: 11px 12px; font-size: 13px; cursor: pointer;
+      transition: .2s ease;
+    }
+    button:hover { background: #f2eef9; }
+    button:disabled { opacity: .5; cursor: wait; }
+    footer { text-align: center; color: var(--muted); font-size: 11px; padding-top: 4px; }
+    .toast {
+      position: fixed; left: 50%; bottom: calc(22px + env(safe-area-inset-bottom));
+      transform: translate(-50%, 16px); opacity: 0; pointer-events: none;
+      background: #ffffff; border: 1px solid var(--line); box-shadow: 0 12px 32px rgba(74, 58, 104, 0.16);
+      color: var(--text); padding: 10px 16px; border-radius: 99px; font-size: 12.5px;
+      transition: .25s ease; z-index: 9; max-width: 86vw; text-align: center;
+    }
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+    .toast.error { border-color: rgba(244, 63, 94, .45); color: #b42318; }
+    .tabs { display: flex; gap: 8px; padding: 4px; background: rgba(44, 39, 56, 0.045); border-radius: 14px; max-width: 100%; min-width: 0; }
+    .tab { flex: 1; border: 0; background: transparent; color: var(--muted); padding: 9px 8px; border-radius: 10px; font-size: 13px; cursor: pointer; }
+    .tab.active { background: #ffffff; color: var(--pink); box-shadow: 0 2px 8px rgba(74, 58, 104, 0.08); }
+    .tab-panel { display: flex; flex-direction: column; gap: 14px; width: 100%; min-width: 0; }
+    .tab-panel[hidden] { display: none; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
+    .row.between { justify-content: space-between; }
+    .grow { flex: 1; min-width: 0; }
+    .input {
+      border: 1px solid var(--line); background: #ffffff; color: var(--text);
+      border-radius: 10px; padding: 9px 10px; font-size: 13px; width: 100%;
+      max-width: 100%; min-width: 0; font-family: inherit;
+    }
+    .input:focus { outline: 2px solid rgba(232, 72, 154, 0.18); border-color: var(--pink); }
+    textarea.input { resize: vertical; min-height: 66px; }
+    .form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin: 10px 0; min-width: 0; }
+    .form-grid label, .block { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); min-width: 0; }
+    .block { margin: 10px 0; }
+    .schedule-groups { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+    .schedule-group { border: 1px solid var(--line); border-radius: 12px; background: #fcfbff; padding: 0 12px; }
+    .schedule-group > summary { display: flex; gap: 8px; align-items: baseline; padding: 10px 0; cursor: pointer; font-size: 13px; font-weight: 600; list-style: none; }
+    .schedule-group > summary::-webkit-details-marker { display: none; }
+    .schedule-group > summary::before { content: "▸"; color: var(--muted); }
+    .schedule-group[open] > summary::before { content: "▾"; }
+    .schedule-group > summary .time { color: var(--muted); font-weight: 500; min-width: 92px; font-variant-numeric: tabular-nums; }
+    .schedule-group > summary .place { color: var(--muted); font-weight: 400; }
+    .schedule-hour { margin: 0 0 7px 12px; border-left: 2px solid var(--line); padding-left: 10px; }
+    .schedule-hour > summary { display: flex; gap: 8px; align-items: baseline; padding: 6px 0; font-size: 12px; cursor: pointer; list-style: none; }
+    .schedule-hour > summary::-webkit-details-marker { display: none; }
+    .schedule-hour > summary .time { color: var(--muted); min-width: 92px; font-variant-numeric: tabular-nums; }
+    .schedule-mini { list-style: none; margin: 0; padding: 0 0 6px; display: flex; flex-direction: column; gap: 3px; }
+    .schedule-mini li { display: flex; gap: 8px; font-size: 11px; color: var(--muted); }
+    .schedule-mini .t { min-width: 92px; font-variant-numeric: tabular-nums; }
+    .schedule-mini .a { color: var(--text); }
+    .schedule-group .current, .schedule-hour .current, .schedule-mini li.current { color: var(--pink); }
+    .memory-source { margin-top: 10px; }
+    .relation-form { margin-top: 10px; }
+    .relation-form .input { flex: 1 1 120px; }
+    .relation-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 12px; background: #fcfbff; }
+    .relation-row .rel-main { min-width: 0; overflow-wrap: anywhere; }
+    .relation-row .rel-badge { color: var(--pink); font-size: 12px; white-space: nowrap; }
+    .relation-row button { padding: 7px 9px; font-size: 12px; flex: none; }
+    .profile-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; max-height: 440px; overflow-y: auto; overflow-x: hidden; min-width: 0; }
+    .profile-item {
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
+      padding: 10px 11px; border: 1px solid var(--line); border-radius: 12px;
+      background: #fcfbff; cursor: pointer; min-width: 0;
+    }
+    .profile-item > div { min-width: 0; }
+    .profile-item .name, .profile-item .meta { overflow-wrap: anywhere; word-break: break-word; }
+    .profile-item:hover { border-color: rgba(232, 72, 154, 0.35); }
+    .profile-item .meta { color: var(--muted); font-size: 11.5px; margin-top: 3px; }
+    .badge { font-size: 11px; padding: 3px 9px; border-radius: 99px; background: #f4eef9; color: var(--pink); white-space: nowrap; }
+    .memory-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+    .settings-list { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+    .settings-group { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: #fcfbff; min-width: 0; }
+    .settings-group summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+    .setting-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(90px, 42%); gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid rgba(44, 39, 56, 0.06); min-width: 0; }
+    .setting-row > div { min-width: 0; }
+    .setting-row:first-of-type { border-top: 0; }
+    .setting-row .name { font-size: 12.5px; }
+    .setting-row .hint { color: var(--muted); font-size: 11px; margin-top: 2px; line-height: 1.4; }
+    .setting-row .control { min-width: 0; display: flex; justify-content: flex-end; }
+    .setting-row .control input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--pink); }
+    .setting-row .control .input { max-width: 100%; }
+    .ghost { background: transparent; border-color: var(--line); }
+    .group-link { color: var(--pink); text-decoration: none; font-size: 12.5px; line-height: 1.6; word-break: break-all; }
+    .group-link:hover { text-decoration: underline; }
+    .feedback-card { margin-top: 2px; }
+    .card, .schedule li, .threshold, .memory-list { min-width: 0; }
+    .profile-item .meta, .setting-row .hint, .sub { overflow-wrap: anywhere; }
+    @media (max-width: 520px) {
+      .form-grid { grid-template-columns: 1fr; }
+      .setting-row { grid-template-columns: 1fr; }
+      .setting-row .control { justify-content: flex-start; }
+    }
+    @media (max-width: 380px) {
+      .grid { grid-template-columns: 1fr; }
+      .bars { grid-template-columns: 1fr; }
+      .form-grid { grid-template-columns: 1fr; }
+      .setting-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand"><span class="dot"></span> 陪伴</div>
+      <div class="clock" id="clock">--</div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="status">状态</button>
+      <button class="tab" data-tab="relations">关系</button>
+      <button class="tab" data-tab="schedule">日程</button>
+      <button class="tab" data-tab="profiles">用户</button>
+      <button class="tab" data-tab="settings">设置</button>
+    </nav>
+
+    <div id="tab-status" class="tab-panel">
+    <section class="card">
+      <div class="hero-top">
+        <div>
+          <div class="label">当前心情</div>
+          <div class="dominant" id="dominant">读取中…</div>
+        </div>
+        <div class="hero-score"><span id="moodScore">--</span><small>/100</small></div>
+      </div>
+      <canvas id="radar" width="300" height="300"></canvas>
+      <div class="bars" id="moodBars"></div>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <div class="label">生理期</div>
+        <div class="value" id="period">—</div>
+        <div class="sub" id="periodSub"></div>
+      </div>
+      <div class="card">
+        <div class="label">身体</div>
+        <div class="value" id="health">—</div>
+        <div class="sub" id="healthSub"></div>
+      </div>
+      <div class="card">
+        <div class="label">天气</div>
+        <div class="value" id="weather">—</div>
+        <div class="sub" id="weatherSub"></div>
+      </div>
+      <div class="card">
+        <div class="label">正在</div>
+        <div class="value" id="activity">—</div>
+        <div class="sub" id="activitySub"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="label">心流阈值</div>
+      <div class="threshold">
+        <div class="track"><span class="fill" id="thresholdBar"></span></div>
+        <div class="num" id="thresholdValue">--</div>
+      </div>
+      <div class="sub" id="thresholdSub"></div>
+    </section>
+
+    <section class="card actions">
+      <button id="btnRefresh">刷新状态</button>
+      <button id="btnWeather">刷新天气</button>
+      <button id="btnSchedule">重生日程</button>
+      <button id="btnWorld">重生世界观</button>
+    </section>
+
+    </div>
+
+    <div id="tab-schedule" class="tab-panel" hidden>
+      <section class="card">
+        <div class="row between">
+          <div class="label">日程一览</div>
+          <button id="btnRefreshSchedule">刷新</button>
+        </div>
+        <div class="sub" id="scheduleDay"></div>
+        <div id="scheduleList" class="schedule-groups"><div class="sub">加载中…</div></div>
+      </section>
+    </div>
+
+    <div id="tab-profiles" class="tab-panel" hidden>
+      <section class="card">
+        <div class="row">
+          <input id="profileSearch" class="input grow" placeholder="搜索 UID / 名字 / 称呼" />
+          <button id="btnProfileSearch">搜索</button>
+          <button id="btnSyncProfiles">同步陪伴档案</button>
+          <button id="btnNewProfile">新建档案</button>
+        </div>
+        <div class="row memory-source">
+          <span class="label">记忆来源</span>
+          <select id="memoryPluginSelect" class="input grow"></select>
+          <button id="btnDetectMemory">检测已安装插件</button>
+        </div>
+        <div class="sub" id="memorySourceHint"></div>
+        <div id="profileList" class="profile-list"><div class="sub">加载中…</div></div>
+      </section>
+      <section class="card" id="profileEditor" hidden>
+        <div class="row between">
+          <div class="label">用户画像</div>
+          <button id="btnCloseEditor" class="ghost">关闭</button>
+        </div>
+        <div class="form-grid">
+          <label>UID<input id="pUid" class="input" placeholder="用户 ID" /></label>
+          <label>名字<input id="pName" class="input" placeholder="名字" /></label>
+          <label>称呼<input id="pAlias" class="input" placeholder="例如：宝贝、老大" /></label>
+          <label>生日<input id="pBirthday" class="input" placeholder="MM-DD" /></label>
+          <label>关系
+            <select id="pRelation" class="input">
+              <option value="仇恨">仇恨</option>
+              <option value="抵触">抵触</option>
+              <option value="普通">普通</option>
+              <option value="熟识">熟识</option>
+              <option value="相恋">相恋（恋人）</option>
+            </select>
+          </label>
+          <label>好感<input id="pAffection" class="input" type="number" min="0" max="100" /></label>
+        </div>
+        <label class="block">备注<textarea id="pNotes" class="input" rows="3" placeholder="关于这个人的备注"></textarea></label>
+        <div class="row">
+          <button id="btnSaveProfile">保存画像</button>
+          <button id="btnLoadMemories">查看记忆</button>
+        </div>
+        <div id="profileMemories" class="memory-list"></div>
+      </section>
+    </div>
+
+    <div id="tab-relations" class="tab-panel" hidden>
+      <section class="card">
+        <div class="label">关系网</div>
+        <div class="sub">查看和编辑用户之间的关系；仅 AstrBot 管理员可修改。</div>
+        <div class="row relation-form">
+          <select id="relA" class="input grow"></select>
+          <select id="relB" class="input grow"></select>
+          <select id="relType" class="input">
+            <option value="朋友">朋友</option>
+            <option value="家人">家人</option>
+            <option value="恋人">恋人</option>
+            <option value="同事">同事</option>
+            <option value="同学">同学</option>
+            <option value="熟人">熟人</option>
+            <option value="陌生人">陌生人</option>
+            <option value="仇人">仇人</option>
+          </select>
+        </div>
+        <div class="row">
+          <input id="relNote" class="input grow" placeholder="备注（可选）" />
+          <button id="btnSaveRelation">添加 / 更新</button>
+        </div>
+        <div id="relationList" class="profile-list"><div class="sub">加载中…</div></div>
+      </section>
+    </div>
+
+    <div id="tab-settings" class="tab-panel" hidden>
+      <section class="card">
+        <div class="row">
+          <input id="settingsSearch" class="input grow" placeholder="搜索配置项" />
+          <button id="btnReloadSettings">刷新</button>
+          <button id="btnSaveSettings">保存全部</button>
+        </div>
+        <div class="sub">保存后写入插件配置，并重建心流/分段引擎，立即生效。</div>
+        <div id="settingsList" class="settings-list"><div class="sub">加载中…</div></div>
+      </section>
+      <section class="card">
+        <div class="row between">
+          <div>
+            <div class="label">方言知识库</div>
+            <div class="sub">创建或重建 AstrBot 知识库“陪伴方言库”，需要先配置 Embedding 供应商。</div>
+          </div>
+          <button id="btnKb">重建方言库</button>
+        </div>
+      </section>
+        <div class="card feedback-card">
+          <div class="label">加入交流群</div>
+          <div class="sub">Bug、反馈、建议都欢迎进群说。</div>
+          <a class="group-link qq-group-link" href="http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&amp;k=AQEkXQn02RRkdb_xlr2c9DA8Ik63KhsT&amp;authKey=xhuF9VxkYe5a73qvZQqCbLT1yy82LNcu7FPcvX2XK2LI0UlD0EwieiKRCmQGGzcJ&amp;noverify=0&amp;group_code=1055679275" target="_blank" rel="noopener noreferrer">点击链接加入群聊【恋爱聊天交流群】</a>
+        </div>
+
+    </div>
+
+    <footer>数据来自插件后端 · <span id="counts"></span><br>反馈 / 建议：<a class="group-link qq-group-link" href="http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&amp;k=AQEkXQn02RRkdb_xlr2c9DA8Ik63KhsT&amp;authKey=xhuF9VxkYe5a73qvZQqCbLT1yy82LNcu7FPcvX2XK2LI0UlD0EwieiKRCmQGGzcJ&amp;noverify=0&amp;group_code=1055679275" target="_blank" rel="noopener noreferrer">点击加入群聊【恋爱聊天交流群】</a></footer>
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const PLUGIN_NAME = "amo_forever";
+    const MOOD_KEYS = ["开心", "平静", "郁闷", "生气", "暴躁", "委屈", "疲惫", "焦虑", "兴奋", "依恋"];
+    const MOOD_COLORS = {
+      "开心": "#d97706", "平静": "#0284c7", "郁闷": "#7c3aed", "生气": "#dc2626",
+      "暴躁": "#b91c1c", "委屈": "#db2777", "疲惫": "#64748b", "焦虑": "#b45309", "兴奋": "#059669", "依恋": "#e8489a"
+    };
+    let lastData = null;
+    let toastTimer = null;
+
+    function officialBridge() {
+      if (!window.parent || window.parent === window) return null;
+      const candidates = [];
+      try { candidates.push(window.AstrBotPluginView, window.AstrBotPluginPage); } catch (error) {}
+      try { candidates.push(window.parent.AstrBotPluginView, window.parent.AstrBotPluginPage); } catch (error) {}
+      try { candidates.push(window.top.AstrBotPluginView, window.top.AstrBotPluginPage); } catch (error) {}
+      return candidates.find((item) => item && typeof item.apiGet === "function") || null;
+    }
+
+    function createInlineBridge() {
+      if (!window.parent || window.parent === window) return null;
+      const pending = new Map();
+      let counter = 0;
+      let readyResolver = null;
+      const readyPromise = new Promise((resolve) => { readyResolver = resolve; });
+      window.addEventListener("message", (event) => {
+        if (event.source !== window.parent) return;
+        const message = event.data;
+        if (!message || message.channel !== "astrbot-plugin-page") return;
+        if (message.kind === "context") {
+          if (readyResolver) { readyResolver(message.context || {}); readyResolver = null; }
+          return;
+        }
+        if (message.kind !== "response") return;
+        const item = pending.get(message.requestId);
+        if (!item) return;
+        pending.delete(message.requestId);
+        if (message.ok) item.resolve(message.data);
+        else item.reject(new Error(message.error || "插件桥接请求失败"));
+      });
+      function request(action, payload) {
+        return new Promise((resolve, reject) => {
+          const requestId = "plugin_req_" + (++counter);
+          const endpoint = (payload && payload.endpoint) || "";
+          const slowRequest = /schedule(?:\/|_)regen|worldview(?:\/|_)regen|config_save|profiles_sync/.test(endpoint);
+          const timer = setTimeout(() => {
+            if (pending.delete(requestId)) reject(new Error("插件桥接超时"));
+          }, slowRequest ? 120000 : 20000);
+          pending.set(requestId, {
+            resolve: (value) => { clearTimeout(timer); resolve(value); },
+            reject: (error) => { clearTimeout(timer); reject(error); },
+          });
+          try {
+            window.parent.postMessage({
+              channel: "astrbot-plugin-page",
+              kind: "request",
+              requestId,
+              action,
+              ...(payload || {}),
+            }, "*");
+          } catch (error) {
+            clearTimeout(timer);
+            pending.delete(requestId);
+            reject(error);
+          }
+        });
+      }
+      try { window.parent.postMessage({ channel: "astrbot-plugin-page", kind: "ready" }, "*"); } catch (error) {}
+      return {
+        apiGet: (endpoint, params) => request("api:get", { endpoint, params }),
+        apiPost: (endpoint, body) => request("api:post", { endpoint, body }),
+        ready: () => readyPromise,
+      };
+    }
+
+    const inlineBridge = createInlineBridge();
+
+    function bridge() {
+      return officialBridge() || inlineBridge;
+    }
+
+    function actionTimeout(action) {
+      const slow = ["schedule_regen", "worldview_regen", "config_save", "profiles_sync", "schedule"];
+      if (slow.includes(action)) return 120000;
+      if (["weather", "status"].includes(action)) return 30000;
+      return 20000;
+    }
+
+    function withTimeout(promise, timeout) {
+      return Promise.race([
+        promise,
+        new Promise((resolve, reject) => {
+          setTimeout(() => reject(new Error("桥接请求超时")), timeout || 3000);
+        }),
+      ]);
+    }
+
+    function routeCandidates(action) {
+      const list = [action];
+      if (action === "status") list.push("get_status");
+      if (action === "profiles") list.push("get_profile");
+      if (action === "schedule_regen") list.push("schedule/regen");
+      if (action === "kb_regen") list.push("kb/regen");
+      if (action === "worldview_regen") list.push("worldview/regen");
+      if (action === "profile_save") list.push("profile/save");
+      if (action === "memory_add") list.push("memory/add");
+      if (action === "memory_delete") list.push("memory/delete");
+      return Array.from(new Set(list));
+    }
+
+    async function bridgeCall(action, payload) {
+      const b = bridge();
+      if (!b) return null;
+      const errors = [];
+      for (const route of routeCandidates(action)) {
+        try {
+          const attempt = payload && typeof b.apiPost === "function"
+            ? b.apiPost(route, payload)
+            : b.apiGet(route, payload || {});
+          let result = await withTimeout(attempt, actionTimeout(action));
+          if (result && typeof result.json === "function") result = await result.json();
+          if (typeof result === "string") {
+            try { result = JSON.parse(result); } catch (error) {}
+          }
+          if (result && typeof result === "object") {
+            if (result.status === "error" || result.success === false || result.code === 1) {
+              errors.push(result.message || result.msg || "接口返回错误");
+              continue;
+            }
+            return result;
+          }
+          if (result !== undefined && result !== null) {
+            errors.push(typeof result === "string" ? result.slice(0, 120) : "接口返回格式异常");
+          }
+        } catch (error) {
+          errors.push(error.message || String(error));
+          if (String(error.message || "").indexOf("超时") >= 0) break;
+        }
+      }
+      return { __error: errors[0] || "桥接调用失败" };
+    }
+
+    async function httpCall(action, payload) {
+      if (window.parent && window.parent !== window) {
+        throw new Error("未检测到 AstrBot 页面桥接，请关闭后从 插件详情→查看页面 重新打开");
+      }
+      const errors = [];
+      const headers = {};
+      if (payload) headers["Content-Type"] = "application/json";
+      try {
+        for (const key of ["token", "astrbot_token", "access_token", "dashboard_token"]) {
+          const value = window.localStorage.getItem(key);
+          if (value) { headers["Authorization"] = "Bearer " + value; break; }
+        }
+      } catch (error) {}
+      const bases = [
+        "/api/v1/plugins/extensions/" + PLUGIN_NAME,
+        "/api/v1/plugins/extensions/astrbot_plugin_amo_forever",
+        "/api/plug/" + PLUGIN_NAME,
+        "/api/plug/astrbot_plugin_amo_forever",
+      ];
+      for (const base of bases) {
+        for (const route of routeCandidates(action)) {
+          const url = base + "/" + route.replace(/^\/+/, "");
+          try {
+            const response = await fetch(url, {
+              method: payload ? "POST" : "GET",
+              credentials: "include",
+              cache: "no-store",
+              headers,
+              body: payload ? JSON.stringify(payload) : undefined,
+            });
+            const text = await response.text();
+            let data = null;
+            try { data = text ? JSON.parse(text) : null; } catch (error) { data = null; }
+            if (data && (data.code === 0 || data.data !== undefined || data.status === "ok")) return data;
+            if (data && (data.message || data.msg)) errors.push(data.message || data.msg);
+            else errors.push("HTTP " + response.status);
+          } catch (error) {
+            errors.push(error.message || String(error));
+          }
+        }
+      }
+      throw new Error(errors[0] || "无法连接插件接口");
+    }
+
+    async function call(action, payload) {
+      const bridgeResult = await bridgeCall(action, payload);
+      if (bridgeResult && !bridgeResult.__error) return bridgeResult;
+      if (window.parent && window.parent !== window) {
+        throw new Error((bridgeResult && bridgeResult.__error) || "页面桥接未就绪，请从插件详情→查看页面重新打开");
+      }
+      return await httpCall(action, payload);
+    }
+
+
+    function toast(message, isError) {
+      const el = document.getElementById("toast");
+      el.textContent = message;
+      el.className = "toast show" + (isError ? " error" : "");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { el.className = "toast"; }, 2600);
+    }
+
+    function normalize(data) {
+      if (!data) return {};
+      if (typeof data.mood === "string") {
+        return {
+          time: data.time || "",
+          mood: {},
+          dominant: String(data.mood).split("（")[0] || "—",
+          mood_score: 0,
+          period: { phase: data.period || "—", day: 0, tone: "" },
+          health: { status: data.health || "—", note: "" },
+          weather_text: data.weather || "—",
+          weather: {},
+          activity: { activity: data.schedule || "—", place: "" },
+          threshold: data.threshold || { value: 0, base: 0 },
+          activity_rate: 0,
+          schedule: [],
+          counts: data.counts || {},
+        };
+      }
+      return data;
+    }
+
+    async function load() {
+      const res = await call("status");
+      let payload = res;
+      for (let i = 0; i < 3; i += 1) {
+        if (payload && typeof payload === "object" && (payload.code === 0 || payload.status === "ok") && payload.data !== undefined) {
+          payload = payload.data;
+        } else {
+          break;
+        }
+      }
+      const data = normalize(payload);
+      lastData = data;
+      render(data);
+    }
+
+    function render(data) {
+      const time = data.time || "";
+      document.getElementById("clock").textContent = time;
+      document.getElementById("dominant").textContent = data.dominant || "—";
+      document.getElementById("moodScore").textContent = data.mood_score ? Math.round(data.mood_score) : "--";
+
+      const mood = data.mood || {};
+      const bars = document.getElementById("moodBars");
+      bars.textContent = "";
+      MOOD_KEYS.forEach((key) => {
+        const value = Math.max(0, Math.min(100, Number(mood[key] || 0)));
+        const row = document.createElement("div");
+        row.className = "bar-row";
+        const name = document.createElement("span");
+        name.textContent = key;
+        const track = document.createElement("div");
+        track.className = "track";
+        const fill = document.createElement("span");
+        fill.className = "fill";
+        fill.style.width = value + "%";
+        fill.style.background = "linear-gradient(90deg, " + (MOOD_COLORS[key] || "#e8489a") + ", rgba(255,255,255,.9))";
+        track.appendChild(fill);
+        const num = document.createElement("span");
+        num.className = "num";
+        num.textContent = String(Math.round(value));
+        row.appendChild(name);
+        row.appendChild(track);
+        row.appendChild(num);
+        bars.appendChild(row);
+      });
+      drawRadar(mood);
+
+      const period = data.period || {};
+      document.getElementById("period").textContent = period.phase
+        ? period.phase + (period.day ? " · 第" + period.day + "天" : "")
+        : "—";
+      document.getElementById("periodSub").textContent = period.tone || (period.pain !== undefined ? "疼痛 " + period.pain + "/10" : "");
+
+      const health = data.health || {};
+      document.getElementById("health").textContent = health.status || "—";
+      document.getElementById("healthSub").textContent = health.note || "";
+
+      document.getElementById("weather").textContent = data.weather_text || "—";
+      const weather = data.weather || {};
+      document.getElementById("weatherSub").textContent = [weather.city, weather.humidity ? "湿度 " + weather.humidity + "%" : "", weather.wind || ""]
+        .filter(Boolean).join(" · ");
+
+      const activity = data.activity || {};
+      document.getElementById("activity").textContent = activity.activity || "—";
+      document.getElementById("activitySub").textContent = activity.place || "";
+
+      const threshold = data.threshold || {};
+      const thresholdValue = Number(threshold.value || 0);
+      document.getElementById("thresholdValue").textContent = thresholdValue ? thresholdValue.toFixed(0) : "--";
+      document.getElementById("thresholdBar").style.width = Math.max(0, Math.min(100, thresholdValue)) + "%";
+      document.getElementById("thresholdSub").textContent =
+        "基础 " + (threshold.base !== undefined ? threshold.base : "--") +
+        " · 活跃度 " + (data.activity_rate !== undefined ? data.activity_rate : "--") + "%" +
+        " · 越高越不想说话";
+
+      const counts = data.counts || {};
+      document.getElementById("counts").textContent =
+        "档案 " + (counts.profiles || 0) + " · 记忆 " + (counts.memories || 0) + " · 消息 " + (counts.messages || 0);
+    }
+
+    function renderSchedule(data) {
+      const box = document.getElementById("scheduleList");
+      const day = document.getElementById("scheduleDay");
+      box.textContent = "";
+      day.textContent = data.day ? "日期：" + data.day : "";
+      const tree = Array.isArray(data.tree) ? data.tree : (Array.isArray(data.schedule_tree) ? data.schedule_tree : []);
+      if (!tree.length) {
+        box.textContent = "暂无日程，点“刷新”或“重生日程”。";
+        return;
+      }
+      tree.forEach((block) => {
+        const details = document.createElement("details");
+        details.className = "schedule-group";
+        details.open = Boolean(block.current);
+        const summary = document.createElement("summary");
+        const time = document.createElement("span");
+        time.className = "time";
+        time.textContent = (block.start || "") + "-" + (block.end || "");
+        const label = document.createElement("span");
+        label.textContent = block.title || block.activity || "";
+        const place = document.createElement("span");
+        place.className = "place";
+        place.textContent = block.place || "";
+        summary.appendChild(time);
+        summary.appendChild(label);
+        summary.appendChild(place);
+        details.appendChild(summary);
+        (block.children || []).forEach((hour) => {
+          const hourBox = document.createElement("details");
+          hourBox.className = "schedule-hour";
+          hourBox.open = Boolean(hour.current);
+          const hourSummary = document.createElement("summary");
+          const hourTime = document.createElement("span");
+          hourTime.className = "time";
+          hourTime.textContent = (hour.start || "") + "-" + (hour.end || "");
+          const hourLabel = document.createElement("span");
+          hourLabel.textContent = hour.activity || "";
+          hourSummary.appendChild(hourTime);
+          hourSummary.appendChild(hourLabel);
+          hourBox.appendChild(hourSummary);
+          const mini = document.createElement("ul");
+          mini.className = "schedule-mini";
+          (hour.children || []).forEach((seg) => {
+            const row = document.createElement("li");
+            if (seg.current) row.className = "current";
+            const t = document.createElement("span");
+            t.className = "t";
+            t.textContent = (seg.start || "") + "-" + (seg.end || "");
+            const a = document.createElement("span");
+            a.className = "a";
+            a.textContent = seg.activity || "";
+            if (seg.detail) a.textContent += " · " + seg.detail;
+            row.appendChild(t);
+            row.appendChild(a);
+            mini.appendChild(row);
+          });
+          hourBox.appendChild(mini);
+          details.appendChild(hourBox);
+        });
+        box.appendChild(details);
+      });
+    }
+
+    async function loadSchedule() {
+      try {
+        const result = await call("schedule");
+        renderSchedule(objectFrom(result));
+      } catch (error) {
+        document.getElementById("scheduleList").textContent = "读取失败：" + (error.message || error);
+      }
+    }
+
+    function drawRadar(mood) {
+      const canvas = document.getElementById("radar");
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      const dpr = window.devicePixelRatio || 1;
+      const size = Math.min(240, Math.max(190, canvas.parentElement.clientWidth - 10));
+      canvas.style.width = size + "px";
+      canvas.style.height = size + "px";
+      canvas.width = size * dpr;
+      canvas.height = size * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const cx = size / 2;
+      const cy = size / 2;
+      const radius = size * 0.29;
+      const count = MOOD_KEYS.length;
+      const angle = (i) => -Math.PI / 2 + (i * Math.PI * 2) / count;
+      ctx.clearRect(0, 0, size, size);
+
+      ctx.strokeStyle = "rgba(44,39,56,.12)";
+      ctx.lineWidth = 1;
+      for (let ring = 1; ring <= 4; ring += 1) {
+        ctx.beginPath();
+        for (let i = 0; i < count; i += 1) {
+          const r = (radius * ring) / 4;
+          const x = cx + Math.cos(angle(i)) * r;
+          const y = cy + Math.sin(angle(i)) * r;
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.stroke();
+      }
+
+      ctx.strokeStyle = "rgba(44,39,56,.10)";
+      for (let i = 0; i < count; i += 1) {
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(angle(i)) * radius, cy + Math.sin(angle(i)) * radius);
+        ctx.stroke();
+      }
+
+      ctx.font = "12px -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif";
+      ctx.fillStyle = "rgba(44,39,56,.68)";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      for (let i = 0; i < count; i += 1) {
+        const x = cx + Math.cos(angle(i)) * (radius + 20);
+        const y = cy + Math.sin(angle(i)) * (radius + 20);
+        ctx.fillText(MOOD_KEYS[i], x, y);
+      }
+
+      const points = MOOD_KEYS.map((key, i) => {
+        const value = Math.max(0, Math.min(100, Number(mood[key] || 0)));
+        const r = (radius * value) / 100;
+        return [cx + Math.cos(angle(i)) * r, cy + Math.sin(angle(i)) * r];
+      });
+      if (points.length) {
+        ctx.beginPath();
+        points.forEach(([x, y], i) => { if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+        ctx.closePath();
+        ctx.fillStyle = "rgba(232,72,154,.16)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(232,72,154,.95)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        points.forEach(([x, y]) => {
+          ctx.beginPath();
+          ctx.arc(x, y, 3, 0, Math.PI * 2);
+          ctx.fillStyle = "#e8489a";
+          ctx.fill();
+        });
+      }
+    }
+
+    async function action(name, button) {
+      const old = button.textContent;
+      button.disabled = true;
+      button.textContent = "处理中…";
+      try {
+        const result = await call(name);
+        if (result && result.code && result.code !== 0) throw new Error(result.msg || "操作失败");
+        toast("完成");
+        await load();
+      } catch (error) {
+        toast(error.message || "操作失败", true);
+      } finally {
+        button.disabled = false;
+        button.textContent = old;
+      }
+    }
+
+    document.getElementById("btnRefresh").addEventListener("click", async (event) => {
+      const btn = event.currentTarget;
+      btn.disabled = true;
+      try { await load(); toast("已刷新"); } catch (e) { toast(e.message || "刷新失败", true); }
+      finally { btn.disabled = false; }
+    });
+    document.getElementById("btnWeather").addEventListener("click", (e) => action("weather", e.currentTarget));
+    document.getElementById("btnRefreshSchedule").addEventListener("click", loadSchedule);
+    document.getElementById("btnSchedule").addEventListener("click", (e) => action("schedule_regen", e.currentTarget));
+    document.getElementById("btnWorld").addEventListener("click", (e) => action("worldview_regen", e.currentTarget));
+    document.getElementById("btnKb").addEventListener("click", (e) => action("kb_regen", e.currentTarget));
+
+    window.addEventListener("resize", () => { if (lastData) drawRadar(lastData.mood || {}); });
+
+    function listFrom(res) {
+      if (Array.isArray(res)) return res;
+      if (res && Array.isArray(res.data)) return res.data;
+      if (res && Array.isArray(res.items)) return res.items;
+      return [];
+    }
+
+    function objectFrom(res) {
+      if (res && res.data && typeof res.data === "object" && !Array.isArray(res.data)) return res.data;
+      return res && typeof res === "object" ? res : {};
+    }
+
+    const tabButtons = Array.from(document.querySelectorAll(".tab"));
+    function showTab(name) {
+      tabButtons.forEach((button) => button.classList.toggle("active", button.dataset.tab === name));
+      document.querySelectorAll(".tab-panel").forEach((panel) => {
+        panel.hidden = panel.id !== "tab-" + name;
+      });
+      if (name === "schedule") loadSchedule();
+      if (name === "profiles") { loadMemoryCandidates(); loadProfiles(); }
+      if (name === "relations") loadRelations();
+      if (name === "settings" && !configItems.length) loadSettings();
+    }
+    tabButtons.forEach((button) => button.addEventListener("click", () => showTab(button.dataset.tab)));
+
+    let memoryCandidates = [];
+    async function loadMemoryCandidates() {
+      const select = document.getElementById("memoryPluginSelect");
+      const hint = document.getElementById("memorySourceHint");
+      try {
+        const result = await call("memory_candidates");
+        const data = objectFrom(result);
+        memoryCandidates = Array.isArray(data.items) ? data.items : [];
+        const selected = data.selected || "auto";
+        select.textContent = "";
+        const autoOption = document.createElement("option");
+        autoOption.value = "auto";
+        autoOption.textContent = "自动检测（推荐）";
+        select.appendChild(autoOption);
+        memoryCandidates.forEach((item) => {
+          const option = document.createElement("option");
+          option.value = item.name;
+          const state = item.ready ? "可读取" : (item.users ? "无画像数据" : "无记忆数据");
+          option.textContent = (item.display_name || item.name) + "（" + (item.users || 0) + "人 · " + state + (item.activated === false ? " · 未启用" : "") + "）";
+          select.appendChild(option);
+        });
+        if (selected && selected !== "auto" && !memoryCandidates.some((item) => item.name === selected)) {
+          const missing = document.createElement("option");
+          missing.value = selected;
+          missing.textContent = selected + "（未安装或名称不匹配）";
+          select.appendChild(missing);
+        }
+        select.value = selected || "auto";
+        const detected = data.detected || "";
+        hint.textContent = detected
+          ? "当前读取：" + detected
+          : "当前没有可读取的陪伴记忆插件；可以安装/启用后在下方选择。";
+      } catch (error) {
+        hint.textContent = "检测失败：" + (error.message || error);
+      }
+    }
+
+    document.getElementById("btnDetectMemory").addEventListener("click", loadMemoryCandidates);
+    document.getElementById("memoryPluginSelect").addEventListener("change", async (event) => {
+      const value = event.currentTarget.value || "";
+      try {
+        const result = await call("config_save", { changes: { companion_memory_plugin_name: value } });
+        if (result && result.code && result.code !== 0) throw new Error(result.msg || "保存失败");
+        toast(value ? "记忆来源已切换" : "已切换为自动检测");
+        await loadMemoryCandidates();
+      } catch (error) {
+        toast("保存失败：" + (error.message || error), true);
+      }
+    });
+
+    let profilesCache = [];
+    let currentProfileUid = "";
+
+    function profileTerm() {
+      return (document.getElementById("profileSearch").value || "").trim().toLowerCase();
+    }
+
+    function renderProfiles(list) {
+      const box = document.getElementById("profileList");
+      box.textContent = "";
+      const term = profileTerm();
+      const filtered = term
+        ? list.filter((item) => [item.uid, item.name, item.alias, item.relation, item.birthday]
+            .filter(Boolean).join(" ").toLowerCase().includes(term))
+        : list;
+      if (!filtered.length) {
+        const empty = document.createElement("div");
+        empty.className = "sub";
+        empty.textContent = list.length ? "没有匹配的用户" : "还没有画像。可以点“同步陪伴档案”或“新建档案”。";
+        box.appendChild(empty);
+        return;
+      }
+      filtered.slice(0, 200).forEach((profile) => {
+        const row = document.createElement("div");
+        row.className = "profile-item";
+        const left = document.createElement("div");
+        const name = document.createElement("div");
+        name.textContent = (profile.name || profile.uid || "未知用户") + (profile.alias ? "（" + profile.alias + "）" : "");
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        meta.textContent = "UID " + (profile.uid || "") + " · 生日 " + (profile.birthday || "未知") + " · 消息 " + (profile.msg_count || 0);
+        left.appendChild(name);
+        left.appendChild(meta);
+        const badge = document.createElement("span");
+        badge.className = "badge";
+        badge.textContent = profile.relation || "普通";
+        row.appendChild(left);
+        row.appendChild(badge);
+        row.addEventListener("click", () => openProfile(profile));
+        box.appendChild(row);
+      });
+    }
+
+    async function loadProfiles() {
+      try {
+        const result = await call("profiles");
+        profilesCache = Array.isArray(result) ? result : listFrom(result);
+        renderProfiles(profilesCache);
+      } catch (error) {
+        const box = document.getElementById("profileList");
+        box.textContent = "";
+        const empty = document.createElement("div");
+        empty.className = "sub";
+        empty.textContent = "读取失败：" + (error.message || error);
+        box.appendChild(empty);
+      }
+    }
+
+    function openProfile(profile) {
+      currentProfileUid = profile.uid || "";
+      document.getElementById("pUid").value = currentProfileUid;
+      document.getElementById("pUid").readOnly = true;
+      document.getElementById("pName").value = profile.name || "";
+      document.getElementById("pAlias").value = profile.alias || "";
+      document.getElementById("pBirthday").value = profile.birthday || "";
+      document.getElementById("pRelation").value = profile.relation || "普通";
+      document.getElementById("pAffection").value = Number(profile.affection || 0);
+      document.getElementById("pNotes").value = profile.notes || "";
+      document.getElementById("profileMemories").textContent = "";
+      document.getElementById("profileEditor").hidden = false;
+    }
+
+    document.getElementById("btnNewProfile").addEventListener("click", () => {
+      currentProfileUid = "";
+      document.getElementById("pUid").readOnly = false;
+      document.getElementById("pUid").value = "";
+      document.getElementById("pName").value = "";
+      document.getElementById("pAlias").value = "";
+      document.getElementById("pBirthday").value = "";
+      document.getElementById("pRelation").value = "普通";
+      document.getElementById("pAffection").value = 10;
+      document.getElementById("pNotes").value = "";
+      document.getElementById("profileMemories").textContent = "";
+      document.getElementById("profileEditor").hidden = false;
+    });
+
+    document.getElementById("btnCloseEditor").addEventListener("click", () => {
+      document.getElementById("profileEditor").hidden = true;
+    });
+
+    document.getElementById("btnSaveProfile").addEventListener("click", async () => {
+      const uid = (document.getElementById("pUid").value || "").trim();
+      if (!uid) { toast("UID 不能为空", true); return; }
+      const payload = {
+        uid,
+        name: document.getElementById("pName").value.trim(),
+        alias: document.getElementById("pAlias").value.trim(),
+        birthday: document.getElementById("pBirthday").value.trim(),
+        relation: document.getElementById("pRelation").value,
+        affection: Number(document.getElementById("pAffection").value || 0),
+        notes: document.getElementById("pNotes").value.trim(),
+      };
+      try {
+        const result = await call("profile_save", payload);
+        if (result && result.code && result.code !== 0) throw new Error(result.msg || "保存失败");
+        toast("画像已保存");
+        await loadProfiles();
+      } catch (error) {
+        toast("保存失败：" + (error.message || error), true);
+      }
+    });
+
+    document.getElementById("btnLoadMemories").addEventListener("click", async () => {
+      const uid = (document.getElementById("pUid").value || "").trim();
+      if (!uid) { toast("UID 不能为空", true); return; }
+      const box = document.getElementById("profileMemories");
+      box.textContent = "读取中…";
+      try {
+        const result = await call("memories", { uid });
+        const items = listFrom(result);
+        box.textContent = "";
+        if (!items.length) { box.textContent = "暂无记忆"; return; }
+        items.forEach((item) => {
+          const line = document.createElement("div");
+          const tier = Number(item.tier || 0);
+          const label = tier >= 2 ? "珍贵" : (tier === 1 ? "重要" : "普通");
+          line.textContent = "· " + (item.content || "") + "（" + label + "）";
+          box.appendChild(line);
+        });
+      } catch (error) {
+        box.textContent = "读取失败：" + (error.message || error);
+      }
+    });
+
+    document.getElementById("btnSyncProfiles").addEventListener("click", async () => {
+      try {
+        const result = await call("profiles_sync", {});
+        const data = objectFrom(result);
+        toast("已同步 " + (data.synced || 0) + " 个陪伴档案");
+        await loadProfiles();
+      } catch (error) {
+        toast("同步失败：" + (error.message || error), true);
+      }
+    });
+
+    document.getElementById("btnProfileSearch").addEventListener("click", () => renderProfiles(profilesCache));
+    document.getElementById("profileSearch").addEventListener("input", () => renderProfiles(profilesCache));
+
+    let relationProfiles = [];
+
+    function renderRelations(data) {
+      relationProfiles = Array.isArray(data.profiles) ? data.profiles : [];
+      const selectA = document.getElementById("relA");
+      const selectB = document.getElementById("relB");
+      const keepA = selectA.value;
+      const keepB = selectB.value;
+      [selectA, selectB].forEach((select) => {
+        select.textContent = "";
+        relationProfiles.forEach((profile) => {
+          const option = document.createElement("option");
+          option.value = profile.uid;
+          option.textContent = (profile.name || profile.alias || profile.uid) + "（" + profile.uid + "）";
+          select.appendChild(option);
+        });
+      });
+      if (keepA) selectA.value = keepA;
+      if (keepB) selectB.value = keepB;
+
+      const list = document.getElementById("relationList");
+      list.textContent = "";
+      const edges = Array.isArray(data.edges) ? data.edges : [];
+      if (!edges.length) {
+        const empty = document.createElement("div");
+        empty.className = "sub";
+        empty.textContent = "还没有关系记录。选择两个人，添加一条关系。";
+        list.appendChild(empty);
+        return;
+      }
+      edges.forEach((edge) => {
+        const row = document.createElement("div");
+        row.className = "relation-row";
+        const main = document.createElement("div");
+        main.className = "rel-main";
+        main.textContent = (edge.a_name || edge.a_uid) + " ↔ " + (edge.b_name || edge.b_uid);
+        const badge = document.createElement("span");
+        badge.className = "rel-badge";
+        badge.textContent = edge.relation || "朋友";
+        const del = document.createElement("button");
+        del.textContent = "删除";
+        del.addEventListener("click", async () => {
+          try {
+            const result = await call("relation_delete", { a_uid: edge.a_uid, b_uid: edge.b_uid });
+            renderRelations(objectFrom(result));
+            toast("关系已删除");
+          } catch (error) {
+            toast("删除失败：" + (error.message || error), true);
+          }
+        });
+        row.appendChild(main);
+        row.appendChild(badge);
+        row.appendChild(del);
+        list.appendChild(row);
+      });
+    }
+
+    async function loadRelations() {
+      try {
+        const result = await call("relations");
+        renderRelations(objectFrom(result));
+      } catch (error) {
+        document.getElementById("relationList").textContent = "读取失败：" + (error.message || error);
+      }
+    }
+
+    document.getElementById("btnSaveRelation").addEventListener("click", async () => {
+      const a_uid = document.getElementById("relA").value;
+      const b_uid = document.getElementById("relB").value;
+      const relation = document.getElementById("relType").value;
+      const note = document.getElementById("relNote").value.trim();
+      if (!a_uid || !b_uid || a_uid === b_uid) {
+        toast("请选择两个不同的用户", true);
+        return;
+      }
+      try {
+        const result = await call("relation_save", { a_uid, b_uid, relation, note });
+        renderRelations(objectFrom(result));
+        document.getElementById("relNote").value = "";
+        toast("关系已保存");
+      } catch (error) {
+        toast("保存失败：" + (error.message || error), true);
+      }
+    });
+
+    let configItems = [];
+
+    const OPTION_LABELS = {
+      reply_style: { soft: "温柔", cool: "清冷", lively: "活泼", mature: "成熟" },
+      memory_source: { auto: "自动（优先陪伴）", companion: "陪伴插件", local: "本地记忆" },
+      seg_delay_type: {
+        dynamic: "按字数动态", smart: "智能（动态+标点）",
+        per_char: "按字数", random: "区间随机", fixed: "固定间隔",
+      },
+    };
+
+    function optionLabel(key, value) {
+      const labels = OPTION_LABELS[key];
+      return labels && labels[value] ? labels[value] : value;
+    }
+
+    function settingControl(item) {
+      const wrap = document.createElement("div");
+      wrap.className = "control";
+      let input;
+      if (item.type === "bool") {
+        input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = Boolean(item.value);
+      } else if (Array.isArray(item.options) && item.options.length) {
+        input = document.createElement("select");
+        input.className = "input";
+        item.options.forEach((option) => {
+          const node = document.createElement("option");
+          node.value = String(option);
+          node.textContent = optionLabel(item.key, String(option));
+          input.appendChild(node);
+        });
+        input.value = String(item.value);
+      } else if (item.type === "int" || item.type === "float") {
+        input = document.createElement("input");
+        input.className = "input";
+        input.type = "number";
+        input.step = item.type === "float" ? "0.01" : "1";
+        input.value = item.value === null || item.value === undefined ? "" : item.value;
+      } else if (["list", "template_list", "dict", "object"].includes(item.type)) {
+        input = document.createElement("textarea");
+        input.className = "input";
+        input.rows = 3;
+        const fallback = (item.type === "dict" || item.type === "object") ? {} : [];
+        try { input.value = JSON.stringify(item.value ?? fallback, null, 2); }
+        catch (error) { input.value = JSON.stringify(fallback); }
+      } else if (item.type === "text") {
+        input = document.createElement("textarea");
+        input.className = "input";
+        input.rows = 3;
+        input.value = item.value ?? "";
+      } else {
+        input = document.createElement("input");
+        input.className = "input";
+        input.type = "text";
+        input.value = item.value ?? "";
+      }
+      input.dataset.configKey = item.key;
+      input.dataset.configType = item.type;
+      wrap.appendChild(input);
+      return wrap;
+    }
+
+    function renderSettings() {
+      const box = document.getElementById("settingsList");
+      box.textContent = "";
+      const term = (document.getElementById("settingsSearch").value || "").trim().toLowerCase();
+      const groups = {};
+      configItems.forEach((item) => {
+        if (term) {
+          const haystack = (item.key + " " + (item.description || "") + " " + (item.hint || "")).toLowerCase();
+          if (!haystack.includes(term)) return;
+        }
+        const groupName = item.group || "基础";
+        if (!groups[groupName]) groups[groupName] = [];
+        groups[groupName].push(item);
+      });
+      const order = ["基础", "状态", "记忆", "私聊", "心流", "分段"];
+      const names = Object.keys(groups).sort((a, b) => {
+        const ai = order.indexOf(a); const bi = order.indexOf(b);
+        return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+      });
+      if (!names.length) { box.textContent = "没有匹配的配置"; return; }
+      names.forEach((group) => {
+        const details = document.createElement("details");
+        details.className = "settings-group";
+        details.open = true;
+        const summary = document.createElement("summary");
+        summary.textContent = group + "（" + groups[group].length + "）";
+        details.appendChild(summary);
+        groups[group].forEach((item) => {
+          const row = document.createElement("div");
+          row.className = "setting-row";
+          const left = document.createElement("div");
+          const name = document.createElement("div");
+          name.className = "name";
+          name.textContent = item.description || item.key;
+          left.appendChild(name);
+          if (item.hint) {
+            const hint = document.createElement("div");
+            hint.className = "hint";
+            hint.textContent = item.hint;
+            left.appendChild(hint);
+          }
+          row.appendChild(left);
+          row.appendChild(settingControl(item));
+          details.appendChild(row);
+        });
+        box.appendChild(details);
+      });
+    }
+
+    async function loadSettings() {
+      try {
+        const result = await call("config");
+        const data = objectFrom(result);
+        configItems = Array.isArray(data.items) ? data.items : [];
+        renderSettings();
+      } catch (error) {
+        document.getElementById("settingsList").textContent = "读取配置失败：" + (error.message || error);
+      }
+    }
+
+    document.getElementById("btnReloadSettings").addEventListener("click", loadSettings);
+    document.getElementById("settingsSearch").addEventListener("input", renderSettings);
+    document.getElementById("btnSaveSettings").addEventListener("click", async () => {
+      const changes = {};
+      try {
+        document.querySelectorAll("[data-config-key]").forEach((el) => {
+          const type = el.dataset.configType;
+          let value;
+          if (type === "bool") value = el.checked;
+          else if (type === "int") value = parseInt(el.value || "0", 10);
+          else if (type === "float") value = parseFloat(el.value || "0");
+          else if (["list", "template_list", "dict", "object"].includes(type)) {
+            try { value = JSON.parse(el.value || (type === "dict" || type === "object" ? "{}" : "[]")); }
+            catch (error) { throw new Error(el.dataset.configKey + " 的 JSON 格式错误"); }
+          } else value = el.value;
+          changes[el.dataset.configKey] = value;
+        });
+        const result = await call("config_save", { changes });
+        if (result && result.code && result.code !== 0) throw new Error(result.msg || "保存失败");
+        toast("设置已保存");
+        await loadSettings();
+        await load();
+      } catch (error) {
+        toast("保存失败：" + (error.message || error), true);
+      }
+    });
+
+    const QQ_GROUP_URL = "http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=AQEkXQn02RRkdb_xlr2c9DA8Ik63KhsT&authKey=xhuF9VxkYe5a73qvZQqCbLT1yy82LNcu7FPcvX2XK2LI0UlD0EwieiKRCmQGGzcJ&noverify=0&group_code=1055679275";
+    async function copyGroupLink() {
+      try {
+        await navigator.clipboard.writeText(QQ_GROUP_URL);
+        toast("群链接已复制，去 QQ 粘贴打开");
+        return true;
+      } catch (error) {
+        try {
+          const area = document.createElement("textarea");
+          area.value = QQ_GROUP_URL;
+          document.body.appendChild(area);
+          area.select();
+          document.execCommand("copy");
+          area.remove();
+          toast("群链接已复制，去 QQ 粘贴打开");
+          return true;
+        } catch (inner) {
+          toast("请长按链接复制后到 QQ 打开", true);
+          return false;
+        }
+      }
+    }
+    document.querySelectorAll(".qq-group-link").forEach((link) => {
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        try {
+          const opened = window.open(QQ_GROUP_URL, "_blank");
+          if (opened) return;
+        } catch (error) {}
+        copyGroupLink();
+      });
+    });
+
+    async function boot(attempt) {
+      try {
+        await load();
+      } catch (error) {
+        if (attempt < 2) {
+          setTimeout(() => boot(attempt + 1), 1500);
+          return;
+        }
+        document.getElementById("dominant").textContent = "读取失败";
+        const raw = error.message || "请从插件详情→查看页面重新打开";
+        const message = raw.indexOf("closed database") >= 0
+          ? "检测到旧插件实例残留，请完全重启 AstrBot（不是重载）后再打开"
+          : raw;
+        toast("接口未连接：" + message, true);
+      }
+    }
+    setTimeout(() => boot(0), 400);
+    setInterval(() => { load().catch(() => {}); }, 60000);
+  </script>
+</body>
+</html>
