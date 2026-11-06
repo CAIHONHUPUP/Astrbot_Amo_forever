@@ -95,6 +95,16 @@
     "description": "经期持续天数",
     "default": 5
   },
+  "period_ovulation_day": {
+    "type": "int",
+    "description": "排卵日（周期第几天）",
+    "default": 14
+  },
+  "period_ovulation_window": {
+    "type": "int",
+    "description": "排卵期窗口（天）",
+    "default": 3
+  },
   "enable_sick_random": {
     "type": "bool",
     "description": "随机生病",
@@ -187,6 +197,45 @@
     "description": "免打扰时段",
     "hint": "例如 23:30-07:30",
     "default": "23:30-07:30"
+  },
+  "ritual_enabled": {
+    "type": "bool",
+    "description": "每日恋人问候",
+    "hint": "对关系为“相恋”的用户发送晚安、早安、午饭问候",
+    "default": true
+  },
+  "ritual_goodnight": {
+    "type": "bool",
+    "description": "睡前晚安",
+    "default": true
+  },
+  "ritual_goodnight_window": {
+    "type": "string",
+    "description": "晚安时间段",
+    "hint": "例如 22:00-02:00",
+    "default": "22:00-02:00"
+  },
+  "ritual_morning": {
+    "type": "bool",
+    "description": "起床早安",
+    "default": true
+  },
+  "ritual_morning_window": {
+    "type": "string",
+    "description": "早安时间段",
+    "hint": "例如 06:30-10:00",
+    "default": "06:30-10:00"
+  },
+  "ritual_lunch": {
+    "type": "bool",
+    "description": "午饭问候",
+    "default": true
+  },
+  "ritual_lunch_window": {
+    "type": "string",
+    "description": "午饭时间段",
+    "hint": "例如 11:00-13:30",
+    "default": "11:00-13:30"
   },
   "proactive_check_seconds": {
     "type": "int",
