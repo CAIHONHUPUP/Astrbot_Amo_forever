@@ -208,6 +208,12 @@
     "description": "每次检查触发主动私聊的概率",
     "default": 0.25
   },
+  "proactive_daily_guarantee": {
+    "type": "bool",
+    "description": "相恋每天至少主动一次",
+    "hint": "开启后，关系为“相恋”且当天还没主动私聊过，会在 08:00-24:00 之间至少发一条；免打扰时段也允许这一次",
+    "default": true
+  },
   "proactive_comfort": {
     "type": "bool",
     "description": "难受时找相恋的人求安慰",
