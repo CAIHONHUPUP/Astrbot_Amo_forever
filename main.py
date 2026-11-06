@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.0.0
+我想永远陪着你 / 我想永远陪伴你 3.0.2
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.0.0"
+PLUGIN_VERSION = "3.0.2"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -2295,7 +2295,9 @@ class LLMService:
             "必须遵守：\n"
             "1. 绝对不要承认自己是AI、人工智能、机器人、人机、程序或模型；\n"
             "2. 如果原句在承认或顺着“人机/机器人”说，要改成真人的反驳、无语或有点生气；\n"
-            "3. 不要提润色、提示词、模型、系统；不要加旁白、引号或解释。"
+            "3. 不要提润色、提示词、模型、系统；不要加旁白、引号或解释；\n"
+            "4. 保持原句情绪强度和态度。如果原句在生气/烦躁/怼人，绝对不要改成甜蜜、撒娇、讨好，最多缓和一点；\n"
+            "5. 不要一秒变脸，情绪要有惯性。"
         )
         result = await self.chat(umo, system, prompt, limit=self.p.cfg_int("max_reply_chars", 220))
         if not result:
@@ -2833,6 +2835,7 @@ class HumanCorePlugin(Star):
         self.bot_name = self.cfg_str("bot_name", "") or "陪伴"
         self.persona_name = ""
         self._persona_name_cache = {}
+        self._last_affect = {}
         self._disturb_until = {}
         self._disturb_last = {}
         self._last_hour_detail = ""
@@ -4068,6 +4071,20 @@ class HumanCorePlugin(Star):
     def _disturb_active(self, umo):
         return to_float(getattr(self, "_disturb_until", {}).get(str(umo), 0), 0) > now_ts()
 
+    def _tone_with_continuity(self, umo, tone):
+        """给语气加情绪惯性，避免上一秒发火、下一秒突然甜蜜。"""
+        tone = str(tone or "")
+        if self._disturb_active(umo):
+            if "不要一秒变甜蜜" not in tone:
+                tone += " 你刚被吵醒/打扰，还在烦躁，不要一秒变甜蜜。"
+        last = getattr(self, "_last_affect", {}).get(str(umo))
+        if last and now_ts() - to_float(last[0], 0) < 1200:
+            previous = str(last[1] or "")
+            if any(word in previous for word in ("烦躁", "暴躁", "生气", "被打扰")) and "慢慢缓和" not in tone:
+                tone += " 上一轮你还在气头上，态度要慢慢缓和，不要突然撒娇甜蜜。"
+        self._last_affect[str(umo)] = (now_ts(), tone)
+        return tone
+
     def _apply_disturbance(self, umo):
         now = now_ts()
         self._disturb_until[str(umo)] = now + max(30, self.cfg_int("disturb_tone_seconds", 900))
@@ -4307,7 +4324,7 @@ class HumanCorePlugin(Star):
         persona = await self.llm.persona(umo)
         world = self.state.worldview_text()
         state_text = self.state.prompt_text(snap)
-        tone = self.state.tone_text(snap, relation)
+        tone = self._tone_with_continuity(umo, self.state.tone_text(snap, relation))
         style = STYLE_HINTS.get(self.cfg_str("reply_style", "soft"), "")
         recent = self._recent(umo, 10)
         lines = []
@@ -4546,7 +4563,7 @@ class HumanCorePlugin(Star):
             "【天气】" + snap["weather_text"],
             "【正在】" + snap["activity"].get("activity", "休息"),
             "【与对方关系】" + relation,
-            "【语气】" + self.state.tone_text(snap, relation),
+            "【语气】" + self._tone_with_continuity(umo, self.state.tone_text(snap, relation)),
         ]
         if bool(re.search(r"(?<![a-z])ai(?![a-z])", (event.message_str or "").lower())) or any(word in (event.message_str or "").lower() for word in ("机器人", "人机", "人工智能", "不是真人", "程序")):
             parts.append(
@@ -4662,9 +4679,11 @@ class HumanCorePlugin(Star):
             quote_id = getattr(event.message_obj, "message_id", None) if quote_enabled else None
             if self.cfg_bool("polish_native", False):
                 snap = self.state.snapshot()
+                native_tone = self._tone_with_continuity(
+                    event.unified_msg_origin, self.state.tone_text(snap, "普通")
+                )
                 polished = await self.llm.polish(
-                    event.unified_msg_origin, text,
-                    self.state.tone_text(snap, "普通"),
+                    event.unified_msg_origin, text, native_tone,
                 )
                 if polished and polished != text:
                     text = polished
@@ -5534,6 +5553,8 @@ class HumanCorePlugin(Star):
             ("/memory/delete", self.api_memory_delete, ["GET", "POST"]),
             ("/memory_delete", self.api_memory_delete, ["GET", "POST"]),
             ("/schedule", self.api_schedule, ["GET", "POST"]),
+            ("/mood/update", self.api_mood_update, ["GET", "POST"]),
+            ("/mood_update", self.api_mood_update, ["GET", "POST"]),
             ("/schedule/regen", self.api_schedule_regen, ["GET", "POST"]),
             ("/kb/regen", self.api_kb_regen, ["GET", "POST"]),
             ("/kb_regen", self.api_kb_regen, ["GET", "POST"]),
@@ -5838,6 +5859,8 @@ class HumanCorePlugin(Star):
                 return await self.api_memory_add()
             if name in ("memory_delete", "delete_memory"):
                 return await self.api_memory_delete()
+            if name in ("mood_update", "update_mood"):
+                return await self.api_mood_update()
             if name == "schedule":
                 return await self.api_schedule()
             if name in ("kb_regen", "regen_kb", "dialect_kb_regen"):
@@ -5989,6 +6012,19 @@ class HumanCorePlugin(Star):
         memory_id = data.get("id", self._q("id", 0))
         self.db.delete_memory(memory_id)
         return {"code": 0, "msg": "已删除"}
+
+    async def api_mood_update(self):
+        await self._ensure_ready()
+        data = await self._body()
+        incoming = data.get("mood") if isinstance(data.get("mood"), dict) else data
+        for key in MOOD_KEYS:
+            if key in incoming:
+                try:
+                    self.state.mood[key] = clamp(float(incoming[key]), 0.0, 100.0)
+                except Exception:
+                    continue
+        self.state.save()
+        return {"code": 0, "data": self.state.snapshot()}
 
     async def api_schedule(self):
         await self._ensure_ready()
