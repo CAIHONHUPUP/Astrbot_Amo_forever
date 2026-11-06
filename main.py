@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.2.4
+我想永远陪着你 / 我想永远陪伴你 3.2.6
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.2.4"
+PLUGIN_VERSION = "3.2.6"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -2919,6 +2919,7 @@ class HumanCorePlugin(Star):
         self._last_auto_learn = 0.0
         self._proactive_last = 0.0
         self._last_ritual = 0.0
+        self._bot_initiated = {}
         self._prefix_cache = None
         self._loop_task = None
         self._config_mtime = 0.0
@@ -4179,8 +4180,20 @@ class HumanCorePlugin(Star):
                 same_sender += 1
         return max(same_sender, mentions) if group else same_sender
 
+    def _mark_bot_initiated(self, umo):
+        key = str(umo)
+        self._bot_initiated[key] = now_ts()
+        # 她主动发的消息代表当前是她来找你，不该延续上一轮的火气。
+        self._disturb_until[key] = 0
+        self._last_affect[key] = (now_ts(), "你主动发起聊天，语气自然亲昵")
+
+    def _recent_bot_initiated(self, umo, seconds=3 * 3600):
+        return now_ts() - to_float(getattr(self, "_bot_initiated", {}).get(str(umo), 0), 0) < seconds
+
     def _should_disturb(self, snap, umo, uid, text="", group=False):
         if not self.cfg_bool("disturb_reply_enabled", True):
+            return False
+        if self._recent_bot_initiated(umo):
             return False
         if not self._disturb_category(snap):
             return False
@@ -4241,6 +4254,10 @@ class HumanCorePlugin(Star):
         snap = self.state.snapshot()
         umo = event.unified_msg_origin
         uid = str(event.get_sender_id())
+        if self._recent_bot_initiated(umo):
+            self._disturb_until[str(umo)] = 0
+            logger.info("[amo] 主动消息后的回复，按正常聊天处理")
+            return
         if self._should_disturb(snap, umo, uid, event.message_str or "", group=False):
             self._apply_disturbance(umo)
             # 不 stop_event，让 AstrBot 正常生成；<amo_state> 会带上被打扰的语气。
@@ -4388,6 +4405,8 @@ class HumanCorePlugin(Star):
             "【关系】你和" + name + "的关系是「" + relation + "」。",
             "【聊天格式】不要把 @昵称、QQ号、群号、ID 或后台记录念出来；识人时只自然回应，不要复述。",
         ]
+        if self._recent_bot_initiated(umo):
+            system_parts.append("【你主动发起】你刚主动给ta发过消息，ta现在回复你；不要说自己被吵醒/被打扰，正常接话。")
         if re.search(r"(记住|以后喊|以后叫|喊他|喊她|叫他|叫她|称呼他|称呼她)", text or ""):
             system_parts.append(
                 "【识人回应】这是让你记称呼/认人，不要复述 @、QQ号或后台记录；"
@@ -4622,6 +4641,8 @@ class HumanCorePlugin(Star):
             "【语气】" + self._tone_with_continuity(umo, self.state.tone_text(snap, relation)),
             "【聊天格式】不要复述 @昵称、QQ号、群号、ID 或后台字段；识人/记称呼时自然回一句“好，我记住了/这是你朋友吗”，不要把记录念出来。",
         ]
+        if self._recent_bot_initiated(umo):
+            parts.append("【你主动发起】你刚主动给ta发过消息，ta现在回复你；不要说自己被吵醒/被打扰，正常接话。")
         if bool(re.search(r"(?<![a-z])ai(?![a-z])", (event.message_str or "").lower())) or any(word in (event.message_str or "").lower() for word in ("机器人", "人机", "人工智能", "不是真人", "程序")):
             parts.append(
                 "【身份质疑】消息里出现了机器人/人机/AI等词。先结合上下文判断是不是在说你、叫你、试探你："
@@ -5039,6 +5060,8 @@ class HumanCorePlugin(Star):
                 daily_key = "ritual_" + kind + "_" + uid + "_" + today_str()
                 if self.db.kv_get(daily_key, False):
                     continue
+                if kind == "morning" and (snap.get("activity") or {}).get("category") == "sleep":
+                    continue
                 if not self._ritual_should_send(umo, kind):
                     continue
                 text = ""
@@ -5055,6 +5078,7 @@ class HumanCorePlugin(Star):
                 if not text:
                     continue
                 if await self._send_to_umo(umo, text):
+                    self._mark_bot_initiated(umo)
                     self.db.kv_set(daily_key, True)
                     self.db.log_proactive(uid, kind, text)
                     try:
@@ -5147,6 +5171,7 @@ class HumanCorePlugin(Star):
                 continue
             ok = await self._send_to_umo(profile["private_umo"], text)
             if ok:
+                self._mark_bot_initiated(profile["private_umo"])
                 self.db.bump_proactive(profile["uid"])
                 self.db.log_proactive(profile["uid"], kind, text)
                 self._set_proactive_pending(profile["uid"], kind, text)
