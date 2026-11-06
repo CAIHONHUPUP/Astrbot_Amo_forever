@@ -766,7 +766,7 @@ class HeartflowEngine:
             )
         addressed = self._addresses_bot(event.message_str or "")
         if addressed:
-            logger.debug("[心流] 🎯 消息直接呼叫机器人（%s），跳过评分" % addressed)
+            logger.info("[心流] 🎯 消息直接呼叫机器人（%s），跳过评分" % addressed)
             return JudgeResult(
                 relevance=float(self.score_max), willingness=float(self.score_max),
                 social=float(self.score_max), timing=float(self.score_max),
@@ -841,9 +841,9 @@ class HeartflowEngine:
                 dim_scores = " | ".join([f"{dim}:{scores[dim]:.1f}" for dim in dim_order])
 
                 if should_reply:
-                    logger.debug(f"[心流] 📊 评分模式: {overall:.3f}/{dynamic_threshold:.2f} (均分:{avg_absolute_score:.1f}分) | ✅触发 | 活跃度:{activity_desc}({activity:.0%}) | {data.get('reasoning', '')} | 各维度: {dim_scores}")
+                    logger.info(f"[心流] 📊 评分模式: {overall:.3f}/{dynamic_threshold:.2f} (均分:{avg_absolute_score:.1f}分) | ✅触发 | 活跃度:{activity_desc}({activity:.0%}) | {data.get('reasoning', '')} | 各维度: {dim_scores}")
                 else:
-                    self._log_detail(f"[心流] 📊 评分模式: {overall:.3f}/{dynamic_threshold:.2f} (均分:{avg_absolute_score:.1f}分) | ❌跳过 | 活跃度:{activity_desc}({activity:.0%}) | {data.get('reasoning', '')} | 各维度: {dim_scores}")
+                    logger.info(f"[心流] 📊 评分模式: {overall:.3f}/{dynamic_threshold:.2f} (均分:{avg_absolute_score:.1f}分) | ❌跳过 | 活跃度:{activity_desc}({activity:.0%}) | {data.get('reasoning', '')} | 各维度: {dim_scores}")
                 return JudgeResult(**scores, reasoning=data.get("reasoning", ""), should_reply=should_reply, confidence=overall, overall_score=overall)
             except (json.JSONDecodeError, ValueError):
                 if attempt == self.judge_max_retries:
@@ -856,7 +856,7 @@ class HeartflowEngine:
     async def judge_immersive_mode(self, event: AstrMessageEvent) -> JudgeResult:
         """沉浸模式下的判断（更严格）"""
         if getattr(event, "amo_force_reply", False):
-            logger.debug("[心流] 💢 连续打扰，沉浸模式也回复")
+            logger.info("[心流] 💢 连续打扰，沉浸模式也回复")
             return JudgeResult(
                 relevance=float(self.score_max), willingness=float(self.score_max),
                 social=float(self.score_max), timing=float(self.score_max),
@@ -865,7 +865,7 @@ class HeartflowEngine:
             )
         addressed = self._addresses_bot(event.message_str or "")
         if addressed:
-            logger.debug("[心流] 🌊 消息直接呼叫机器人（%s），沉浸模式也回复" % addressed)
+            logger.info("[心流] 🌊 消息直接呼叫机器人（%s），沉浸模式也回复" % addressed)
             return JudgeResult(
                 relevance=float(self.score_max), willingness=float(self.score_max),
                 social=float(self.score_max), timing=float(self.score_max),
@@ -930,9 +930,9 @@ class HeartflowEngine:
                 data = _extract_json(resp.completion_text.strip())
                 should_reply = bool(data.get("should_reply", False))
                 if should_reply:
-                    logger.debug(f"[心流] 🌊 沉浸模式: ✅触发 | 剩余{remaining}秒 | 活跃度:{activity_desc}({activity:.0%}) | {data.get('reasoning', '')}")
+                    logger.info(f"[心流] 🌊 沉浸模式: ✅触发 | 剩余{remaining}秒 | 活跃度:{activity_desc}({activity:.0%}) | {data.get('reasoning', '')}")
                 else:
-                    self._log_detail(f"[心流] 🌊 沉浸模式: ❌跳过 | 剩余{remaining}秒 | 活跃度:{activity_desc}({activity:.0%}) | {data.get('reasoning', '')}")
+                    logger.info(f"[心流] 🌊 沉浸模式: ❌跳过 | 剩余{remaining}秒 | 活跃度:{activity_desc}({activity:.0%}) | {data.get('reasoning', '')}")
                 return JudgeResult(should_reply=should_reply, reasoning=data.get("reasoning", ""), confidence=1.0 if should_reply else 0.0, overall_score=1.0 if should_reply else 0.0)
             except (json.JSONDecodeError, ValueError):
                 if attempt == self.judge_max_retries:
@@ -1000,7 +1000,7 @@ class HeartflowEngine:
                             "cancelled": False,
                             "trigger_sender_id": str(event.get_sender_id()),
                         }
-                    logger.debug(f"[心流] ⏳ 触发防抖等待 ({self.debounce_delay}s) | 触发者: {event.get_sender_name()}")
+                    logger.info(f"[心流] ⏳ 触发防抖等待 ({self.debounce_delay}s) | 触发者: {event.get_sender_name()}")
 
                     # 防抖等待循环
                     while True:
@@ -1035,7 +1035,7 @@ class HeartflowEngine:
                 setattr(event, "heartflow_triggered", True)
                 setattr(event, "heartflow_mode", mode_name)
                 self._activate_immersive_mode(umo)
-                logger.debug(f"[心流] 🎯 心流触发: {event.message_str[:50]}... | 模式: {'🌊沉浸' if is_immersive else '📊评分'}")
+                logger.info(f"[心流] 🎯 心流触发: {event.message_str[:50]}... | 模式: {'🌊沉浸' if is_immersive else '📊评分'}")
 
             state.total_messages += 1
         except Exception as e:
