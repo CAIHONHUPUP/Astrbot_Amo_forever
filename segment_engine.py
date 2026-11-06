@@ -153,7 +153,7 @@ class SegmentEngine:
         target = max(required, gap)
         elapsed = max(0.0, time.monotonic() - last_sent_at) if last_sent_at else 0.0
         wait = max(0.0, target - elapsed)
-        logger.debug(
+        logger.info(
             "[分段] 延迟（从上一段发送后计时） | 字数=%d | 需要=%.2fs | 已过=%.2fs | 补足=%.2fs"
             % (len(re.sub(r"\s+", "", str(segment or ""))), target, elapsed, wait)
         )
@@ -222,7 +222,8 @@ class SegmentEngine:
             await self._set_typing(event, False)
 
             await self._save_to_conversation_history(event, full_segmented_text)
-            logger.debug(f"分段回复完成，共 {len(segments)} 段")
+            logger.info(f"[amo] 分段回复 -> {event.unified_msg_origin}: {full_segmented_text[:300]}")
+            logger.info(f"[amo] 分段回复完成，共 {len(segments)} 段")
             return True
 
         except Exception as e:
