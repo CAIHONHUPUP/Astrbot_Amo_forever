@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.0.8
+我想永远陪着你 / 我想永远陪伴你 3.1.0
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.0.8"
+PLUGIN_VERSION = "3.1.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -4944,6 +4944,29 @@ class HumanCorePlugin(Star):
         except Exception:
             return False
 
+    def _ritual_should_send(self, umo, kind):
+        try:
+            rows = self.db.recent_messages(umo, 10)
+        except Exception:
+            rows = []
+        now = now_ts()
+        recent_gap = max(5, self.cfg_int("ritual_skip_recent_minutes", 45)) * 60
+        if rows:
+            last_at = to_float(rows[-1].get("created_at"), 0)
+            if last_at and now - last_at < recent_gap:
+                return False
+        if not self.cfg_bool("ritual_skip_if_greeted", True):
+            return True
+        texts = [str(row.get("content") or "") for row in rows if str(row.get("role") or "") in ("user", "bot")]
+        joined = "\n".join(texts[-10:])
+        if kind == "morning":
+            return not bool(re.search(r"(?:^|\s)早(?:\s|$|[!！。~～])|早安|早上好|早上好呀|我醒了|起床了|还没起来吗|醒了没", joined))
+        if kind == "goodnight":
+            return not bool(re.search(r"晚安|睡了|睡觉|先睡|去睡|早点休息", joined))
+        if kind == "lunch":
+            return not bool(re.search(r"午饭|中午吃|吃啥|吃什么|吃饭|吃了没|吃了吗", joined))
+        return True
+
     async def _maybe_rituals(self):
         if not self.cfg_bool("ritual_enabled", True):
             return
@@ -4976,6 +4999,8 @@ class HumanCorePlugin(Star):
                     continue
                 daily_key = "ritual_" + kind + "_" + uid + "_" + today_str()
                 if self.db.kv_get(daily_key, False):
+                    continue
+                if not self._ritual_should_send(umo, kind):
                     continue
                 text = ""
                 try:
