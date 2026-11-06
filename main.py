@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.0.6
+我想永远陪着你 / 我想永远陪伴你 3.0.8
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.0.6"
+PLUGIN_VERSION = "3.0.8"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -1376,8 +1376,10 @@ class HumanState:
         cycle_days = max(10, self.p.cfg_int("period_cycle_days", 28))
         bleed_days = max(1, min(self.p.cfg_int("period_days", 5), cycle_days - 6))
         day = (date.today() - start).days % cycle_days + 1
-        ovulation_start = max(bleed_days + 1, cycle_days - 16)
-        ovulation_end = min(cycle_days - 1, ovulation_start + 4)
+        ovulation_day = max(bleed_days + 1, min(cycle_days - 1, self.p.cfg_int("period_ovulation_day", 14)))
+        ovulation_window = max(1, min(9, self.p.cfg_int("period_ovulation_window", 3)))
+        ovulation_start = max(bleed_days + 1, ovulation_day - (ovulation_window - 1) // 2)
+        ovulation_end = min(cycle_days - 1, ovulation_start + ovulation_window - 1)
         if day <= bleed_days:
             phase = "月经期"
             tone = "身体沉沉的，容易累，也更容易委屈"
@@ -1399,10 +1401,20 @@ class HumanState:
             pain = 3
             reply_mult = 0.88
         pain = max(0, min(10, pain + (md5_int(str(start) + str(day)) % 3) - 1))
+        if phase == "月经期":
+            phase_day = day
+        elif phase == "卵泡期":
+            phase_day = day - bleed_days
+        elif phase == "排卵期":
+            phase_day = day - ovulation_start + 1
+        else:
+            phase_day = day - ovulation_end
         return {
-            "day": day, "phase": phase, "tone": tone, "pain": pain,
+            "day": day, "phase": phase, "phase_day": max(1, phase_day),
+            "tone": tone, "pain": pain,
             "reply_mult": reply_mult, "days_to_next": cycle_days - day + 1,
             "cycle_days": cycle_days, "bleed_days": bleed_days,
+            "ovulation_day": ovulation_day, "ovulation_window": ovulation_window,
             "next_start": (date.today() + timedelta(days=cycle_days - day + 1)).isoformat(),
         }
 
@@ -2502,7 +2514,13 @@ class LLMService:
                 last_user_text = content
                 last_user_at = to_float(row.get("created_at"), 0)
         context_text = "\n".join(lines[-10:])
-        if (
+        if kind == "goodnight":
+            task = "已经很晚了，你要去睡觉了，给恋人" + name + "发一条晚安，提一句太晚了/早点睡，带上称呼，1 句，亲昵自然。"
+        elif kind == "morning":
+            task = "你刚起床/刚醒，给恋人" + name + "发早安，问一句还没起来吗/醒了没，带上爱称，1 句。"
+        elif kind == "lunch":
+            task = "到午饭时间了，问恋人" + name + "今天中午吃啥子，带一点贵州方言，1 句，自然。"
+        elif (
             last_role == "user" and last_user_text
             and now_ts() - last_user_at <= 6 * 3600
         ):
@@ -2881,6 +2899,7 @@ class HumanCorePlugin(Star):
         self._last_purge = 0.0
         self._last_auto_learn = 0.0
         self._proactive_last = 0.0
+        self._last_ritual = 0.0
         self._prefix_cache = None
         self._loop_task = None
         self._config_mtime = 0.0
@@ -4795,6 +4814,8 @@ class HumanCorePlugin(Star):
         if now - self._proactive_last >= self.cfg_int("proactive_check_seconds", 300):
             self._proactive_last = now
             await self._maybe_proactive()
+        if now - self._last_ritual >= 60:
+            await self._maybe_rituals()
 
     def _first_private_umo(self):
         try:
@@ -4915,6 +4936,69 @@ class HumanCorePlugin(Star):
                 if ignored >= max(1, self.cfg_int("proactive_depressed_count", 3)):
                     self._set_depressed(uid)
                 logger.debug("[amo] 主动私聊仍无回复，心情变差: %s (%d)" % (uid, ignored))
+
+    def _ritual_in_window(self, spec):
+        try:
+            start, end = str(spec).split("-", 1)
+            return in_minute_range(minutes_now(), parse_hhmm(start), parse_hhmm(end))
+        except Exception:
+            return False
+
+    async def _maybe_rituals(self):
+        if not self.cfg_bool("ritual_enabled", True):
+            return
+        now = now_ts()
+        if now - to_float(getattr(self, "_last_ritual", 0), 0) < 60:
+            return
+        self._last_ritual = now
+        try:
+            profiles = self.db.proactive_profiles(limit=100)
+        except Exception:
+            return
+        snap = self.state.snapshot()
+        for profile in profiles:
+            if str(profile.get("relation") or "") != "相恋":
+                continue
+            umo = str(profile.get("private_umo") or "")
+            uid = str(profile.get("uid") or "")
+            if not umo or not uid:
+                continue
+            name = str(profile.get("alias") or profile.get("name") or "宝").strip() or "宝"
+            rituals = [
+                ("goodnight", "ritual_goodnight", "ritual_goodnight_window", "22:00-02:00"),
+                ("morning", "ritual_morning", "ritual_morning_window", "06:30-10:00"),
+                ("lunch", "ritual_lunch", "ritual_lunch_window", "11:00-13:30"),
+            ]
+            for kind, enabled_key, window_key, default_window in rituals:
+                if not self.cfg_bool(enabled_key, True):
+                    continue
+                if not self._ritual_in_window(self.cfg_str(window_key, default_window)):
+                    continue
+                daily_key = "ritual_" + kind + "_" + uid + "_" + today_str()
+                if self.db.kv_get(daily_key, False):
+                    continue
+                text = ""
+                try:
+                    text = await self.llm.gen_proactive(umo, profile, snap, kind)
+                except Exception as exc:
+                    logger.debug("[amo] 仪式生成失败: %s" % exc)
+                if not text:
+                    text = {
+                        "goodnight": name + "，太晚了，我先去睡觉啦，你也早点睡。",
+                        "morning": name + "，早上好呀，还没起来吗？",
+                        "lunch": name + "，今天中午吃啥子哦？",
+                    }.get(kind, "")
+                if not text:
+                    continue
+                if await self._send_to_umo(umo, text):
+                    self.db.kv_set(daily_key, True)
+                    self.db.log_proactive(uid, kind, text)
+                    try:
+                        self.db.add_message(umo, "bot", self.bot_name, "bot", text)
+                    except Exception:
+                        pass
+                    logger.info("[amo] 每日问候(%s) -> %s: %s" % (kind, name, text[:200]))
+                    break
 
     def _choose_proactive_kind(self, profile, snap, category=""):
         relation = profile.get("relation", "普通")
