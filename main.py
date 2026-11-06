@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.0.4
+我想永远陪着你 / 我想永远陪伴你 3.0.6
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.0.4"
+PLUGIN_VERSION = "3.0.6"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -2885,7 +2885,7 @@ class HumanCorePlugin(Star):
         self._loop_task = None
         self._config_mtime = 0.0
         self._register_web_apis()
-        logger.debug("[amo] 我想永远陪伴你 %s loaded; stale web routes purged" % PLUGIN_VERSION)
+        logger.info("[amo] 我想永远陪伴你 %s loaded; stale web routes purged" % PLUGIN_VERSION)
         try:
             self._boot_task = asyncio.create_task(self._ensure_ready())
         except RuntimeError:
@@ -4201,8 +4201,10 @@ class HumanCorePlugin(Star):
             return
         probability = self.gate.private_probability(snap, profile)
         roll = random.random()
-        if self.cfg_bool("debug_log", False):
-            logger.debug("[amo] 私聊判定概率 %.2f roll %.2f" % (probability, roll))
+        logger.info(
+            "[amo] 私聊判定 | 概率=%.2f | roll=%.2f | %s"
+            % (probability, roll, "回复" if roll > probability else "不回")
+        )
         if roll <= probability:
             return
         event.stop_event()
@@ -4437,7 +4439,7 @@ class HumanCorePlugin(Star):
         target = max(required, gap)
         elapsed = max(0.0, time.monotonic() - last_sent_at) if last_sent_at else 0.0
         wait = max(0.0, target - elapsed)
-        logger.debug(
+        logger.info(
             "[amo] 分段延迟（从上一段发送后计时） | 字数=%d | 需要=%.2fs | 已过=%.2fs | 补足=%.2fs"
             % (len(re.sub(r"\s+", "", str(segment or ""))), target, elapsed, wait)
         )
@@ -4505,6 +4507,7 @@ class HumanCorePlugin(Star):
             pass
         self._last_reply_at[event.unified_msg_origin] = now_ts()
         self.state.nudge(依恋=1, 开心=1)
+        logger.info("[amo] 回复 -> %s: %s" % (event.unified_msg_origin, text[:300]))
         return True
 
     async def _send_to_umo(self, umo, text, quote_id=None, group=False):
@@ -4538,6 +4541,7 @@ class HumanCorePlugin(Star):
                 return False
             last_sent_at = time.monotonic()
         self._last_reply_at[umo] = now_ts()
+        logger.info("[amo] 主动 -> %s: %s" % (umo, text[:300]))
         try:
             self.db.add_message(umo, "bot", self.bot_name, "bot", text)
         except Exception:
