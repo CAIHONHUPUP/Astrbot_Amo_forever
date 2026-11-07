@@ -359,7 +359,7 @@
         <label class="block">备注<textarea id="pNotes" class="input" rows="3" placeholder="关于这个人的备注"></textarea></label>
         <div class="row">
           <button id="btnSaveProfile">保存画像</button>
-          <button id="btnLoadMemories">查看记忆</button>
+          <button id="btnLoadMemories">查看聊天记录</button>
         </div>
         <div id="profileMemories" class="memory-list"></div>
       </section>
@@ -1223,15 +1223,16 @@
       const box = document.getElementById("profileMemories");
       box.textContent = "读取中…";
       try {
-        const result = await call("memories", { uid });
+        const result = await call("chat_history", { uid, limit: 1000 });
         const items = listFrom(result);
         box.textContent = "";
-        if (!items.length) { box.textContent = "暂无记忆"; return; }
+        if (!items.length) { box.textContent = "暂无聊天记录"; return; }
         items.forEach((item) => {
           const line = document.createElement("div");
-          const tier = Number(item.tier || 0);
-          const label = tier >= 2 ? "珍贵" : (tier === 1 ? "重要" : "普通");
-          line.textContent = "· " + (item.content || "") + "（" + label + "）";
+          const who = item.role === "bot" ? "她" : (item.name || "对方");
+          const ts = Number(item.created_at || 0);
+          const time = ts ? new Date(ts * 1000).toLocaleString("zh-CN", { hour12: false }) : "";
+          line.textContent = (time ? "[" + time + "] " : "") + who + "：" + (item.content || "");
           box.appendChild(line);
         });
       } catch (error) {

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 4.3.4
+我想永远陪着你 / 我想永远陪伴你 4.3.6
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "4.3.4"
+PLUGIN_VERSION = "4.3.6"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -1334,6 +1334,31 @@ class AmoDB:
                 "SELECT * FROM messages WHERE uid=? ORDER BY id DESC LIMIT ?",
                 (str(uid), int(limit)),
             ).fetchall()
+        return [dict(row) for row in reversed(rows)]
+
+    def chat_history(self, uid, limit=200):
+        """按用户参与过的 umo 取原始聊天记录（本人 + 机器人），不是摘要记忆。"""
+        uid = str(uid)
+        limit = max(1, min(2000, int(limit or 200)))
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT DISTINCT umo FROM messages WHERE uid=? AND umo!=''",
+                (uid,),
+            ).fetchall()
+            umos = [str(row["umo"]) for row in rows if str(row["umo"] or "")]
+            if not umos:
+                rows = self.conn.execute(
+                    "SELECT * FROM messages WHERE uid=? ORDER BY id DESC LIMIT ?",
+                    (uid, limit),
+                ).fetchall()
+            else:
+                placeholders = ",".join("?" for _ in umos)
+                params = umos + [uid, limit]
+                rows = self.conn.execute(
+                    "SELECT * FROM messages WHERE umo IN (" + placeholders + ") "
+                    "AND (uid=? OR role='bot') ORDER BY id DESC LIMIT ?",
+                    params,
+                ).fetchall()
         return [dict(row) for row in reversed(rows)]
 
     def active_users(self, since, limit=2):
@@ -6906,6 +6931,8 @@ class HumanCorePlugin(Star):
             ("/profile/save", self.api_profile_save, ["GET", "POST"]),
             ("/profile_save", self.api_profile_save, ["GET", "POST"]),
             ("/memories", self.api_memories, ["GET", "POST"]),
+            ("/chat/history", self.api_chat_history, ["GET", "POST"]),
+            ("/chat_history", self.api_chat_history, ["GET", "POST"]),
             ("/memory/add", self.api_memory_add, ["GET", "POST"]),
             ("/memory_add", self.api_memory_add, ["GET", "POST"]),
             ("/memory/delete", self.api_memory_delete, ["GET", "POST"]),
@@ -7305,6 +7332,15 @@ class HumanCorePlugin(Star):
         if fields.get("relation") == "相恋":
             self._register_lover(uid)
         return {"code": 0, "data": self.db.get_profile(uid)}
+
+    async def api_chat_history(self):
+        await self._ensure_ready()
+        data = await self._body()
+        uid = str(data.get("uid") or self._q("uid", "") or "")
+        if not uid:
+            return {"code": 1, "msg": "uid 不能为空"}
+        limit = to_int(data.get("limit") or self._q("limit", 200), 200)
+        return {"code": 0, "data": self.db.chat_history(uid, limit)}
 
     async def api_memories(self):
         await self._ensure_ready()
