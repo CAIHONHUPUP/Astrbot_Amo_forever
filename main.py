@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 4.6.8
+我想永远陪着你 / 我想永远陪伴你 4.8.0
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,12 +79,22 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "4.6.8"
+PLUGIN_VERSION = "4.8.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
 
 RELATIONS = ("仇恨", "抵触", "普通", "熟识", "相恋")
+DIALECT_SAMPLES = {
+    "贵州话": "晓得、咋个、要得、安逸",
+    "东北话": "咋整、唠嗑、得瑟、麻溜",
+    "四川话": "啥子、莫得、巴适、搞快些",
+    "广东话": "唔该、点解、得闲、搞掂",
+    "台湾腔": "酱紫、蛮、超赞、拍谢",
+    "天津话": "嘛呢、倍儿、哏儿、得嘞",
+    "河南话": "弄啥嘞、中、得劲、木有",
+    "上海话": "阿拉、侬、哪能、老灵",
+}
 DIALECT_REGIONS = {
     "贵州话": "贵州",
     "东北话": "东北",
@@ -3455,7 +3465,11 @@ class HumanCorePlugin(Star):
             return ""
 
     def _dialect_kb_name(self):
-        return self.cfg_str("dialect_kb_name", "陪伴方言库").strip() or "陪伴方言库"
+        base = self.cfg_str("dialect_kb_name", "陪伴方言库").strip() or "陪伴方言库"
+        style = self.cfg_str("dialect_style", "贵州话").strip()
+        if style and style != "贵州话":
+            return base + "·" + style
+        return base
 
     @staticmethod
     def _embedding_provider_id(provider):
@@ -5629,7 +5643,9 @@ class HumanCorePlugin(Star):
         if consult:
             system_parts.append("【回答方式】这是咨询/步骤类问题：先给结论，最多 2-3 句，口语化，保留角色感，不要客服腔。")
         if self.cfg_bool("dialect_enabled", True):
-            system_parts.append("【方言】你的语种设定是「" + self.cfg_str("dialect_style", "贵州话") + "」，偶尔自然带一点当地方言口语，但不要每句都用，也不要硬替换“就是/什么/怎么”。")
+            style = self.cfg_str("dialect_style", "贵州话")
+            samples = DIALECT_SAMPLES.get(style, "")
+            system_parts.append("【方言】你的语种设定是「" + style + "」，偶尔自然用一点当地方言口语（如" + samples + "），但不要每句都用，也不要硬替换“就是/什么/怎么”。")
         if relation == "相恋" and (snap["mood"]["暴躁"] >= 60 or snap["mood"]["生气"] >= 62):
             system_parts.append("【恋人情绪】你在生他的气，但会抱怨、闹别扭、要哄，不会像对普通人一样冷怼或赶人。")
         if getattr(event, "amo_impersonation", False):
@@ -5973,7 +5989,9 @@ class HumanCorePlugin(Star):
         if re.search(r"(怎么|如何|为什么|步骤|怎么办|该怎么做|教程|方法|建议|教我|能不能|是什么|该不该|可不可以)", event.message_str or ""):
             parts.append("【回答方式】这是咨询/步骤类问题：先给结论，最多 2-3 句，口语化，保留角色感，不要客服腔。")
         if self.cfg_bool("dialect_enabled", True):
-            parts.append("【方言】你的语种设定是「" + self.cfg_str("dialect_style", "贵州话") + "」，偶尔自然带一点当地方言口语，但不要每句都用，也不要硬替换“就是/什么/怎么”。")
+            style = self.cfg_str("dialect_style", "贵州话")
+            samples = DIALECT_SAMPLES.get(style, "")
+            parts.append("【方言】你的语种设定是「" + style + "」，偶尔自然用一点当地方言口语（如" + samples + "），但不要每句都用，也不要硬替换“就是/什么/怎么”。")
         if re.search(r"(旅游|景区|景点|去哪|好玩|假期|游玩)", event.message_str or ""):
             scenic_text = await self._scenic_kb_context(event.message_str or "")
             if scenic_text:
@@ -6642,6 +6660,7 @@ class HumanCorePlugin(Star):
                 "version": PLUGIN_VERSION,
                 "memory_source": self.cfg_str("memory_source", "auto"),
                 "dialect_style": self.cfg_str("dialect_style", "贵州话"),
+                "dialect_count": len([row for row in self.db.list_dialects() if self._dialect_region() in str(row.get("region") or "")]),
                 "companion_memory_available": self._companion_plugin() is not None,
             },
         }

@@ -206,7 +206,7 @@
     .settings-list { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
     .settings-group { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: var(--card); min-width: 0; }
     .settings-group summary { cursor: pointer; font-weight: 600; font-size: 13px; }
-    .setting-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(90px, 42%); gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid rgba(44, 39, 56, 0.06); min-width: 0; }
+    .setting-row { display: grid; grid-template-columns: minmax(0, 1fr) 25%; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); min-width: 0; }
     .setting-row > div { min-width: 0; }
     .setting-row:first-of-type { border-top: 0; }
     .setting-row .name { font-size: 12.5px; }
@@ -224,7 +224,6 @@
     .profile-item .meta, .setting-row .hint, .sub { overflow-wrap: anywhere; }
     @media (max-width: 520px) {
       .form-grid { grid-template-columns: 1fr; }
-      .setting-row { grid-template-columns: 1fr; }
       .setting-row .control { justify-content: flex-start; }
       .status-grid { grid-template-columns: 1fr; }
       .template-grid { grid-template-columns: 1fr; }
@@ -266,12 +265,10 @@
     .mood-edit-row { display: grid; grid-template-columns: 42px 1fr 32px; gap: 8px; align-items: center; font-size: 12px; }
     .mood-edit-row input { width: 100%; accent-color: var(--pink); }
     .mood-edit-row .num { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
-    .tab { min-width: 0; padding: 8px 4px; font-size: 12px; }
     @media (max-width: 380px) {
       .grid { grid-template-columns: 1fr; }
       .bars { grid-template-columns: 1fr; }
       .form-grid { grid-template-columns: 1fr; }
-      .setting-row { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -287,6 +284,7 @@
       <button class="tab" data-tab="world">世界</button>
       <button class="tab" data-tab="schedule">日程</button>
       <button class="tab" data-tab="relations">关系</button>
+      <button class="tab" data-tab="actions">操作</button>
       <button class="tab" data-tab="profiles">用户</button>
       <button class="tab" data-tab="settings" data-group="基础">基础</button>
       <button class="tab" data-tab="settings" data-group="状态">参数</button>
@@ -294,7 +292,6 @@
       <button class="tab" data-tab="settings" data-group="私聊">私聊</button>
       <button class="tab" data-tab="settings" data-group="心流">心流</button>
       <button class="tab" data-tab="settings" data-group="分段">分段</button>
-      <button class="tab" data-tab="actions">操作</button>
     </nav>
 
     <div id="tab-status" class="tab-panel">
@@ -337,15 +334,6 @@
           </div>
         </div>
 
-        <div class="status-section" id="thresholdCard">
-          <div class="label">心流阈值</div>
-          <div class="threshold">
-            <div class="track"><span class="fill" id="thresholdBar"></span></div>
-            <div class="num" id="thresholdValue">--</div>
-          </div>
-          <div class="sub" id="thresholdSub"></div>
-        </div>
-
       </section>
     </div>
 
@@ -357,20 +345,6 @@
             <div class="sub">她的生活设定、城市、工作、性格与边界。</div>
           </div>
         </div>
-        <div class="row" style="gap:8px;align-items:center;">
-          <span class="label">语种</span>
-          <select id="worldDialect" class="input grow">
-            <option value="贵州话">贵州话</option>
-            <option value="东北话">东北话</option>
-            <option value="四川话">四川话</option>
-            <option value="广东话">广东话</option>
-            <option value="台湾腔">台湾腔</option>
-            <option value="天津话">天津话</option>
-            <option value="河南话">河南话</option>
-            <option value="上海话">上海话</option>
-          </select>
-        </div>
-        <div class="warning-red">如需更换语种，请不要在人格提示词中提及具体语种，否则会和这里的选择冲突。</div>
         <article id="worldDoc" class="world-doc">加载中…</article>
       </section>
     </div>
@@ -467,6 +441,21 @@
       <section class="card">
         <div class="label">刷新与重建</div>
         <div class="sub">刷新状态、天气、日程；重建世界、语种、景区。</div>
+        <div class="row" style="gap:8px;align-items:center;">
+          <span class="label">语种</span>
+          <select id="worldDialect" class="input grow">
+            <option value="贵州话">贵州话</option>
+            <option value="东北话">东北话</option>
+            <option value="四川话">四川话</option>
+            <option value="广东话">广东话</option>
+            <option value="台湾腔">台湾腔</option>
+            <option value="天津话">天津话</option>
+            <option value="河南话">河南话</option>
+            <option value="上海话">上海话</option>
+          </select>
+        </div>
+        <div class="warning-red">如需更换语种，请不要在人格提示词中提及具体语种，否则会和这里的选择冲突。</div>
+        <div class="sub" id="dialectHint"></div>
         <div class="stack-actions">
           <button id="btnRefresh">刷新状态</button>
           <button id="btnWeather">刷新天气</button>
@@ -759,6 +748,8 @@
       document.getElementById("clock").textContent = time;
       const dialectSelect = document.getElementById("worldDialect");
       if (dialectSelect && data.dialect_style) dialectSelect.value = data.dialect_style;
+      const dialectHint = document.getElementById("dialectHint");
+      if (dialectHint) dialectHint.textContent = "当前语种词条：" + (data.dialect_count || 0) + " 条";
       document.getElementById("dominant").textContent = data.dominant || "—";
       document.getElementById("moodScore").textContent = data.mood_score ? Math.round(data.mood_score) : "--";
 
@@ -848,15 +839,6 @@
         activityPct = Math.max(0, Math.min(100, (nowMin - startMin) / Math.max(1, endMin - startMin) * 100));
       }
       document.getElementById("activityBar").style.width = activityPct + "%";
-
-      const threshold = data.threshold || {};
-      const thresholdValue = Number(threshold.value || 0);
-      document.getElementById("thresholdValue").textContent = thresholdValue ? thresholdValue.toFixed(0) : "--";
-      document.getElementById("thresholdBar").style.width = Math.max(0, Math.min(100, thresholdValue)) + "%";
-      document.getElementById("thresholdSub").textContent =
-        "基础 " + (threshold.base !== undefined ? threshold.base : "--") +
-        " · 活跃度 " + (data.activity_rate !== undefined ? data.activity_rate : "--") + "%" +
-        " · 越高越不想说话";
 
       const counts = data.counts || {};
       document.getElementById("counts").textContent =
@@ -1459,6 +1441,43 @@
       return labels && labels[value] ? labels[value] : value;
     }
 
+    const TEMPLATE_FALLBACKS = {
+      hf_judge_rules: {
+        templates: {
+          rule: {
+            name: "评分规则",
+            items: {
+              dimension_name: { description: "维度标识（英文）", type: "string", default: "", invisible: true },
+              dimension_display: { description: "维度中文名", type: "string", default: "" },
+              weight: { description: "权重 (0-1)", type: "float", default: 0.2 },
+              low_desc: { description: "低分情况描述", type: "string", default: "" },
+              high_desc: { description: "高分情况描述", type: "string", default: "" },
+            },
+          },
+        },
+      },
+      hf_group_threshold_configs: {
+        templates: {
+          group_config: {
+            name: "群聊阈值配置",
+            items: {
+              chat_id: { description: "群聊标识", type: "string", default: "" },
+              reply_threshold: { description: "基础回复阈值", type: "float", default: 0.6 },
+              dynamic_threshold_max: { description: "动态阈值上限", type: "float", default: 0.85 },
+              dynamic_threshold_min: { description: "动态阈值下限", type: "float", default: 0.35 },
+            },
+          },
+        },
+      },
+    };
+
+    function templateDefs(item) {
+      const own = item.templates || {};
+      if (Object.keys(own).length) return own;
+      const fallback = TEMPLATE_FALLBACKS[item.key];
+      return fallback ? fallback.templates : {};
+    }
+
     function templateFieldInput(field, value) {
       const key = "";
       const type = field && field.type ? field.type : "string";
@@ -1488,12 +1507,13 @@
     }
 
     function appendTemplateCard(container, item, value) {
-      const entries = Object.entries(item.templates || {});
+      const templates = templateDefs(item);
+      const entries = Object.entries(templates);
       let templateKey = value && value.__template_key;
-      if (!templateKey || !(item.templates || {})[templateKey]) {
+      if (!templateKey || !templates[templateKey]) {
         templateKey = entries.length ? entries[0][0] : "";
       }
-      const meta = (item.templates || {})[templateKey] || {};
+      const meta = templates[templateKey] || {};
       const card = document.createElement("div");
       card.className = "template-card";
       const head = document.createElement("div");
