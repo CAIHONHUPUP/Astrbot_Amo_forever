@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.4.4
+我想永远陪着你 / 我想永远陪伴你 3.4.6
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.4.4"
+PLUGIN_VERSION = "3.4.6"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -1847,13 +1847,14 @@ class HumanState:
         hourly = self._hourly_schedule(self.schedule.get(today_str()) or [])
         now_min = minutes_now()
         blocks = [
-            {"start": "00:00", "end": "08:00", "title": "睡觉", "activity": "睡觉", "place": "家", "category": "sleep"},
-            {"start": "08:01", "end": "16:00", "title": "上班", "activity": "上班", "place": "公司", "category": "work"},
-            {"start": "16:01", "end": "23:59", "title": "下班后", "activity": "下班", "place": "家", "category": "rest"},
+            {"start": "00:00", "end": "06:00", "title": "夜间", "activity": "休息", "place": "家", "category": "sleep"},
+            {"start": "06:00", "end": "12:00", "title": "上午", "activity": "活动", "place": "家", "category": "life"},
+            {"start": "12:00", "end": "18:00", "title": "下午", "activity": "活动", "place": "家", "category": "life"},
+            {"start": "18:00", "end": "23:59", "title": "晚上", "activity": "活动", "place": "家", "category": "rest"},
         ]
         for block in blocks:
             bstart = parse_hhmm(block["start"])
-            bend = parse_hhmm(block["end"])
+            bend = 24 * 60 if block["end"] == "23:59" else parse_hhmm(block["end"])
             children = []
             for item in hourly:
                 start = max(bstart, parse_hhmm(item.get("start")))
@@ -1874,6 +1875,9 @@ class HumanState:
                 children.append(hour)
             block["children"] = children
             block["current"] = any(child["current"] for child in children)
+            if children:
+                block["place"] = children[0].get("place") or block["place"]
+                block["activity"] = children[0].get("activity") or block["activity"]
         return blocks
 
     def _micro_segments(self, hour, start, end):
@@ -2008,10 +2012,16 @@ class HumanState:
             {"start": "22:00", "end": "23:00", "activity": "洗澡、护肤", "place": "家", "category": "life"},
             {"start": "23:00", "end": "23:59", "activity": "睡觉", "place": "家", "category": "sleep"},
         ]
+        if day_meta()["rest"] and random.random() < 0.18:
+            for item in items:
+                if item.get("start") in ("10:00", "11:00"):
+                    item.update(activity="临时加班处理点事", place="家", category="work")
         return self._with_daily_events(items)
 
     def _with_daily_events(self, items):
         """加入熬夜→精神恍惚→工作失误→被老板骂→扣工资/同事闹脾气的事件链。"""
+        if day_meta()["rest"]:
+            return items
         late_night = md5_int(today_str() + "late_night") % 4 == 0
         for item in items:
             hour = parse_hhmm(item.get("start")) // 60
@@ -2057,8 +2067,20 @@ class HumanState:
         health = self.health_info()
         meta = day_meta()
         items = await self.p.llm.gen_schedule(umo, world, weather, period, health, meta)
+        generated = bool(items)
         if not items:
             items = self._fallback_schedule()
+        if generated and meta.get("rest"):
+            has_commute = any(
+                str(item.get("category") or "") == "commute" for item in items
+            )
+            work_minutes = 0
+            for item in items:
+                if str(item.get("category") or "") in ("work", "study"):
+                    work_minutes += max(0, parse_hhmm(item.get("end")) - parse_hhmm(item.get("start")))
+            if has_commute or work_minutes > 240:
+                # 休息日最多允许 4 小时短时加班；通勤/全天上班按休息日兜底。
+                items = self._fallback_schedule()
         items = self._with_daily_events(items)
         items = self._hourly_schedule(items)
         self.schedule[today] = items
