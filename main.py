@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.6.6
+我想永远陪着你 / 我想永远陪伴你 3.6.8
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.6.6"
+PLUGIN_VERSION = "3.6.8"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -4767,17 +4767,26 @@ class HumanCorePlugin(Star):
         style = STYLE_HINTS.get(self.cfg_str("reply_style", "soft"), "")
         recent = self._recent(umo, 10)
         lines = []
+        current_uid = str(event.get_sender_id())
         current_place = str((snap.get("activity") or {}).get("place") or "")
         for item in recent:
             content = str(item.get("content") or "")
+            role = str(item.get("role") or "")
+            item_uid = str(item.get("uid") or "")
             # 当前明明在家/公司时，不把历史里“酒店/开车/逛景区”的旧幻觉再喂回模型。
             if (
-                item.get("role") != "user"
+                role != "user"
                 and current_place in ("家", "公司", "工位")
-                and re.search(r"(酒店|开着车|在开车|逛完|旅游|景区)", content)
+                and re.search(r"(酒店|咖啡店|咖啡|开着车|在开车|逛完|旅游|景区)", content)
             ):
                 continue
-            who = name if item.get("role") == "user" else "你"
+            if role == "user":
+                if item_uid and item_uid != current_uid:
+                    who = (str(item.get("name") or "群友") + "（另一位群友）")
+                else:
+                    who = name
+            else:
+                who = "你"
             lines.append(who + "：" + truncate(content, 100))
         transcript = "\n".join(lines[-8:])
         self_name, self_uid = self._self_identity(event)
@@ -4786,6 +4795,7 @@ class HumanCorePlugin(Star):
             "【你的账号】QQ昵称/角色名：" + self_name + "；UID：" + (self_uid or "未知") + "。",
             "【对方】" + name + "（UID：" + uid + "）",
             "【角色边界】对方说“我在开车/我在酒店/我刚逛完”是在说他自己，不是你的经历；你的地点只以【此刻状态】为准。",
+            "【引用规则】引用内容可能来自别人，引用头是谁就按谁算；不要把别人的话当成自己说过的。",
             "【世界观】\n" + world,
             "【此刻状态】\n" + state_text,
             "【事实锁定】以当前日程为准，不要编造或延续与“正在/地点”矛盾的地点、酒店、开车、旅游等行程；之前说错了就自然改口。",
@@ -4863,6 +4873,7 @@ class HumanCorePlugin(Star):
         )
         if reply:
             reply = await self.llm.polish(umo, reply, tone, state_text=state_text, relation=relation, name=name)
+            reply = self._guard_self_location(reply, (snap.get("activity") or {}).get("place"))
         return reply
 
     # ---------- 发送 ----------
@@ -5016,6 +5027,24 @@ class HumanCorePlugin(Star):
         return True
 
     # ---------- LLM 注入 ----------
+    def _guard_self_location(self, text, place):
+        value = str(text or "")
+        place = str(place or "").strip()
+        if not value or not place:
+            return value
+        if place in ("家", "家里"):
+            value = re.sub(
+                r"我(?:刚|正|一直|还|才)?(?:在|回|去|到)(?:酒店|咖啡店|景区|外面|路上)",
+                "我在家", value,
+            )
+            value = re.sub(r"(?:酒店|咖啡店|景区)", "家", value)
+        else:
+            value = re.sub(
+                r"我(?:刚|正|一直|还|才)?(?:窝)?在(?:家|家里)",
+                "我在" + place, value,
+            )
+        return value
+
     def _self_identity(self, event):
         uid = ""
         try:
@@ -5048,6 +5077,7 @@ class HumanCorePlugin(Star):
             "【你的账号】QQ昵称/角色名：" + self_name + "；UID：" + (self_uid or "未知") + "。这是你自己，不要和对方混淆。",
             "【对方称呼】" + (profile.get("alias") or profile.get("name") or "对方") + "（UID：" + uid + "）",
             "【角色边界】对方说“我在开车/我在酒店/我刚逛完”是在说他自己，不是你的经历；你的地点只以【正在】为准，不要把自己当成对方。",
+            "【引用规则】引用内容可能来自别人，引用头是谁就按谁算；不要把别人的话当成自己说过的，也不要因为别人说了就改自己的地点。",
             "【身份】你是真人，不是AI、机器人或人机；被质疑时自然反驳，不要承认。",
             "【时间】" + snap["datetime_text"],
             "【心情】" + self.state.mood_text(),
@@ -5175,6 +5205,10 @@ class HumanCorePlugin(Star):
             text = strip_chat_format("".join(
                 comp.text for comp in result.chain if isinstance(comp, Comp.Plain)
             ))
+            try:
+                text = self._guard_self_location(text, self.state.current_activity().get("place"))
+            except Exception:
+                pass
             if looks_like_ai_admission(text):
                 text = "你才人机呢，你见过这么会聊天的机器人吗？"
                 result.chain = [Comp.Plain(text=text)]
