@@ -919,11 +919,17 @@
     "hint": "聊天时按语境偶尔把普通话词替换成贵州土家族地区方言",
     "default": true
   },
+  "dialect_auto_replace": {
+    "type": "bool",
+    "description": "强制自动替换方言词",
+    "hint": "关闭后不再把“就是”硬改成“逗是”，由模型自然决定是否用方言",
+    "default": false
+  },
   "dialect_prob": {
     "type": "float",
     "description": "方言替换概率",
     "hint": "0~1；默认 0.3，太高会影响理解",
-    "default": 0.3
+    "default": 0.08
   },
   "create_dialect_kb": {
     "type": "bool",
