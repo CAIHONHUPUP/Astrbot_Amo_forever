@@ -1,6 +1,6 @@
 # 我想永远陪伴你
 
-> GitHub：https://github.com/GM888888456/amo_forever
+> GitHub：https://github.com/GM888888456/Astrbot_Amo_forever
 >
 > 反馈、Bug、建议请加 QQ 群：**1055679275**
 
@@ -136,7 +136,7 @@
 1. **先卸载/停用**单独的心流插件和本地分段插件，避免重复触发：
    - `astrbot_plugin_xinliuchenjinban`
    - `astrbot_plugin_custome_segment_reply`
-2. 删除旧的 `data/plugins/amo_forever` 目录；
+2. 删除旧的 `data/plugins/Astrbot_Amo_forever` 目录；
 3. 把本插件目录放进 `data/plugins/`，或在 WebUI 上传 zip；
 4. **重启 AstrBot**（只重载插件不够，旧 Web API 路由会残留）；
 5. 打开插件配置，确认：
@@ -189,8 +189,8 @@
 
 ## 数据
 
-- 配置：`data/config/amo_forever_config.json`
-- 数据：`data/plugin_data/amo_forever/amo_forever.db`
+- 配置：`data/config/Astrbot_Amo_forever_config.json`
+- 数据：`data/plugin_data/Astrbot_Amo_forever/amo_forever.db`
 - 面板：`views/dashboard/index.html`
 
 记忆源为陪伴插件时，本插件仍保留本地 DB 作为回退；不会写入陪伴插件的数据。
