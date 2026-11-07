@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.4.0
+我想永远陪着你 / 我想永远陪伴你 3.4.2
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.4.0"
+PLUGIN_VERSION = "3.4.2"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -118,6 +118,61 @@ STOP_NAMES = {"学生", "上班族", "男孩子", "女孩子", "男生", "女生
 def now_ts():
     return time.time()
 
+
+CN_HOLIDAYS = {
+    "2025-01-01": "元旦",
+    "2025-01-28": "除夕", "2025-01-29": "春节", "2025-01-30": "春节", "2025-01-31": "春节", "2025-02-01": "春节", "2025-02-02": "春节", "2025-02-03": "春节", "2025-02-04": "春节",
+    "2025-04-04": "清明",
+    "2025-05-01": "劳动节",
+    "2025-05-31": "端午",
+    "2025-10-01": "国庆", "2025-10-02": "国庆", "2025-10-03": "国庆", "2025-10-04": "国庆", "2025-10-05": "国庆", "2025-10-06": "国庆", "2025-10-07": "国庆", "2025-10-08": "国庆",
+    "2025-10-06": "中秋",
+    "2026-01-01": "元旦",
+    "2026-02-16": "除夕", "2026-02-17": "春节", "2026-02-18": "春节", "2026-02-19": "春节", "2026-02-20": "春节", "2026-02-21": "春节", "2026-02-22": "春节", "2026-02-23": "春节",
+    "2026-04-05": "清明",
+    "2026-05-01": "劳动节",
+    "2026-06-19": "端午",
+    "2026-09-25": "中秋",
+    "2026-10-01": "国庆", "2026-10-02": "国庆", "2026-10-03": "国庆", "2026-10-04": "国庆", "2026-10-05": "国庆", "2026-10-06": "国庆", "2026-10-07": "国庆",
+    "2027-01-01": "元旦",
+    "2027-02-05": "除夕", "2027-02-06": "春节", "2027-02-07": "春节", "2027-02-08": "春节", "2027-02-09": "春节", "2027-02-10": "春节", "2027-02-11": "春节",
+    "2027-04-05": "清明",
+    "2027-05-01": "劳动节",
+    "2027-06-09": "端午",
+    "2027-09-15": "中秋",
+    "2027-10-01": "国庆", "2027-10-02": "国庆", "2027-10-03": "国庆", "2027-10-04": "国庆", "2027-10-05": "国庆", "2027-10-06": "国庆", "2027-10-07": "国庆",
+}
+
+SOLAR_TERMS = {
+    "2025-01-05": "小寒", "2025-01-20": "大寒", "2025-02-03": "立春", "2025-02-18": "雨水", "2025-03-05": "惊蛰", "2025-03-20": "春分", "2025-04-04": "清明", "2025-04-20": "谷雨", "2025-05-05": "立夏", "2025-05-21": "小满", "2025-06-05": "芒种", "2025-06-21": "夏至", "2025-07-07": "小暑", "2025-07-22": "大暑", "2025-08-07": "立秋", "2025-08-23": "处暑", "2025-09-07": "白露", "2025-09-23": "秋分", "2025-10-08": "寒露", "2025-10-23": "霜降", "2025-11-07": "立冬", "2025-11-22": "小雪", "2025-12-07": "大雪", "2025-12-21": "冬至",
+    "2026-01-05": "小寒", "2026-01-20": "大寒", "2026-02-04": "立春", "2026-02-18": "雨水", "2026-03-05": "惊蛰", "2026-03-20": "春分", "2026-04-05": "清明", "2026-04-20": "谷雨", "2026-05-05": "立夏", "2026-05-21": "小满", "2026-06-05": "芒种", "2026-06-21": "夏至", "2026-07-07": "小暑", "2026-07-23": "大暑", "2026-08-07": "立秋", "2026-08-23": "处暑", "2026-09-07": "白露", "2026-09-23": "秋分", "2026-10-08": "寒露", "2026-10-23": "霜降", "2026-11-07": "立冬", "2026-11-22": "小雪", "2026-12-07": "大雪", "2026-12-21": "冬至",
+    "2027-01-05": "小寒", "2027-01-20": "大寒", "2027-02-04": "立春", "2027-02-19": "雨水", "2027-03-06": "惊蛰", "2027-03-21": "春分", "2027-04-05": "清明", "2027-04-20": "谷雨", "2027-05-06": "立夏", "2027-05-21": "小满", "2027-06-06": "芒种", "2027-06-21": "夏至", "2027-07-07": "小暑", "2027-07-23": "大暑", "2027-08-08": "立秋", "2027-08-23": "处暑", "2027-09-08": "白露", "2027-09-23": "秋分", "2027-10-08": "寒露", "2027-10-24": "霜降", "2027-11-08": "立冬", "2027-11-22": "小雪", "2027-12-07": "大雪", "2027-12-22": "冬至",
+}
+
+
+def day_meta(day=None):
+    """返回某天的节日、节气和是否休息日。"""
+    try:
+        target = date.fromisoformat(str(day)) if day else date.today()
+    except Exception:
+        target = date.today()
+    key = target.isoformat()
+    holiday = CN_HOLIDAYS.get(key, "")
+    term = SOLAR_TERMS.get(key, "")
+    weekend = target.weekday() >= 5
+    rest = bool(weekend or holiday)
+    label = "、".join(item for item in (holiday, term) if item)
+    if not label and weekend:
+        label = "周末"
+    return {
+        "date": key,
+        "weekday": "一二三四五六日"[target.weekday()],
+        "weekend": weekend,
+        "holiday": holiday,
+        "solar_term": term,
+        "rest": rest,
+        "label": label,
+    }
 
 def today_str():
     return date.today().isoformat()
@@ -1898,7 +1953,7 @@ class HumanState:
 
     def _fallback_schedule(self):
         """真人化的整点兜底日程：通勤、开会、下午茶、上厕所、摸鱼都有。"""
-        weekday = date.today().weekday() < 5
+        weekday = not day_meta()["rest"]
         if weekday:
             items = [
                 {"start": "00:00", "end": "01:00", "activity": "睡觉", "place": "家", "category": "sleep"},
@@ -1985,6 +2040,10 @@ class HumanState:
             self.db.kv_set("schedule_version", SCHEDULE_VERSION)
             self.db.save_schedule(today, existing)
             return existing
+        if existing and day_meta()["rest"] and any(
+            str(item.get("category") or "") in ("work", "study", "commute") for item in existing
+        ):
+            existing = None
         if existing:
             hourly = self._hourly_schedule(existing)
             if hourly != existing:
@@ -1996,7 +2055,8 @@ class HumanState:
         weather = await self.refresh_weather()
         period = self.period_info()
         health = self.health_info()
-        items = await self.p.llm.gen_schedule(umo, world, weather, period, health)
+        meta = day_meta()
+        items = await self.p.llm.gen_schedule(umo, world, weather, period, health, meta)
         if not items:
             items = self._fallback_schedule()
         items = self._with_daily_events(items)
@@ -2399,17 +2459,18 @@ class LLMService:
             "summary": str(data.get("summary") or ""),
         }
 
-    async def gen_schedule(self, umo, world, weather, period, health):
+    async def gen_schedule(self, umo, world, weather, period, health, meta=None):
         system = "你是作息安排器。只输出 JSON 数组，不要输出其他文字。"
         prompt = (
             "角色世界观：\n" + truncate(json.dumps(world, ensure_ascii=False), 1200) + "\n"
             "今天是 " + today_str() + " 星期" + weekday_cn() + "。\n"
+            "今天日期标签：" + str((meta or {}).get("label") or "普通工作日") + "；"
+            + ("今天是休息日，不要安排上班、通勤或工作。" if (meta or {}).get("rest") else "") + "\n"
             "天气：" + str(weather.get("text", "")) + " " + str(weather.get("temp", "")) + "℃。\n"
             "身体：" + str(health.get("status", "健康")) + "；生理期：" + str(period.get("phase", "")) + "。\n"
             "请生成角色今天 00:00-24:00 的日程，共 24 条，每小时一条。"
-            "活动要像真人：通勤、到公司、开电脑、开会、下午茶、上厕所、摸鱼、午饭、午休、下班通勤都要有，"
-            "不要连续几个小时都只写“上班”。可以加入熬夜、精神恍惚、工作失误、被老板骂、扣工资、"
-            "和同事聊天/闹脾气等事件，用 detail 字段标注。JSON 数组，每项包含："
+            + ("休息日安排：睡懒觉、收拾屋子、追剧、看漫画、逛菜市场/商场、朋友聚会、散步等，不要出现上班/通勤/公司。\n" if (meta or {}).get("rest") else "工作日安排：通勤、到公司、开电脑、开会、下午茶、上厕所、摸鱼、午饭、午休、下班通勤都要有，不要连续几个小时都只写“上班”。可以加入熬夜、精神恍惚、工作失误、被老板骂、扣工资、和同事聊天/闹脾气等事件，用 detail 字段标注。\n")
+            + "JSON 数组，每项包含："
             "start(HH:MM)、end(HH:MM)、activity(在做什么)、place(地点)、"
             "category(只能是 sleep/work/study/commute/meal/rest/play/social/life)。"
             "时间要连续、不要重叠。"
@@ -3509,6 +3570,71 @@ class HumanCorePlugin(Star):
             self._last_group = group_id
         self._last_umo = umo
 
+    def _lover_aliases(self):
+        aliases = {}
+        try:
+            profiles = self.db.list_profiles("", 500)
+        except Exception:
+            profiles = []
+        for profile in profiles:
+            if str(profile.get("relation") or "") != "相恋":
+                continue
+            uid = str(profile.get("uid") or "")
+            values = [profile.get("name") or ""]
+            values.extend(re.split(r"[；;、,，/\s]+", str(profile.get("alias") or "")))
+            for value in values:
+                name = str(value or "").strip()
+                if len(name) >= 1:
+                    aliases[name] = uid
+        return aliases
+
+    def _detect_impersonation(self, event):
+        """群里非恋人 UID 使用/冒充恋人的名字或爱称时，5 分钟内累计降级。"""
+        group_id = str(event.get_group_id() or "")
+        if not group_id:
+            return False
+        uid = str(event.get_sender_id())
+        lovers = self._lover_aliases()
+        if not lovers or uid in set(lovers.values()):
+            return False
+        sender_name = str(event.get_sender_name() or "").strip()
+        text = str(event.message_str or "").strip()
+        hit = ""
+        if sender_name in lovers:
+            hit = sender_name
+        elif text in lovers:
+            hit = text
+        else:
+            for alias in lovers:
+                if re.search(r"(?:我才是|我是|叫我|叫我做|以后叫我|我才是那个)\s*" + re.escape(alias), text):
+                    hit = alias
+                    break
+        if not hit:
+            return False
+        key = "impersonate_%s_%s" % (group_id, uid)
+        now = now_ts()
+        stamps = self.db.kv_get(key, [])
+        if not isinstance(stamps, list):
+            stamps = []
+        stamps = [to_float(item, 0) for item in stamps if now - to_float(item, 0) <= 300]
+        stamps.append(now)
+        self.db.kv_set(key, stamps)
+        count = len(stamps)
+        profile = self.db.get_profile(uid) or {}
+        current = str(profile.get("relation") or "普通")
+        relation = current
+        if count >= 3 and current != "仇恨":
+            relation = "仇恨"
+        elif count == 1 and current != "仇恨":
+            relation = "抵触"
+        if relation != current:
+            self.db.update_profile(uid, relation=relation)
+            logger.info(
+                "[amo] 识别到冒充恋人称呼: %s -> %s（%s，5分钟内第%d次）"
+                % (uid, relation, hit, count)
+            )
+        return True
+
     def _learn_alias(self, event, text, uid, profile):
         """从“以后叫我XX / 叫他XX”里学习称呼，并在后续沿用。"""
         blocked = {"干嘛", "什么", "名字", "滚", "闭嘴", "一声", "一下", "出来"}
@@ -4233,6 +4359,11 @@ class HumanCorePlugin(Star):
         if not private and not self.cfg_bool("enable_group_reply", True):
             return
 
+        if not private:
+            try:
+                self._detect_impersonation(event)
+            except Exception as exc:
+                logger.debug("[amo] 冒充检测失败: %s" % exc)
         await self._learn(event, text)
         profile = self.db.get_profile(uid)
 
@@ -4640,6 +4771,8 @@ class HumanCorePlugin(Star):
             "【天气】" + snap["weather_text"],
             "【正在】" + snap["activity"].get("activity", "休息"),
             "【与对方关系】" + relation,
+            "【身份核验】关系只按 UID 判断，昵称、群名片、自称和爱称都可以伪造；"
+            "如果有人自称是你恋人、或使用你恋人的爱称，但 UID 不是相恋关系，不要用恋人语气，保持警惕。",
             "【语气】" + self._tone_with_continuity(umo, self.state.tone_text(snap, relation)),
             "【聊天格式】不要复述 @昵称、QQ号、群号、ID 或后台字段；识人/记称呼时自然回一句“好，我记住了/这是你朋友吗”，不要把记录念出来。",
         ]
@@ -5244,6 +5377,7 @@ class HumanCorePlugin(Star):
         counts = self.db.counts()
         return {
             "time": snap["datetime_text"],
+            "day": day_meta(),
             "mood": snap["mood"],
             "dominant": snap["dominant"],
             "mood_score": round(snap["mood_score"], 1),
@@ -6215,7 +6349,7 @@ class HumanCorePlugin(Star):
             items = await self.state.ensure_schedule(self._last_umo)
         else:
             items = self.state._cover_schedule(self.db.get_schedule(day) or [])
-        return {"code": 0, "data": {"day": day, "items": items, "tree": self.state.schedule_tree(), "current": self.state.current_activity()}}
+        return {"code": 0, "data": {"day": day, "meta": day_meta(day), "items": items, "tree": self.state.schedule_tree(), "current": self.state.current_activity()}}
 
     async def api_kb_regen(self):
         await self._ensure_ready()
