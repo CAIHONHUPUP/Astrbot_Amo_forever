@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 4.2.0
+我想永远陪着你 / 我想永远陪伴你 4.2.2
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "4.2.0"
+PLUGIN_VERSION = "4.2.2"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -4112,24 +4112,40 @@ class HumanCorePlugin(Star):
                     pass
 
     def _memcomp_profile_uids(self, plugin=None):
-        """只统计 Memory Companion 真正有画像的人，而不是 identities/memories 里所有 ID。"""
+        """取 Memory Companion 真正有画像资料的用户，返回真实 UID 而不是 person_ 哈希。"""
         plugin = plugin or self._companion_plugin()
         if not self._is_memory_companion(plugin):
             return set()
-        rows = self._memcomp_rows(
-            "SELECT person_id FROM portrait_people WHERE person_id!='' "
-            "AND profile_status NOT IN ('deleted','quarantined')"
+        user_roles = (
+            "conversation_partner", "external_memory_owner", "user", "admin",
+            "member", "friend", "owner", "lover", "partner",
         )
-        uids = {str(row.get("person_id") or "").strip() for row in rows}
+        placeholders = ",".join("?" for _ in user_roles)
+        rows = self._memcomp_rows(
+            "SELECT entity_id, display_name, profile FROM identities "
+            "WHERE entity_kind='user' AND entity_id!='' "
+            "AND LOWER(COALESCE(role,'')) IN (" + placeholders + ") "
+            "AND COALESCE(profile,'') NOT IN ('', '{}', 'null')",
+            user_roles,
+        )
+        uids = {str(row.get("entity_id") or "").strip() for row in rows}
         uids.discard("")
         if uids:
             return uids
-        # 旧库没有 portrait_people 时，退回 identities，但排除 bot/system/group。
         rows = self._memcomp_rows(
             "SELECT entity_id FROM identities WHERE entity_kind='user' AND entity_id!='' "
-            "AND LOWER(COALESCE(role,'')) NOT IN ('bot','assistant','system','group','unknown')"
+            "AND LOWER(COALESCE(role,'')) NOT IN ('bot','assistant','system','group','unknown')",
         )
-        return {str(row.get("entity_id") or "").strip() for row in rows if str(row.get("entity_id") or "").strip()}
+        uids = {str(row.get("entity_id") or "").strip() for row in rows}
+        uids.discard("")
+        if uids:
+            return uids
+        # 兜底：老库只有 portrait_people，没有可用 identities。
+        rows = self._memcomp_rows(
+            "SELECT person_id FROM portrait_people WHERE person_id!='' "
+            "AND profile_status='active'"
+        )
+        return {str(row.get("person_id") or "").strip() for row in rows if str(row.get("person_id") or "").strip()}
 
     def _memcomp_user_count(self, plugin=None):
         plugin = plugin or self._companion_plugin()

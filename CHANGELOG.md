@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.2.2
+
+- 修复 Memory Companion 画像名字显示为 `person_xxx` 哈希的问题：优先读 `identities` 的真实 `display_name`；
+- 只取有画像资料（profile 非空）的用户，群/机器人/无画像 ID 不再计入；
+- 保留 `portrait_people` 作为老库兜底；
+- 配合 4.2.0 的清空逻辑，“同步陪伴档案”后旧空画像会被清理。
+
 ## 4.2.0
 
 - 修复记忆源用户数量虚高：
