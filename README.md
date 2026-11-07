@@ -4,7 +4,7 @@
 >
 > 反馈、Bug、建议请加 QQ 群：**1055679275**
 
-基于 AstrBot 的“我想永远陪伴你”。3.6.4 起**群聊只使用完整心流引擎**，**发送只使用完整本地分段引擎**，不需要再单独安装 `astrbot_plugin_xinliuchenjinban` 和 `astrbot_plugin_custome_segment_reply`。
+基于 AstrBot 的“我想永远陪伴你”。3.6.6 起**群聊只使用完整心流引擎**，**发送只使用完整本地分段引擎**，不需要再单独安装 `astrbot_plugin_xinliuchenjinban` 和 `astrbot_plugin_custome_segment_reply`。
 
 ## 它是怎么工作的
 
