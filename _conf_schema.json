@@ -937,6 +937,17 @@
     "hint": "启动后把方言库同步到 AstrBot 知识库；需要先配置 Embedding 供应商",
     "default": true
   },
+  "create_scenic_kb": {
+    "type": "bool",
+    "description": "自动创建景区知识库",
+    "hint": "把内置的 3A+ 景区与游玩项目同步到 AstrBot 知识库",
+    "default": true
+  },
+  "scenic_kb_name": {
+    "type": "string",
+    "description": "景区知识库名称",
+    "default": "中国景区知识库"
+  },
   "dialect_kb_name": {
     "type": "string",
     "description": "方言知识库名称",
