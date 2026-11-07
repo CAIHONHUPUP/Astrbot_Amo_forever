@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.4.2
+我想永远陪着你 / 我想永远陪伴你 3.4.4
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.4.2"
+PLUGIN_VERSION = "3.4.4"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -3067,7 +3067,9 @@ class HumanCorePlugin(Star):
         text = str(text or "")
         if not text or not self.cfg_bool("dialect_enabled", True):
             return text
-        if random.random() > clamp(self.cfg_float("dialect_prob", 0.3), 0.0, 1.0):
+        if not self.cfg_bool("dialect_auto_replace", False):
+            return text
+        if random.random() > clamp(self.cfg_float("dialect_prob", 0.08), 0.0, 1.0):
             return text
         try:
             rows = self.db.list_dialects()
@@ -3570,6 +3572,32 @@ class HumanCorePlugin(Star):
             self._last_group = group_id
         self._last_umo = umo
 
+    def _register_lover(self, uid):
+        uid = str(uid or "").strip()
+        if uid:
+            self.db.kv_set("lover_uid_" + uid, True)
+
+    def _is_registered_lover(self, uid):
+        uid = str(uid or "").strip()
+        if not uid:
+            return False
+        if self.db.kv_get("lover_uid_" + uid, False):
+            return True
+        profile = self.db.get_profile(uid) or {}
+        if str(profile.get("relation") or "") == "相恋":
+            self._register_lover(uid)
+            return True
+        return False
+
+    def _restore_lover_relation(self, uid):
+        uid = str(uid or "").strip()
+        if not self._is_registered_lover(uid):
+            return
+        profile = self.db.get_profile(uid) or {}
+        if str(profile.get("relation") or "") in ("抵触", "仇恨"):
+            self.db.update_profile(uid, relation="相恋")
+            logger.info("[amo] 恋人 UID 恢复为相恋: %s" % uid)
+
     def _lover_aliases(self):
         aliases = {}
         try:
@@ -3577,9 +3605,11 @@ class HumanCorePlugin(Star):
         except Exception:
             profiles = []
         for profile in profiles:
-            if str(profile.get("relation") or "") != "相恋":
-                continue
             uid = str(profile.get("uid") or "")
+            if str(profile.get("relation") or "") == "相恋":
+                self._register_lover(uid)
+            elif not self._is_registered_lover(uid):
+                continue
             values = [profile.get("name") or ""]
             values.extend(re.split(r"[；;、,，/\s]+", str(profile.get("alias") or "")))
             for value in values:
@@ -3595,7 +3625,7 @@ class HumanCorePlugin(Star):
             return False
         uid = str(event.get_sender_id())
         lovers = self._lover_aliases()
-        if not lovers or uid in set(lovers.values()):
+        if not lovers or uid in set(lovers.values()) or self._is_registered_lover(uid):
             return False
         sender_name = str(event.get_sender_name() or "").strip()
         text = str(event.message_str or "").strip()
@@ -3611,6 +3641,7 @@ class HumanCorePlugin(Star):
                     break
         if not hit:
             return False
+        setattr(event, "amo_impersonation", True)
         key = "impersonate_%s_%s" % (group_id, uid)
         now = now_ts()
         stamps = self.db.kv_get(key, [])
@@ -4365,6 +4396,7 @@ class HumanCorePlugin(Star):
             except Exception as exc:
                 logger.debug("[amo] 冒充检测失败: %s" % exc)
         await self._learn(event, text)
+        self._restore_lover_relation(uid)
         profile = self.db.get_profile(uid)
 
         if private:
@@ -4538,6 +4570,8 @@ class HumanCorePlugin(Star):
             "【关系】你和" + name + "的关系是「" + relation + "」。",
             "【聊天格式】不要把 @昵称、QQ号、群号、ID 或后台记录念出来；识人时只自然回应，不要复述。",
         ]
+        if getattr(event, "amo_impersonation", False):
+            system_parts.append("【冒充警告】当前 UID 不是你的恋人，却在冒充/使用恋人称呼；直接拆穿/怼回去，不要用恋人语气。")
         if self._recent_bot_initiated(umo):
             system_parts.append("【你主动发起】你刚主动给ta发过消息，ta现在回复你；不要说自己被吵醒/被打扰，正常接话。")
         if re.search(r"(记住|以后喊|以后叫|喊他|喊她|叫他|叫她|称呼他|称呼她)", text or ""):
@@ -4570,7 +4604,7 @@ class HumanCorePlugin(Star):
         try:
             dialect_context = await self._dialect_kb_context(text)
             if dialect_context:
-                system_parts.append("【方言参考】\n" + dialect_context)
+                system_parts.append("【方言参考】只在合适口语词上偶尔用，不要硬改“就是/什么/怎么”，句子要通顺。\n" + dialect_context)
         except Exception:
             pass
         relation_network = self._relation_network_text(uid)
@@ -4776,6 +4810,11 @@ class HumanCorePlugin(Star):
             "【语气】" + self._tone_with_continuity(umo, self.state.tone_text(snap, relation)),
             "【聊天格式】不要复述 @昵称、QQ号、群号、ID 或后台字段；识人/记称呼时自然回一句“好，我记住了/这是你朋友吗”，不要把记录念出来。",
         ]
+        if getattr(event, "amo_impersonation", False):
+            parts.append(
+                "【冒充警告】当前 UID 不是你的恋人，却在冒充或使用恋人称呼；"
+                "直接拆穿/怼回去，不要承认，不要用恋人语气，也不要报 QQ。"
+            )
         if self._recent_bot_initiated(umo):
             parts.append("【你主动发起】你刚主动给ta发过消息，ta现在回复你；不要说自己被吵醒/被打扰，正常接话。")
         if bool(re.search(r"(?<![a-z])ai(?![a-z])", (event.message_str or "").lower())) or any(word in (event.message_str or "").lower() for word in ("机器人", "人机", "人工智能", "不是真人", "程序")):
@@ -4804,7 +4843,7 @@ class HumanCorePlugin(Star):
         try:
             dialect_context = await self._dialect_kb_context(event.message_str or "")
             if dialect_context:
-                parts.append("【方言参考】\n" + dialect_context)
+                parts.append("【方言参考】只在合适口语词上偶尔用，不要硬改“就是/什么/怎么”，句子要通顺。\n" + dialect_context)
         except Exception:
             pass
         relation_network = self._relation_network_text(uid)
@@ -5520,6 +5559,8 @@ class HumanCorePlugin(Star):
             if relation not in RELATIONS:
                 return "关系只能是：" + "、".join(RELATIONS)
             self.db.update_profile(target, relation=relation)
+            if relation == "相恋":
+                self._register_lover(target)
             self.db.add_memory(
                 target, "与角色的关系是" + relation, "relation", 2,
                 self.cfg_int("mem_days_normal", 7),
@@ -6275,6 +6316,8 @@ class HumanCorePlugin(Star):
         if not self.db.get_profile(uid):
             self.db.touch_profile(uid, fields.get("name", ""), "web", "", "", True)
         self.db.update_profile(uid, **fields)
+        if fields.get("relation") == "相恋":
+            self._register_lover(uid)
         return {"code": 0, "data": self.db.get_profile(uid)}
 
     async def api_memories(self):
