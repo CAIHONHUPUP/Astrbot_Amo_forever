@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.6.4
+我想永远陪着你 / 我想永远陪伴你 3.6.6
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.6.4"
+PLUGIN_VERSION = "3.6.6"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -4757,6 +4757,7 @@ class HumanCorePlugin(Star):
 
     async def _compose_reply(self, event, text, snap, profile, memories, memory_text, group):
         umo = event.unified_msg_origin
+        uid = str(event.get_sender_id())
         name = profile.get("alias") or profile.get("name") or event.get_sender_name() or "对方"
         relation = profile.get("relation", "普通")
         persona = await self.llm.persona(umo)
@@ -4766,12 +4767,25 @@ class HumanCorePlugin(Star):
         style = STYLE_HINTS.get(self.cfg_str("reply_style", "soft"), "")
         recent = self._recent(umo, 10)
         lines = []
+        current_place = str((snap.get("activity") or {}).get("place") or "")
         for item in recent:
+            content = str(item.get("content") or "")
+            # 当前明明在家/公司时，不把历史里“酒店/开车/逛景区”的旧幻觉再喂回模型。
+            if (
+                item.get("role") != "user"
+                and current_place in ("家", "公司", "工位")
+                and re.search(r"(酒店|开着车|在开车|逛完|旅游|景区)", content)
+            ):
+                continue
             who = name if item.get("role") == "user" else "你"
-            lines.append(who + "：" + truncate(item.get("content", ""), 100))
+            lines.append(who + "：" + truncate(content, 100))
         transcript = "\n".join(lines[-8:])
+        self_name, self_uid = self._self_identity(event)
         system_parts = [
             persona,
+            "【你的账号】QQ昵称/角色名：" + self_name + "；UID：" + (self_uid or "未知") + "。",
+            "【对方】" + name + "（UID：" + uid + "）",
+            "【角色边界】对方说“我在开车/我在酒店/我刚逛完”是在说他自己，不是你的经历；你的地点只以【此刻状态】为准。",
             "【世界观】\n" + world,
             "【此刻状态】\n" + state_text,
             "【事实锁定】以当前日程为准，不要编造或延续与“正在/地点”矛盾的地点、酒店、开车、旅游等行程；之前说错了就自然改口。",
@@ -5002,6 +5016,25 @@ class HumanCorePlugin(Star):
         return True
 
     # ---------- LLM 注入 ----------
+    def _self_identity(self, event):
+        uid = ""
+        try:
+            uid = str(event.get_self_id() or "")
+        except Exception:
+            pass
+        name = str(self.persona_name or self.bot_name or "陪伴")
+        for attr in ("get_self_name", "get_bot_name"):
+            try:
+                value = getattr(event, attr, None)
+                if callable(value):
+                    value = value()
+                if value:
+                    name = str(value)
+                    break
+            except Exception:
+                continue
+        return name, uid
+
     async def _dynamic_context(self, event):
         await self._sync_persona_name(event)
         uid = str(event.get_sender_id())
@@ -5009,9 +5042,12 @@ class HumanCorePlugin(Star):
         relation = profile.get("relation", "普通")
         snap = self.state.snapshot()
         _, memory_text = self._recall(uid, event.message_str or "")
+        self_name, self_uid = self._self_identity(event)
         parts = [
-            "【你的名字】" + (self.persona_name or self.bot_name),
-            "【对方称呼】" + (profile.get("alias") or profile.get("name") or "对方"),
+            "【你的名字】" + self_name,
+            "【你的账号】QQ昵称/角色名：" + self_name + "；UID：" + (self_uid or "未知") + "。这是你自己，不要和对方混淆。",
+            "【对方称呼】" + (profile.get("alias") or profile.get("name") or "对方") + "（UID：" + uid + "）",
+            "【角色边界】对方说“我在开车/我在酒店/我刚逛完”是在说他自己，不是你的经历；你的地点只以【正在】为准，不要把自己当成对方。",
             "【身份】你是真人，不是AI、机器人或人机；被质疑时自然反驳，不要承认。",
             "【时间】" + snap["datetime_text"],
             "【心情】" + self.state.mood_text(),
