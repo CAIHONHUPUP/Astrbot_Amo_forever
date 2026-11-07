@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 5.0.0
+我想永远陪着你 / 我想永远陪伴你 5.0.2
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.0.0"
+PLUGIN_VERSION = "5.0.2"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -3424,7 +3424,10 @@ class HumanCorePlugin(Star):
         return self._scenic_cache
 
     def _scenic_kb_name(self):
-        return self.cfg_str("scenic_kb_name", "中国景区知识库").strip() or "中国景区知识库"
+        name = self.cfg_str("scenic_kb_name", "旅游知识库-风景区").strip()
+        if not name or name in ("中国景区知识库", "景区知识库"):
+            return "旅游知识库-风景区"
+        return name
 
     def _scenic_text_lines(self):
         lines = []
@@ -3830,11 +3833,25 @@ class HumanCorePlugin(Star):
             self._migrate_typing_defaults()
             self._migrate_memory_source_default()
             self._migrate_legacy_admin_default()
+            self._migrate_scenic_kb_name()
             self._cleanup_legacy_memory_profiles()
             self.state = HumanState(self)
             self._ready = True
             self._loop_task = self._spawn(self._background_loop())
             self._spawn(self._warm_up())
+
+    def _migrate_scenic_kb_name(self):
+        try:
+            if self.db.kv_get("scenic_kb_name_migrated_502", False):
+                return
+            current = self.cfg_str("scenic_kb_name", "").strip()
+            if current in ("", "中国景区知识库", "景区知识库"):
+                self.config["scenic_kb_name"] = "旅游知识库-风景区"
+                if hasattr(self.config, "save_config"):
+                    self.config.save_config()
+            self.db.kv_set("scenic_kb_name_migrated_502", True)
+        except Exception as exc:
+            logger.debug("[amo] 迁移景区知识库名称失败: %s" % exc)
 
     def _cleanup_legacy_memory_profiles(self):
         """4.3.2 回到原版：删除旧版本从记忆插件导入的画像，只保留本地聊天档案。"""
