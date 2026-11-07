@@ -1045,7 +1045,27 @@
         select.disabled = false;
       }
     });
-    document.getElementById("btnKb").addEventListener("click", (e) => action("kb_regen", e.currentTarget));
+    document.getElementById("btnKb").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      const select = document.getElementById("worldDialect");
+      const style = select ? select.value : "贵州话";
+      const old = button.textContent;
+      button.disabled = true;
+      button.textContent = "重建中…";
+      try {
+        const saved = await call("config_save", { changes: { dialect_style: style } });
+        if (saved && saved.code && saved.code !== 0) throw new Error(saved.msg || "保存语种失败");
+        const result = await call("kb_regen");
+        if (result && result.code && result.code !== 0) throw new Error(result.msg || "重建失败");
+        toast("语种库已重建：" + style);
+        await load();
+      } catch (error) {
+        toast("重建失败：" + (error.message || error), true);
+      } finally {
+        button.disabled = false;
+        button.textContent = old;
+      }
+    });
     document.getElementById("btnScenicKb").addEventListener("click", (e) => action("scenic_kb_regen", e.currentTarget));
 
     function worldText(value) {

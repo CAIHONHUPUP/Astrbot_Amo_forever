@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 4.8.4
+我想永远陪着你 / 我想永远陪伴你 4.8.6
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "4.8.4"
+PLUGIN_VERSION = "4.8.6"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -94,6 +94,43 @@ DIALECT_SAMPLES = {
     "天津话": "嘛呢、倍儿、哏儿、得嘞",
     "河南话": "弄啥嘞、中、得劲、木有",
     "上海话": "阿拉、侬、哪能、老灵",
+}
+DIALECT_FALLBACK_ROWS = {
+    "东北话": [
+        ("咋整", "怎么办", "咋整啊"), ("唠嗑", "聊天", "来唠嗑"), ("得瑟", "显摆", "别得瑟"),
+        ("麻溜", "快点", "麻溜的"), ("贼拉", "非常", "贼拉冷"), ("嘎哈", "干什么", "你嘎哈呢"),
+        ("老铁", "哥们", "老铁没毛病"),
+    ],
+    "四川话": [
+        ("啥子", "什么", "你说啥子"), ("莫得", "没有", "莫得问题"), ("巴适", "舒服", "巴适得很"),
+        ("搞快些", "快点", "搞快些"), ("瓜娃子", "傻孩子", "你个瓜娃子"), ("雄起", "加油", "雄起"),
+        ("撇脱", "干脆", "撇脱点"),
+    ],
+    "广东话": [
+        ("唔该", "谢谢、劳驾", "唔该晒"), ("点解", "为什么", "点解啊"), ("得闲", "有空", "得闲饮茶"),
+        ("搞掂", "搞定", "搞掂啦"), ("靓仔", "帅哥", "靓仔"), ("靓女", "美女", "靓女"),
+        ("冇", "没有", "冇问题"),
+    ],
+    "台湾腔": [
+        ("酱紫", "这样", "酱紫啊"), ("蛮", "很", "蛮好的"), ("超赞", "非常棒", "超赞"),
+        ("拍谢", "不好意思", "拍谢啦"), ("机车", "麻烦、烦人", "很机车"), ("阿嬷", "奶奶", "阿嬷"),
+        ("龟毛", "挑剔", "别龟毛"),
+    ],
+    "天津话": [
+        ("嘛呢", "干什么", "嘛呢"), ("倍儿", "非常", "倍儿好"), ("哏儿", "有趣", "真哏儿"),
+        ("得嘞", "好的", "得嘞"), ("腻歪", "腻烦、黏人", "别腻歪"), ("幺蛾子", "麻烦", "出幺蛾子"),
+        ("耐人", "招人喜欢", "真耐人"),
+    ],
+    "河南话": [
+        ("弄啥嘞", "干什么", "你弄啥嘞"), ("中", "好", "中，就这么办"), ("得劲", "舒服", "真得劲"),
+        ("木有", "没有", "木有事"), ("恁", "你", "恁吃饭没"), ("俺", "我", "俺知道了"),
+        ("中不中", "行不行", "中不中"),
+    ],
+    "上海话": [
+        ("阿拉", "我、我们", "阿拉晓得"), ("侬", "你", "侬好"), ("哪能", "怎么", "哪能办"),
+        ("结棍", "厉害", "侬结棍"), ("老灵", "很好", "老灵额"), ("白相", "玩", "出去白相"),
+        ("适意", "舒服", "适意"),
+    ],
 }
 DIALECT_REGIONS = {
     "贵州话": "贵州",
@@ -3333,6 +3370,20 @@ class HumanCorePlugin(Star):
         self._persona_name_cache[key] = (now_ts(), name)
         return name
 
+    def _dialect_rows(self):
+        region = self._dialect_region()
+        try:
+            rows = [row for row in self.db.list_dialects() if region in str(row.get("region") or "")]
+        except Exception:
+            rows = []
+        if rows:
+            return rows
+        style = self.cfg_str("dialect_style", "贵州话").strip()
+        return [
+            {"term": term, "meaning": meaning, "region": style, "example": example}
+            for term, meaning, example in DIALECT_FALLBACK_ROWS.get(style, [])
+        ]
+
     def _dialect_region(self):
         style = self.cfg_str("dialect_style", "贵州话").strip()
         return DIALECT_REGIONS.get(style, style)
@@ -3347,14 +3398,12 @@ class HumanCorePlugin(Star):
         if random.random() > clamp(self.cfg_float("dialect_prob", 0.08), 0.0, 1.0):
             return text
         try:
-            rows = self.db.list_dialects()
+            rows = self._dialect_rows()
         except Exception:
             return text
-        region = self._dialect_region()
         candidates = [
             row for row in rows
-            if region in str(row.get("region") or "")
-            and row.get("meaning") and row["meaning"] in text and row.get("term") not in text
+            if row.get("meaning") and row["meaning"] in text and row.get("term") not in text
         ]
         if not candidates:
             return text
@@ -3561,7 +3610,7 @@ class HumanCorePlugin(Star):
 
             rows = []
             try:
-                rows = [row for row in self.db.list_dialects() if self._dialect_region() in str(row.get("region") or "")]
+                rows = self._dialect_rows()
             except Exception:
                 rows = []
             lines = [
@@ -6660,7 +6709,7 @@ class HumanCorePlugin(Star):
                 "version": PLUGIN_VERSION,
                 "memory_source": self.cfg_str("memory_source", "auto"),
                 "dialect_style": self.cfg_str("dialect_style", "贵州话"),
-                "dialect_count": len([row for row in self.db.list_dialects() if self._dialect_region() in str(row.get("region") or "")]),
+                "dialect_count": len(self._dialect_rows()),
                 "companion_memory_available": self._companion_plugin() is not None,
             },
         }
@@ -7631,6 +7680,18 @@ class HumanCorePlugin(Star):
 
     async def api_kb_regen(self):
         await self._ensure_ready()
+        try:
+            data = await self._body()
+        except Exception:
+            data = {}
+        style = str(data.get("dialect_style") or self._q("dialect_style", "") or "").strip()
+        if style in DIALECT_REGIONS:
+            self.config["dialect_style"] = style
+            try:
+                if hasattr(self.config, "save_config"):
+                    self.config.save_config()
+            except Exception:
+                pass
         kb = await self._ensure_dialect_kb()
         if kb is None:
             return {
