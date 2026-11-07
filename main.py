@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.6.0
+我想永远陪着你 / 我想永远陪伴你 3.6.2
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.6.0"
+PLUGIN_VERSION = "3.6.2"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -1425,10 +1425,11 @@ class HumanState:
 
     def decay_mood(self):
         now = now_ts()
-        hours = (now - self.mood_ts) / 3600.0
-        if hours < 0.15:
+        hours = max(0.0, (now - self.mood_ts) / 3600.0)
+        if hours <= 0:
             return
-        rate = min(0.5, 0.05 * min(hours, 24))
+        # 连续衰减：约 45 分钟向基础值回落一半，不再要求隔 9 分钟才衰减一次。
+        rate = min(0.85, 1.0 - math.exp(-hours / 0.75))
         for key in MOOD_KEYS:
             self.mood[key] = self.mood[key] + (MOOD_BASE[key] - self.mood[key]) * rate
         self.mood_ts = now
@@ -1449,16 +1450,19 @@ class HumanState:
 
     def observe(self, text):
         senti = sentiment(text)
-        if senti["insult"] or senti["angry"] >= 2:
-            self.nudge(生气=14, 暴躁=8, 开心=-10, 委屈=6)
+        if re.search(r"(对不起|抱歉|我错了|别生气|不生气|哄你|哄哄|原谅我)", text or ""):
+            # 恋人或普通人的道歉都要能真正降温，不能“道歉也没用”。
+            self.nudge(生气=-18, 暴躁=-10, 委屈=-6, 郁闷=-3, 开心=4, 依恋=2)
+        elif senti["insult"] or senti["angry"] >= 2:
+            self.nudge(生气=9, 暴躁=5, 开心=-8, 委屈=5)
         elif senti["sad"]:
-            self.nudge(郁闷=9, 委屈=8, 开心=-5)
+            self.nudge(郁闷=8, 委屈=7, 开心=-4)
         elif senti["aff"]:
-            self.nudge(开心=10, 依恋=12, 害羞=6)
+            self.nudge(开心=10, 依恋=12, 生气=-5, 暴躁=-3)
         elif senti["pos"]:
-            self.nudge(开心=6, 平静=2)
+            self.nudge(开心=6, 平静=2, 生气=-2)
         elif senti["neg"]:
-            self.nudge(郁闷=5, 疲惫=3)
+            self.nudge(郁闷=4, 疲惫=2)
         else:
             self.nudge(平静=1)
         hour = datetime.now().hour
@@ -2295,7 +2299,12 @@ class HumanState:
     def tone_text(self, snap=None, relation="普通"):
         snap = snap or self.snapshot()
         mood = snap["mood"]
-        if mood["暴躁"] >= 60:
+        if relation == "相恋" and (mood["暴躁"] >= 60 or mood["生气"] >= 62):
+            tone = (
+                "你在生对方的气，但你是他的恋人：会抱怨、闹别扭、说反话、要哄，"
+                "语气带一点委屈，不会像对普通人那样冷怼、赶人或人身攻击；可以嘴硬，但不要真的伤人。"
+            )
+        elif mood["暴躁"] >= 60:
             tone = "你现在很暴躁，说话冲、短、带刺，一点就着，但不要真正辱骂。"
         elif mood["生气"] >= 62:
             tone = "你现在很烦躁，说话冲、短、带刺，容易不耐烦，但不要辱骂。"
@@ -4766,6 +4775,8 @@ class HumanCorePlugin(Star):
             "【关系】你和" + name + "的关系是「" + relation + "」。",
             "【聊天格式】不要把 @昵称、QQ号、群号、ID 或后台记录念出来；识人时只自然回应，不要复述。",
         ]
+        if relation == "相恋" and (snap["mood"]["暴躁"] >= 60 or snap["mood"]["生气"] >= 62):
+            system_parts.append("【恋人情绪】你在生他的气，但会抱怨、闹别扭、要哄，不会像对普通人一样冷怼或赶人。")
         if getattr(event, "amo_impersonation", False):
             system_parts.append("【冒充警告】当前 UID 不是你的恋人，却在冒充/使用恋人称呼；直接拆穿/怼回去，不要用恋人语气。")
         if self._recent_bot_initiated(umo):
@@ -5014,6 +5025,8 @@ class HumanCorePlugin(Star):
             scenic_text = await self._scenic_kb_context(event.message_str or "")
             if scenic_text:
                 parts.append("【景区参考】\n" + scenic_text)
+        if relation == "相恋" and (snap["mood"]["暴躁"] >= 60 or snap["mood"]["生气"] >= 62):
+            parts.append("【恋人情绪】你在生他的气，但会抱怨、闹别扭、要哄，不会像对普通人一样冷怼或赶人。")
         if getattr(event, "amo_impersonation", False):
             parts.append(
                 "【冒充警告】当前 UID 不是你的恋人，却在冒充或使用恋人称呼；"
