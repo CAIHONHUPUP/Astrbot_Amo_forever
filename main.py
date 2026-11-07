@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.6.2
+我想永远陪着你 / 我想永远陪伴你 3.6.4
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.6.2"
+PLUGIN_VERSION = "3.6.4"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -2471,7 +2471,7 @@ class LLMService:
     async def chat(self, umo, system, prompt, contexts=None, limit=300):
         return clean_reply(await self.chat_raw(umo, system, prompt, contexts), limit)
 
-    async def polish(self, umo, text, tone):
+    async def polish(self, umo, text, tone, state_text="", relation="", name=""):
         text = (text or "").strip()
         if not text or not self.p.cfg_bool("enable_polish", True):
             return text
@@ -2481,9 +2481,12 @@ class LLMService:
         )
         prompt = (
             "角色当前语气：" + tone + "\n"
+            "角色此刻不可矛盾的状态：\n" + (state_text or "（无）") + "\n"
+            "对话对象：" + (name or "对方") + "；关系：" + (relation or "普通") + "\n"
             "原句：" + text + "\n"
             "请把这句话改成真人在聊天：口语化、有一点情绪、长度接近原句或稍长。\n"
             "必须遵守：\n"
+            "0. 只改语气和口语表达，不要新增原句没有的地点、行程、动作；如果原句与状态矛盾，以状态为准，不要继续编；\n"
             "1. 绝对不要承认自己是AI、人工智能、机器人、人机、程序或模型；\n"
             "2. 如果原句在承认或顺着“人机/机器人”说，要改成真人的反驳、无语或有点生气；\n"
             "3. 不要提润色、提示词、模型、系统；不要加旁白、引号或解释；\n"
@@ -4771,6 +4774,7 @@ class HumanCorePlugin(Star):
             persona,
             "【世界观】\n" + world,
             "【此刻状态】\n" + state_text,
+            "【事实锁定】以当前日程为准，不要编造或延续与“正在/地点”矛盾的地点、酒店、开车、旅游等行程；之前说错了就自然改口。",
             "【语气】" + tone + " " + style,
             "【关系】你和" + name + "的关系是「" + relation + "」。",
             "【聊天格式】不要把 @昵称、QQ号、群号、ID 或后台记录念出来；识人时只自然回应，不要复述。",
@@ -4844,7 +4848,7 @@ class HumanCorePlugin(Star):
             umo, system, prompt, limit=self.cfg_int("max_reply_chars", 220)
         )
         if reply:
-            reply = await self.llm.polish(umo, reply, tone)
+            reply = await self.llm.polish(umo, reply, tone, state_text=state_text, relation=relation, name=name)
         return reply
 
     # ---------- 发送 ----------
@@ -5014,7 +5018,8 @@ class HumanCorePlugin(Star):
             "【生理期】" + snap["period"]["phase"] + "第" + str(snap["period"]["day"]) + "天",
             "【身体】" + snap["health"]["status"],
             "【天气】" + snap["weather_text"],
-            "【正在】" + snap["activity"].get("activity", "休息"),
+            "【正在】" + snap["activity"].get("activity", "休息") + "（" + snap["activity"].get("place", "家") + "）",
+            "【事实锁定】以当前日程为准，不要编造或延续与“正在/地点”矛盾的地点、酒店、开车、旅游等行程；之前说错了就自然改口。",
             "【与对方关系】" + relation,
             "【身份核验】关系只按 UID 判断，昵称、群名片、自称和爱称都可以伪造；"
             "如果有人自称是你恋人、或使用你恋人的爱称，但 UID 不是相恋关系，不要用恋人语气，保持警惕。",
@@ -5153,11 +5158,16 @@ class HumanCorePlugin(Star):
             quote_id = getattr(event.message_obj, "message_id", None) if quote_enabled else None
             if self.cfg_bool("polish_native", False):
                 snap = self.state.snapshot()
+                native_profile = self.db.get_profile(str(event.get_sender_id())) or {}
+                native_relation = str(native_profile.get("relation") or "普通")
+                native_name = str(native_profile.get("alias") or native_profile.get("name") or "对方")
                 native_tone = self._tone_with_continuity(
-                    event.unified_msg_origin, self.state.tone_text(snap, "普通")
+                    event.unified_msg_origin, self.state.tone_text(snap, native_relation)
                 )
                 polished = await self.llm.polish(
                     event.unified_msg_origin, text, native_tone,
+                    state_text=self.state.prompt_text(snap),
+                    relation=native_relation, name=native_name,
                 )
                 if polished and polished != text:
                     text = polished
