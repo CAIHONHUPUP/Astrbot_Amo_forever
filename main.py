@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 4.2.2
+我想永远陪着你 / 我想永远陪伴你 4.2.4
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "4.2.2"
+PLUGIN_VERSION = "4.2.4"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -4161,6 +4161,7 @@ class HumanCorePlugin(Star):
             "SELECT content, importance, memory_type, created_at, updated_at "
             "FROM memories WHERE (subject_id=? OR object_id=?) AND content!='' "
             "AND lifecycle NOT IN ('deleted','archived','quarantined') "
+            "AND memory_type IN ('user_profile','user_preference','relationship_claim','user_habit') "
         )
         params = [str(uid), str(uid)]
         if keyword:
@@ -4203,6 +4204,7 @@ class HumanCorePlugin(Star):
             "SELECT subject_id AS uid, COUNT(*) AS c FROM memories "
             "WHERE subject_kind='user' AND subject_id!='' "
             "AND lifecycle NOT IN ('deleted','archived','quarantined') "
+            "AND memory_type IN ('user_profile','user_preference','relationship_claim','user_habit') "
             "GROUP BY subject_id"
         )
         counts = {str(row.get("uid")): to_int(row.get("c"), 0) for row in count_rows}
@@ -4469,7 +4471,7 @@ class HumanCorePlugin(Star):
             return []
         known = self._angel_known_ids(plugin)
         items = []
-        for record in self._angel_records(plugin):
+        for record in self._angel_profile_records(plugin):
             tags = self._angel_tags(record)
             if str(uid) not in self._angel_uid_tags(tags, known):
                 continue

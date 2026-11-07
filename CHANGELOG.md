@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.2.4
+
+- 修复记忆源“查看记忆”仍然列出全部长期记忆的问题：
+  - **我会牢牢记住你**只取 `user_profile` / `user_preference` / `relationship_claim` / `user_habit`；
+  - **天使之魂**只取带画像属性标签的记录；
+  - 普通聊天记忆、时间线、事件记忆不再出现在用户画像里；
+- 画像数量/名字继续使用 4.2.2 的真实 identities 逻辑。
+
 ## 4.2.2
 
 - 修复 Memory Companion 画像名字显示为 `person_xxx` 哈希的问题：优先读 `identities` 的真实 `display_name`；
