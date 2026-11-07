@@ -414,7 +414,10 @@
             <div class="label">方言知识库</div>
             <div class="sub">创建或重建 AstrBot 知识库“陪伴方言库”，需要先配置 Embedding 供应商。</div>
           </div>
-          <button id="btnKb">重建方言库</button>
+          <div class="row">
+            <button id="btnKb">重建方言库</button>
+            <button id="btnScenicKb">重建景区库</button>
+          </div>
         </div>
       </section>
         <div class="card feedback-card">
@@ -545,6 +548,7 @@
       if (action === "profiles") list.push("get_profile");
       if (action === "schedule_regen") list.push("schedule/regen");
       if (action === "kb_regen") list.push("kb/regen");
+      if (action === "scenic_kb_regen") list.push("scenic_kb/regen");
       if (action === "worldview_regen") list.push("worldview/regen");
       if (action === "profile_save") list.push("profile/save");
       if (action === "memory_add") list.push("memory/add");
@@ -965,6 +969,7 @@
       await loadWorld();
     });
     document.getElementById("btnKb").addEventListener("click", (e) => action("kb_regen", e.currentTarget));
+    document.getElementById("btnScenicKb").addEventListener("click", (e) => action("scenic_kb_regen", e.currentTarget));
 
     function worldText(value) {
       if (Array.isArray(value)) return value.join("、");
