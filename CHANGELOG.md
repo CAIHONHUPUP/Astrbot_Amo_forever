@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.3.0
+
+- Memory Companion 画像自动补名字：
+  - 先从 `portrait_facts` 的名字/称呼事实取；
+  - 再用 `identities.profile` 里的 `person_id`/`resolved_identity_key`/`identity_key` 匹配；
+  - 再用 `identities.display_name`；
+  - 最后用 `portrait_evidence` 的证据链补；
+- 同步时自动更新旧名字（`画像 xxxxxx`/`person_...`），不用逐个手改；
+- 只有确实没有任何名字来源时，才保留“画像 xxxxxx”。
+
 ## 4.2.8
 
 - Memory Companion 以 `portrait_people` 为准：

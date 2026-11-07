@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 4.2.8
+我想永远陪着你 / 我想永远陪伴你 4.3.0
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "4.2.8"
+PLUGIN_VERSION = "4.3.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -4111,8 +4111,58 @@ class HumanCorePlugin(Star):
                 except Exception:
                     pass
 
-    def _memcomp_person_name(self, person_id):
-        """从 portrait_facts 的名字类事实里取画像显示名。"""
+    def _memcomp_name_maps(self, plugin=None):
+        """从 identities/profile/证据里建立 person_id -> 名字 的自动映射。"""
+        plugin = plugin or self._companion_plugin()
+        by_uid = {}
+        by_key = {}
+        evidence_map = {}
+        try:
+            rows = self._memcomp_rows(
+                "SELECT entity_id, display_name, profile FROM identities "
+                "WHERE entity_kind='user' AND entity_id!=''"
+            )
+            for row in rows:
+                uid = str(row.get("entity_id") or "").strip()
+                name = str(row.get("display_name") or "").strip()
+                if uid and name:
+                    by_uid[uid] = name
+                try:
+                    profile = json.loads(row.get("profile") or "{}")
+                except Exception:
+                    profile = {}
+                if not isinstance(profile, dict):
+                    continue
+                for key in ("display_name", "name", "nickname"):
+                    if not name and profile.get(key):
+                        name = str(profile.get(key)).strip()
+                if name:
+                    for key in ("person_id", "resolved_identity_key", "identity_key"):
+                        value = str(profile.get(key) or "").strip()
+                        if value:
+                            by_key[value] = name
+        except Exception as exc:
+            logger.debug("[amo] 建立身份名字映射失败: %s" % exc)
+        try:
+            rows = self._memcomp_rows(
+                "SELECT e.person_id, t.subject_id, i.display_name "
+                "FROM portrait_evidence e "
+                "LEFT JOIN timeline t ON t.message_id=e.message_id "
+                "LEFT JOIN identities i ON i.entity_id=t.subject_id "
+                "WHERE e.person_id!='' AND i.display_name!=''"
+            )
+            for row in rows:
+                pid = str(row.get("person_id") or "").strip()
+                name = str(row.get("display_name") or "").strip()
+                if pid and name:
+                    evidence_map.setdefault(pid, name)
+        except Exception as exc:
+            logger.debug("[amo] 建立证据名字映射失败: %s" % exc)
+        return {"by_uid": by_uid, "by_key": by_key, "evidence": evidence_map}
+
+    def _memcomp_person_name(self, person_id, identity_key="", maps=None):
+        """按 画像事实 -> 身份键 -> 身份表 -> 证据 的顺序自动取名字。"""
+        maps = maps or self._memcomp_name_maps()
         rows = self._memcomp_rows(
             "SELECT dimension, claim_summary FROM portrait_facts "
             "WHERE person_id=? AND status='active' "
@@ -4148,6 +4198,13 @@ class HumanCorePlugin(Star):
                     text = match.group(1).strip("「」“”\"' ")
                     if 1 <= len(text) <= 20:
                         return text
+        for candidate in (str(identity_key or "").strip(), str(person_id)):
+            if candidate and maps.get("by_key", {}).get(candidate):
+                return maps["by_key"][candidate]
+        if maps.get("by_uid", {}).get(str(person_id)):
+            return maps["by_uid"][str(person_id)]
+        if maps.get("evidence", {}).get(str(person_id)):
+            return maps["evidence"][str(person_id)]
         return ""
 
     def _memcomp_profile_rows(self, plugin=None):
@@ -4156,23 +4213,19 @@ class HumanCorePlugin(Star):
         if not self._is_memory_companion(plugin):
             return []
         rows = self._memcomp_rows(
-            "SELECT person_id, 0 AS fact_count FROM portrait_people "
+            "SELECT person_id, resolved_identity_key, 0 AS fact_count FROM portrait_people "
             "WHERE profile_status='active' AND person_id!='' "
             "ORDER BY updated_at DESC"
         )
+        maps = self._memcomp_name_maps(plugin)
         items = []
         for row in rows:
             uid = str(row.get("person_id") or "").strip()
             if not uid:
                 continue
-            name = self._memcomp_person_name(uid)
-            if not name:
-                ident = self._memcomp_rows(
-                    "SELECT display_name FROM identities WHERE entity_id=? AND display_name!='' LIMIT 1",
-                    (uid,),
-                )
-                if ident:
-                    name = str(ident[0].get("display_name") or "").strip()
+            name = self._memcomp_person_name(
+                uid, str(row.get("resolved_identity_key") or ""), maps
+            )
             items.append({
                 "uid": uid,
                 "name": name or ("画像 " + uid[-6:]),
@@ -4313,7 +4366,12 @@ class HumanCorePlugin(Star):
                 self.db.touch_profile(uid, name or uid, "memory_companion", "", "", False)
                 profile = self.db.get_profile(uid) or {}
             fields = {}
-            if name and (not profile.get("name") or str(profile.get("name")) == uid):
+            current_name = str(profile.get("name") or "").strip()
+            if name and (
+                not current_name or current_name == uid
+                or current_name.startswith("画像 ")
+                or current_name.startswith("person_")
+            ):
                 fields["name"] = name[:60]
             if not profile.get("notes") and count:
                 fields["notes"] = ("画像 %d 条（Memory Companion）" % count)[:100]
