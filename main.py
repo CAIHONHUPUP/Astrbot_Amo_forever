@@ -757,6 +757,214 @@ def typing_delay_ms(text, base=700, per_char=400, cap=20000):
 # 数据库
 # ---------------------------------------------------------------------------
 
+def merge_uid_alias_data(conn, alias_map):
+    """把别名 uid 的档案/记忆/消息/关系/称呼并进主 uid（一次性、幂等）。
+
+    返回统计 dict，调用方负责记 kv 标记，避免每次启动重复跑。
+    """
+    report = {"profiles": 0, "memories": 0, "messages": 0, "proactive_log": 0,
+              "relations": 0, "kv": 0}
+    if not isinstance(alias_map, dict) or not alias_map:
+        return report
+    cur = conn.cursor()
+
+    def table_columns(name):
+        try:
+            return [row[1] for row in cur.execute("PRAGMA table_info(%s)" % name)]
+        except Exception:
+            return []
+
+    profile_cols = table_columns("profiles")
+    if not profile_cols:
+        return report
+
+    def to_num(value, default=0.0):
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return default
+
+    for alias_uid, canon_uid in list(alias_map.items()):
+        alias_uid = str(alias_uid or "")
+        canon_uid = str(canon_uid or "")
+        if not alias_uid or not canon_uid or alias_uid == canon_uid:
+            continue
+        cur.execute("SELECT * FROM profiles WHERE uid=?", (alias_uid,))
+        alias_raw = cur.fetchone()
+        cur.execute("SELECT * FROM profiles WHERE uid=?", (canon_uid,))
+        canon_raw = cur.fetchone()
+
+        def as_dict(row):
+            if row is None:
+                return None
+            if hasattr(row, "keys"):
+                return dict(row)
+            return {col[0]: value for col, value in zip(cur.description, row)}
+
+        alias_row = as_dict(alias_raw)
+        canon_row = as_dict(canon_raw)
+        if alias_row is not None and canon_row is None:
+            # 只有别名档案：直接改主键，历史原样保留
+            cur.execute("UPDATE profiles SET uid=? WHERE uid=?", (canon_uid, alias_uid))
+            report["profiles"] += 1
+        elif alias_row is not None and canon_row is not None:
+            a = alias_row
+            b = canon_row
+            merged = dict(b)
+            merged["uid"] = canon_uid
+            for key in ("name", "birthday", "alias", "notes", "platform"):
+                if key not in profile_cols:
+                    continue
+                if key in ("alias", "notes"):
+                    parts = []
+                    for value in (b.get(key), a.get(key)):
+                        text = str(value or "").strip()
+                        if text and text not in parts:
+                            parts.append(text)
+                    merged[key] = " | ".join(parts)
+                else:
+                    merged[key] = b.get(key) or a.get(key) or ""
+            if "relation" in profile_cols:
+                canon_rel = str(b.get("relation") or "普通")
+                alias_rel = str(a.get("relation") or "普通")
+                merged["relation"] = canon_rel if canon_rel != "普通" else alias_rel
+            for key in ("affection", "msg_count", "proactive_count", "is_admin"):
+                if key in profile_cols:
+                    merged[key] = max(int(to_num(b.get(key))), int(to_num(a.get(key))))
+            for key in ("last_seen", "last_proactive", "relation_at"):
+                if key in profile_cols:
+                    merged[key] = max(to_num(b.get(key)), to_num(a.get(key)))
+            if "first_seen" in profile_cols:
+                values = [v for v in (to_num(b.get("first_seen")), to_num(a.get("first_seen"))) if v > 0]
+                merged["first_seen"] = min(values) if values else None
+            if "private_umo" in profile_cols:
+                merged["private_umo"] = b.get("private_umo") or a.get("private_umo") or ""
+            if "last_group" in profile_cols:
+                merged["last_group"] = b.get("last_group") or a.get("last_group") or ""
+            if "proactive_day" in profile_cols:
+                merged["proactive_day"] = b.get("proactive_day") or a.get("proactive_day") or ""
+            cols = [c for c in profile_cols if c in merged]
+            cur.execute("DELETE FROM profiles WHERE uid=?", (alias_uid,))
+            cur.execute(
+                "INSERT OR REPLACE INTO profiles(%s) VALUES(%s)"
+                % (",".join(cols), ",".join("?" * len(cols))),
+                [merged.get(c) for c in cols],
+            )
+            report["profiles"] += 1
+
+        # 记忆：改归属 + 只对"别名带来的"正文去重（不误伤主 uid 自己的同名记忆）
+        try:
+            alias_contents = [r[0] for r in cur.execute(
+                "SELECT DISTINCT content FROM memories WHERE uid=?", (alias_uid,))]
+            cur.execute("UPDATE memories SET uid=? WHERE uid=?", (canon_uid, alias_uid))
+            report["memories"] += cur.rowcount or 0
+            for content in alias_contents:
+                cur.execute(
+                    "DELETE FROM memories WHERE uid=? AND content=? AND rowid NOT IN "
+                    "(SELECT MIN(rowid) FROM memories WHERE uid=? AND content=?)",
+                    (canon_uid, content, canon_uid, content),
+                )
+        except Exception:
+            pass
+
+        # 消息：改归属 + 只对"别名带来的"那几条去重
+        try:
+            alias_msgs = [tuple(r) for r in cur.execute(
+                "SELECT umo, role, content, created_at FROM messages WHERE uid=?", (alias_uid,))]
+            cur.execute("UPDATE messages SET uid=? WHERE uid=?", (canon_uid, alias_uid))
+            report["messages"] += cur.rowcount or 0
+            for umo, role, content, created in alias_msgs:
+                cur.execute(
+                    "DELETE FROM messages WHERE umo=? AND uid=? AND role=? AND content=? AND created_at=? "
+                    "AND rowid NOT IN (SELECT MIN(rowid) FROM messages WHERE umo=? AND uid=? AND role=? AND content=? AND created_at=?)",
+                    (umo, canon_uid, role, content, created, umo, canon_uid, role, content, created),
+                )
+        except Exception:
+            pass
+
+        # 主动记录
+        try:
+            alias_pro = [tuple(r) for r in cur.execute(
+                "SELECT kind, content, created FROM proactive_log WHERE uid=?", (alias_uid,))]
+            cur.execute("UPDATE proactive_log SET uid=? WHERE uid=?", (canon_uid, alias_uid))
+            report["proactive_log"] += cur.rowcount or 0
+            for kind, content, created in alias_pro:
+                cur.execute(
+                    "DELETE FROM proactive_log WHERE uid=? AND kind=? AND content=? AND created=? "
+                    "AND rowid NOT IN (SELECT MIN(rowid) FROM proactive_log WHERE uid=? AND kind=? AND content=? AND created=?)",
+                    (canon_uid, kind, content, created, canon_uid, kind, content, created),
+                )
+        except Exception:
+            pass
+
+        # 关系网
+        try:
+            cur.execute("UPDATE OR IGNORE relation_network SET a_uid=? WHERE a_uid=?", (canon_uid, alias_uid))
+            cur.execute("UPDATE OR IGNORE relation_network SET b_uid=? WHERE b_uid=?", (canon_uid, alias_uid))
+            # OR IGNORE 遇到已存在的同一对关系会跳过，残留的别名行要显式删掉
+            cur.execute("DELETE FROM relation_network WHERE a_uid=? OR b_uid=?", (alias_uid, alias_uid))
+            cur.execute("DELETE FROM relation_network WHERE a_uid=b_uid")
+            cur.execute(
+                "DELETE FROM relation_network WHERE rowid NOT IN "
+                "(SELECT MIN(rowid) FROM relation_network GROUP BY a_uid, b_uid)"
+            )
+            report["relations"] += 1
+        except Exception:
+            pass
+
+        # kv：通道记录要合并成一份，其余带别名的键改名
+        try:
+            old_key = "channels:%s" % alias_uid
+            new_key = "channels:%s" % canon_uid
+            old_ch = cur.execute("SELECT value FROM kv WHERE key=?", (old_key,)).fetchone()
+            new_ch = cur.execute("SELECT value FROM kv WHERE key=?", (new_key,)).fetchone()
+
+            def load(raw):
+                try:
+                    return json.loads(raw[0] or "{}") if raw else {}
+                except Exception:
+                    return {}
+
+            merged_ch = load(new_ch) if isinstance(load(new_ch), dict) else {}
+            alias_ch = load(old_ch) if isinstance(load(old_ch), dict) else {}
+            for platform, value in alias_ch.items():
+                if not isinstance(value, dict):
+                    continue
+                current = merged_ch.get(platform)
+                if not isinstance(current, dict) or to_num(value.get("ts")) > to_num(current.get("ts")):
+                    merged_ch[platform] = value
+            if merged_ch:
+                cur.execute("UPDATE OR IGNORE kv SET key=? WHERE key=?", (new_key, old_key))
+                cur.execute("DELETE FROM kv WHERE key=?", (old_key,))
+                cur.execute("INSERT OR REPLACE INTO kv(key, value, updated) VALUES(?,?,?)",
+                            (new_key, json.dumps(merged_ch, ensure_ascii=False), time.time()))
+                report["kv"] += 1
+            else:
+                cur.execute("DELETE FROM kv WHERE key=?", (old_key,))
+        except Exception:
+            pass
+        try:
+            # 用 Python 侧的包含判断，避免 LIKE 里 '_' 被当成通配符误伤别的键
+            for row in list(cur.execute("SELECT key FROM kv")):
+                key = str(row[0] or "")
+                if alias_uid not in key:
+                    continue
+                new = key.replace(alias_uid, canon_uid)
+                if new == key:
+                    continue
+                cur.execute("UPDATE OR IGNORE kv SET key=? WHERE key=?", (new, key))
+                cur.execute("DELETE FROM kv WHERE key=?", (key,))
+                report["kv"] += 1
+        except Exception:
+            pass
+
+    try:
+        conn.commit()
+    except Exception:
+        pass
+    return report
+
+
 class AmoDB:
     def __init__(self, plugin_dir):
         try:
@@ -3835,6 +4043,7 @@ class HumanCorePlugin(Star):
             self._migrate_legacy_admin_default()
             self._migrate_scenic_kb_name()
             self._cleanup_legacy_memory_profiles()
+            await asyncio.to_thread(self._merge_alias_profiles)
             self.state = HumanState(self)
             self._ready = True
             self._loop_task = self._spawn(self._background_loop())
@@ -4010,9 +4219,88 @@ class HumanCorePlugin(Star):
     async def stop(self):
         await self.terminate()
 
+    # ---- 跨平台账号合并 ----
+    def _uid_alias_mapping(self):
+        """读映射表（配置优先，其次数据目录 uid_map.json）；按内容+mtime 缓存。"""
+        cache_key = None
+        try:
+            text = str(self.cfg_str("uid_alias_map", "") or "").strip().lstrip("﻿")
+            map_path = os.path.join(os.path.dirname(str(self.db.path)), "uid_map.json")
+            stamp = os.path.getmtime(map_path) if os.path.exists(map_path) else 0
+            cache_key = (text, stamp)
+        except Exception:
+            cache_key = None
+        if getattr(self, "_uid_alias_cache_key", None) != cache_key:
+            raw = {}
+            try:
+                text = str(self.cfg_str("uid_alias_map", "") or "").strip().lstrip("﻿")
+                parsed = json.loads(text) if text else {}
+                if isinstance(parsed, dict):
+                    raw.update(parsed)
+            except Exception as exc:
+                logger.warning("[amo] uid_alias_map 配置解析失败: %s" % exc)
+            try:
+                map_path = os.path.join(os.path.dirname(str(self.db.path)), "uid_map.json")
+                if os.path.exists(map_path):
+                    # utf-8-sig：Windows 记事本另存的 JSON 常带 BOM，用 utf-8 会直接解析失败
+                    with open(map_path, "r", encoding="utf-8-sig") as fh:
+                        parsed = json.load(fh)
+                    if isinstance(parsed, dict):
+                        for key, value in parsed.items():
+                            raw.setdefault(key, value)
+            except Exception as exc:
+                logger.warning("[amo] uid_map 读取失败: %s" % exc)
+            raw = {str(k): str(v) for k, v in raw.items() if k and v}
+            # 解析链式映射（A→B、B→C 归到 A→C），并丢掉自映射
+            resolved = {}
+            for key in raw:
+                current = key
+                seen = {key}
+                while current in raw:
+                    nxt = raw[current]
+                    if nxt in seen:
+                        break
+                    seen.add(nxt)
+                    current = nxt
+                if current != key:
+                    resolved[key] = current
+            self._uid_alias_map = resolved
+            self._uid_alias_cache_key = cache_key
+        return getattr(self, "_uid_alias_map", {}) or {}
+
+    def _canonical_uid(self, event):
+        """把平台账号换算成同一个人的主 uid；关掉开关就返回原 uid。"""
+        try:
+            uid = str(event.get_sender_id())
+        except Exception:
+            return ""
+        if not self.cfg_bool("uid_merge_enabled", True):
+            return uid
+        return self._uid_alias_mapping().get(uid, uid)
+
+    def _merge_alias_profiles(self):
+        """一次性把旧版本按平台 ID 建好的档案并进主 uid（映射变了会再跑一次）。"""
+        if not self.cfg_bool("uid_merge_enabled", True):
+            return
+        mapping = self._uid_alias_mapping()
+        if not mapping:
+            return
+        signature = json.dumps(mapping, sort_keys=True, ensure_ascii=False)
+        try:
+            if self.db.kv_get("uid_alias_merged_signature", "") == signature:
+                return
+        except Exception:
+            pass
+        try:
+            report = merge_uid_alias_data(self.db.conn, mapping)
+            self.db.kv_set("uid_alias_merged_signature", signature)
+            logger.info("[amo] 跨平台账号合并完成: %s" % report)
+        except Exception as exc:
+            logger.warning("[amo] 跨平台账号合并失败: %s" % exc)
+
     # ---------- 管理员 ----------
     def _is_admin(self, event):
-        uid = str(event.get_sender_id())
+        uid = self._canonical_uid(event)
         if uid in self.admin_uids:
             return True
         try:
@@ -4028,7 +4316,7 @@ class HumanCorePlugin(Star):
 
     # ---------- 消息学习 ----------
     async def _learn(self, event, text):
-        uid = str(event.get_sender_id())
+        uid = self._canonical_uid(event)
         name = event.get_sender_name() or uid
         umo = event.unified_msg_origin
         group_id = event.get_group_id()
@@ -4036,6 +4324,8 @@ class HumanCorePlugin(Star):
         profile = self.db.touch_profile(
             uid, name, event.get_platform_name(), umo, group_id, private
         )
+        if private and umo:
+            self._record_channel(uid, umo, event.get_platform_name())
         if profile and not profile.get("is_admin") and uid in self.admin_uids:
             self.db.update_profile(uid, is_admin=1)
             profile["is_admin"] = 1
@@ -4134,7 +4424,7 @@ class HumanCorePlugin(Star):
         group_id = str(event.get_group_id() or "")
         if not group_id:
             return False
-        uid = str(event.get_sender_id())
+        uid = self._canonical_uid(event)
         lovers = self._lover_aliases()
         if not lovers or uid in set(lovers.values()) or self._is_registered_lover(uid):
             return False
@@ -5464,7 +5754,7 @@ class HumanCorePlugin(Star):
             self.state.apply_schedule_events()
         except Exception:
             pass
-        uid = str(event.get_sender_id())
+        uid = self._canonical_uid(event)
         if not uid or uid == str(event.get_self_id()):
             return
         text = (event.message_str or "").strip()
@@ -5512,7 +5802,7 @@ class HumanCorePlugin(Star):
     async def _handle_private(self, event, profile):
         snap = self.state.snapshot()
         umo = event.unified_msg_origin
-        uid = str(event.get_sender_id())
+        uid = self._canonical_uid(event)
         if self._recent_bot_initiated(umo):
             self._disturb_until[str(umo)] = 0
             logger.info("[amo] 主动消息后的回复，按正常聊天处理")
@@ -5598,7 +5888,7 @@ class HumanCorePlugin(Star):
             logger.debug("[amo] 群聊插话判定: %s" % json.dumps(result, ensure_ascii=False))
         if not result["reply"]:
             return
-        memories, memory_text = self._recall(str(event.get_sender_id()), text)
+        memories, memory_text = self._recall(self._canonical_uid(event), text)
         reply = await self._compose_reply(event, text, snap, profile, memories, memory_text, True)
         if not reply:
             return
@@ -5651,7 +5941,7 @@ class HumanCorePlugin(Star):
 
     async def _compose_reply(self, event, text, snap, profile, memories, memory_text, group):
         umo = event.unified_msg_origin
-        uid = str(event.get_sender_id())
+        uid = self._canonical_uid(event)
         name = profile.get("alias") or profile.get("name") or event.get_sender_name() or "对方"
         relation = profile.get("relation", "普通")
         persona = await self.llm.persona(umo)
@@ -5662,7 +5952,7 @@ class HumanCorePlugin(Star):
         consult = bool(re.search(r"(怎么|如何|为什么|步骤|怎么办|该怎么做|教程|方法|建议|教我|能不能|是什么|该不该|可不可以)", text or ""))
         recent = self._recent(umo, 10)
         lines = []
-        current_uid = str(event.get_sender_id())
+        current_uid = self._canonical_uid(event)
         current_place = str((snap.get("activity") or {}).get("place") or "")
         for item in recent:
             content = str(item.get("content") or "")
@@ -6018,7 +6308,7 @@ class HumanCorePlugin(Star):
 
     async def _dynamic_context(self, event):
         await self._sync_persona_name(event)
-        uid = str(event.get_sender_id())
+        uid = self._canonical_uid(event)
         profile = self.db.get_profile(uid)
         relation = profile.get("relation", "普通")
         snap = self.state.snapshot()
@@ -6191,7 +6481,7 @@ class HumanCorePlugin(Star):
             quote_id = getattr(event.message_obj, "message_id", None) if quote_enabled else None
             if self.cfg_bool("polish_native", False):
                 snap = self.state.snapshot()
-                native_profile = self.db.get_profile(str(event.get_sender_id())) or {}
+                native_profile = self.db.get_profile(self._canonical_uid(event)) or {}
                 native_relation = str(native_profile.get("relation") or "普通")
                 native_name = str(native_profile.get("alias") or native_profile.get("name") or "对方")
                 native_tone = self._tone_with_continuity(
@@ -6567,6 +6857,80 @@ class HumanCorePlugin(Star):
             return "share"
         return "greet"
 
+    # ---- 主动消息多平台轮换 ----
+    def _record_channel(self, uid, umo, platform):
+        """记下这个人各平台的会话地址，供主动消息选边。"""
+        if not uid or not umo:
+            return
+        try:
+            key = "channels:%s" % uid
+            data = self.db.kv_get(key, {}) or {}
+            if not isinstance(data, dict):
+                data = {}
+            data[str(platform or "?")] = {"umo": str(umo), "ts": now_ts()}
+            self.db.kv_set(key, data)
+        except Exception as exc:
+            logger.debug("[amo] 记录通道失败: %s" % exc)
+
+    def _proactive_candidates(self, profile, primary):
+        """主动消息的候选平台：选中的优先，其次是其它通道，最后 private_umo。
+
+        最近刚被主动联系过的平台会被跳过，避免兜底时连着骚扰同一处。
+        """
+        items = []
+
+        def push(umo, force=False):
+            umo = str(umo or "")
+            if not umo or umo in items:
+                return
+            if not force and self._recent_bot_initiated(umo, 3600):
+                return
+            items.append(umo)
+
+        push(primary, force=True)
+        if self.cfg_bool("proactive_rotate_enabled", True):
+            try:
+                data = self.db.kv_get("channels:%s" % (profile.get("uid") or ""), {}) or {}
+            except Exception:
+                data = {}
+            if isinstance(data, dict):
+                entries = [v for v in data.values() if isinstance(v, dict) and v.get("umo")]
+                entries.sort(key=lambda v: -float(v.get("ts") or 0))
+                for value in entries:
+                    push(value.get("umo"))
+        push(profile.get("private_umo"))
+        return items
+
+    def _pick_proactive_umo(self, profile):
+        """选这轮主动消息先发哪个平台；关掉开关就用 private_umo。"""
+        fallback = str(profile.get("private_umo") or "")
+        if not self.cfg_bool("proactive_rotate_enabled", True):
+            return fallback
+        uid = str(profile.get("uid") or "")
+        try:
+            data = self.db.kv_get("channels:%s" % uid, {}) or {}
+        except Exception:
+            return fallback
+        if not isinstance(data, dict):
+            return fallback
+        items = []
+        for value in data.values():
+            if isinstance(value, dict) and value.get("umo"):
+                items.append((float(value.get("ts") or 0), str(value.get("umo"))))
+        if not items:
+            return fallback
+        items.sort(key=lambda pair: -pair[0])
+        if len(items) == 1:
+            return items[0][1]
+        window = max(1, self.cfg_int("proactive_recent_minutes", 30)) * 60
+        if now_ts() - items[0][0] <= window:
+            return items[0][1]
+        last = str(self.db.kv_get("last_channel:%s" % uid, "") or "")
+        for _, umo in items:
+            if umo != last:
+                return umo
+        return items[0][1]
+
     async def _maybe_proactive(self):
         quiet = quiet_now(self.cfg_str("quiet_hours", "23:30-07:30"))
         try:
@@ -6582,9 +6946,10 @@ class HumanCorePlugin(Star):
         interval = max(10, self.cfg_int("proactive_interval_min", 90)) * 60
         daily_max = max(0, self.cfg_int("proactive_daily_max", 3))
         for profile in profiles:
-            if not profile.get("private_umo"):
+            target_umo = self._pick_proactive_umo(profile)
+            if not target_umo:
                 continue
-            if self._recent_bot_initiated(profile["private_umo"], 3600):
+            if self._recent_bot_initiated(target_umo, 3600):
                 continue
             count = to_int(profile.get("proactive_count"))
             if profile.get("proactive_day") != today_str():
@@ -6622,19 +6987,26 @@ class HumanCorePlugin(Star):
                 continue
             kind = self._choose_proactive_kind(profile, snap, category)
             text = await self.llm.gen_proactive(
-                profile["private_umo"], profile, snap, kind
+                target_umo, profile, snap, kind
             )
             if not text:
                 continue
-            ok = await self._send_to_umo(profile["private_umo"], text)
+            sent_umo = ""
+            for candidate in self._proactive_candidates(profile, target_umo):
+                if await self._send_to_umo(candidate, text):
+                    sent_umo = candidate
+                    break
+            ok = bool(sent_umo)
             if ok:
-                self._mark_bot_initiated(profile["private_umo"])
+                target_umo = sent_umo
+                self._mark_bot_initiated(target_umo)
+                self.db.kv_set("last_channel:%s" % profile.get("uid"), target_umo)
                 self.db.bump_proactive(profile["uid"])
                 self.db.log_proactive(profile["uid"], kind, text)
                 self._set_proactive_pending(profile["uid"], kind, text)
                 self._last_proactive_activity[str(profile.get("uid"))] = today_str() + ":" + str(datetime.now().hour)
                 self.db.add_message(
-                    profile["private_umo"], str(self.context.get_config().get("bot_id", "bot")),
+                    target_umo, str(self.context.get_config().get("bot_id", "bot")),
                     self.bot_name, "bot", text,
                 )
                 logger.debug("[amo] 主动私聊 -> %s (%s)" % (profile.get("name", ""), kind))
@@ -6658,10 +7030,10 @@ class HumanCorePlugin(Star):
         if index < len(args):
             token = str(args[index]).strip().lstrip("@")
             if token in ("我", "me", "self"):
-                return str(event.get_sender_id())
+                return self._canonical_uid(event)
             if token:
                 return token
-        return str(event.get_sender_id())
+        return self._canonical_uid(event)
 
     async def _status_data(self):
         self._reload_config_if_changed()
@@ -6748,7 +7120,7 @@ class HumanCorePlugin(Star):
     async def _handle_command(self, event):
         args = self._args(event)
         sub = args[0].lower() if args else "help"
-        uid = str(event.get_sender_id())
+        uid = self._canonical_uid(event)
 
         if sub in ("help", "帮助", ""):
             return (
@@ -7084,7 +7456,7 @@ class HumanCorePlugin(Star):
     @filter.command("c_profile")
     async def cmd_profile(self, event: AstrMessageEvent):
         await self._ensure_ready()
-        uid = str(event.get_sender_id())
+        uid = self._canonical_uid(event)
         profile = self.db.get_profile(uid)
         if not profile:
             yield event.plain_result("还没有你的档案。")
@@ -7105,7 +7477,7 @@ class HumanCorePlugin(Star):
         if relation not in RELATIONS:
             yield event.plain_result("用法：/c_setrel 仇恨|抵触|普通|熟识|相恋")
             return
-        uid = str(event.get_sender_id())
+        uid = self._canonical_uid(event)
         self.db.update_profile(uid, relation=relation)
         yield event.plain_result("✅ 关系已设置为：" + relation)
 
@@ -7119,7 +7491,7 @@ class HumanCorePlugin(Star):
         if not text:
             yield event.plain_result("请输入要学习的内容")
             return
-        uid = str(event.get_sender_id())
+        uid = self._canonical_uid(event)
         self.db.add_memory(
             uid, text, "manual", 1,
             self.cfg_int("mem_days_normal", 7),
