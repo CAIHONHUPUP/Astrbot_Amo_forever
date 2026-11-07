@@ -125,9 +125,9 @@
     .toast.error { border-color: rgba(244, 63, 94, .45); color: #b42318; }
     .theme-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 2px 0; }
     .theme-bar .segmented { flex: 0 0 auto; }
-    .tabs { display: flex; gap: 2px; padding: 3px; background: var(--card); border-radius: 14px; max-width: 100%; min-width: 0; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; position: sticky; top: 0; z-index: 12; }
+    .tabs { display: flex; gap: 8px; padding: 4px; background: var(--card); border-radius: 14px; max-width: 100%; min-width: 0; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; touch-action: pan-x; position: sticky; top: 0; z-index: 12; }
     .tabs::-webkit-scrollbar { display: none; }
-    .tab { flex: 1 1 0; border: 0; background: transparent; color: var(--muted); text-align: center; padding: 7px 1px; border-radius: 9px; font-size: 9.5px; cursor: pointer; white-space: nowrap; min-width: 0; }
+    .tab { flex: 0 0 auto; border: 0; background: transparent; color: var(--muted); text-align: center; padding: 9px 10px; border-radius: 10px; font-size: 13px; cursor: pointer; white-space: nowrap; min-width: 0; }
     .tab.active { background: var(--card); color: var(--pink); box-shadow: none; }
     .tab-panel { display: flex; flex-direction: column; gap: 14px; width: 100%; min-width: 0; }
     .tab-panel[hidden] { display: none; }
@@ -281,14 +281,6 @@
       <div class="brand"><span class="dot"></span> 陪伴</div>
       <div class="clock" id="clock">--</div>
     </header>
-
-    <div class="theme-bar">
-      <span class="label">面板主题</span>
-      <div class="segmented">
-        <button class="theme-btn active" data-theme="light">白色</button>
-        <button class="theme-btn" data-theme="dark">深色</button>
-      </div>
-    </div>
 
     <nav class="tabs">
       <button class="tab active" data-tab="status">状态</button>
@@ -527,9 +519,8 @@
     function applyTheme(theme, persist) {
       const value = theme === "dark" ? "dark" : "light";
       document.documentElement.dataset.theme = value;
-      document.querySelectorAll(".theme-btn").forEach((button) => {
-        button.classList.toggle("active", button.dataset.theme === value);
-      });
+      const select = document.getElementById("themeSelect");
+      if (select) select.value = value;
       if (persist) {
         try { localStorage.setItem(THEME_KEY, value); } catch (error) {}
       }
@@ -537,9 +528,6 @@
         try { render(lastData); } catch (error) {}
       }
     }
-    document.querySelectorAll(".theme-btn").forEach((button) => {
-      button.addEventListener("click", () => applyTheme(button.dataset.theme, true));
-    });
     try { applyTheme(localStorage.getItem(THEME_KEY) || "light", false); }
     catch (error) { applyTheme("light", false); }
 
@@ -1680,38 +1668,58 @@
         if (!groups[groupName]) groups[groupName] = [];
         groups[groupName].push(item);
       });
-      const order = ["基础", "状态", "记忆", "私聊", "心流", "分段"];
-      const names = Object.keys(groups).sort((a, b) => {
-        const ai = order.indexOf(a); const bi = order.indexOf(b);
-        return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
-      });
-      if (!names.length) { box.textContent = "这个分组没有匹配的配置"; return; }
-      names.forEach((group) => {
-        const details = document.createElement("details");
-        details.className = "settings-group";
-        details.open = true;
-        const summary = document.createElement("summary");
-        summary.textContent = group + "（" + groups[group].length + "）";
-        details.appendChild(summary);
-        groups[group].forEach((item) => {
-          const row = document.createElement("div");
-          row.className = "setting-row" + (item.type === "template_list" ? " wide" : "");
-          const left = document.createElement("div");
-          const name = document.createElement("div");
-          name.className = "name";
-          name.textContent = item.description || item.key;
-          left.appendChild(name);
-          if (item.hint || item.type === "list" || item.type === "template_list") {
-            const hint = document.createElement("div");
-            hint.className = "hint";
-            hint.textContent = (item.hint || "") + (item.type === "list" ? "（一行一个，直接输入，不用加引号/JSON）" : (item.type === "template_list" ? "（在下面逐项填写）" : ""));
-            left.appendChild(hint);
-          }
-          row.appendChild(left);
-          row.appendChild(settingControl(item));
-          details.appendChild(row);
+      const items = groups[activeGroup] || [];
+      if (activeGroup === "基础") {
+        const themeRow = document.createElement("div");
+        themeRow.className = "setting-row";
+        const left = document.createElement("div");
+        const name = document.createElement("div");
+        name.className = "name";
+        name.textContent = "面板主题";
+        const hint = document.createElement("div");
+        hint.className = "hint";
+        hint.textContent = "只影响当前浏览器，立即切换";
+        left.appendChild(name);
+        left.appendChild(hint);
+        themeRow.appendChild(left);
+        const control = document.createElement("div");
+        control.className = "control";
+        const select = document.createElement("select");
+        select.id = "themeSelect";
+        select.className = "input";
+        [["light", "白色"], ["dark", "深色"]].forEach(([value, label]) => {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = label;
+          select.appendChild(option);
         });
-        box.appendChild(details);
+        select.value = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+        select.addEventListener("change", () => applyTheme(select.value, true));
+        control.appendChild(select);
+        themeRow.appendChild(control);
+        box.appendChild(themeRow);
+      }
+      if (!items.length) {
+        if (activeGroup !== "基础") box.textContent = "这个分组没有匹配的配置";
+        return;
+      }
+      items.forEach((item) => {
+        const row = document.createElement("div");
+        row.className = "setting-row" + (item.type === "template_list" ? " wide" : "");
+        const left = document.createElement("div");
+        const name = document.createElement("div");
+        name.className = "name";
+        name.textContent = item.description || item.key;
+        left.appendChild(name);
+        if (item.hint || item.type === "list" || item.type === "template_list") {
+          const hint = document.createElement("div");
+          hint.className = "hint";
+          hint.textContent = (item.hint || "") + (item.type === "list" ? "（一行一个，直接输入，不用加引号/JSON）" : (item.type === "template_list" ? "（在下面逐项填写）" : ""));
+          left.appendChild(hint);
+        }
+        row.appendChild(left);
+        row.appendChild(settingControl(item));
+        box.appendChild(row);
       });
     }
 
