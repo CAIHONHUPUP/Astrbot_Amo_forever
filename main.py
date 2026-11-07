@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.4.6
+我想永远陪着你 / 我想永远陪伴你 3.4.8
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.4.6"
+PLUGIN_VERSION = "3.4.8"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -143,6 +143,18 @@ CN_HOLIDAYS = {
     "2027-10-01": "国庆", "2027-10-02": "国庆", "2027-10-03": "国庆", "2027-10-04": "国庆", "2027-10-05": "国庆", "2027-10-06": "国庆", "2027-10-07": "国庆",
 }
 
+# 2026 年主要假期的连续日期（用于判断长假/短假）
+for _d in range(1, 4):
+    CN_HOLIDAYS.setdefault("2026-01-%02d" % _d, "元旦")
+for _d in range(4, 7):
+    CN_HOLIDAYS.setdefault("2026-04-%02d" % _d, "清明")
+for _d in range(1, 6):
+    CN_HOLIDAYS.setdefault("2026-05-%02d" % _d, "劳动节")
+for _d in range(19, 22):
+    CN_HOLIDAYS.setdefault("2026-06-%02d" % _d, "端午")
+for _d in range(25, 28):
+    CN_HOLIDAYS.setdefault("2026-09-%02d" % _d, "中秋")
+
 SOLAR_TERMS = {
     "2025-01-05": "小寒", "2025-01-20": "大寒", "2025-02-03": "立春", "2025-02-18": "雨水", "2025-03-05": "惊蛰", "2025-03-20": "春分", "2025-04-04": "清明", "2025-04-20": "谷雨", "2025-05-05": "立夏", "2025-05-21": "小满", "2025-06-05": "芒种", "2025-06-21": "夏至", "2025-07-07": "小暑", "2025-07-22": "大暑", "2025-08-07": "立秋", "2025-08-23": "处暑", "2025-09-07": "白露", "2025-09-23": "秋分", "2025-10-08": "寒露", "2025-10-23": "霜降", "2025-11-07": "立冬", "2025-11-22": "小雪", "2025-12-07": "大雪", "2025-12-21": "冬至",
     "2026-01-05": "小寒", "2026-01-20": "大寒", "2026-02-04": "立春", "2026-02-18": "雨水", "2026-03-05": "惊蛰", "2026-03-20": "春分", "2026-04-05": "清明", "2026-04-20": "谷雨", "2026-05-05": "立夏", "2026-05-21": "小满", "2026-06-05": "芒种", "2026-06-21": "夏至", "2026-07-07": "小暑", "2026-07-23": "大暑", "2026-08-07": "立秋", "2026-08-23": "处暑", "2026-09-07": "白露", "2026-09-23": "秋分", "2026-10-08": "寒露", "2026-10-23": "霜降", "2026-11-07": "立冬", "2026-11-22": "小雪", "2026-12-07": "大雪", "2026-12-21": "冬至",
@@ -161,7 +173,19 @@ def day_meta(day=None):
     term = SOLAR_TERMS.get(key, "")
     weekend = target.weekday() >= 5
     rest = bool(weekend or holiday)
+    holiday_days = 0
+    if holiday:
+        cursor = target
+        while CN_HOLIDAYS.get(cursor.isoformat()) == holiday:
+            holiday_days += 1
+            cursor -= timedelta(days=1)
+        cursor = target + timedelta(days=1)
+        while CN_HOLIDAYS.get(cursor.isoformat()) == holiday:
+            holiday_days += 1
+            cursor += timedelta(days=1)
     label = "、".join(item for item in (holiday, term) if item)
+    if holiday_days >= 2:
+        label += (" · " if label else "") + "%d天假期" % holiday_days
     if not label and weekend:
         label = "周末"
     return {
@@ -170,6 +194,7 @@ def day_meta(day=None):
         "weekend": weekend,
         "holiday": holiday,
         "solar_term": term,
+        "holiday_days": holiday_days,
         "rest": rest,
         "label": label,
     }
@@ -732,6 +757,7 @@ class AmoDB:
                     last_proactive REAL DEFAULT 0,
                     proactive_day TEXT DEFAULT '',
                     proactive_count INTEGER DEFAULT 0,
+                    relation_at REAL DEFAULT 0,
                     is_admin INTEGER DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS memories (
@@ -792,6 +818,14 @@ class AmoDB:
             self.conn.commit()
             self._seed_dialects()
             self._migrate_legacy()
+            try:
+                cols = {row[1] for row in self.conn.execute("PRAGMA table_info(profiles)").fetchall()}
+                if "relation_at" not in cols:
+                    self.conn.execute("ALTER TABLE profiles ADD COLUMN relation_at REAL DEFAULT 0")
+                    self.conn.execute("UPDATE profiles SET relation_at=last_seen WHERE relation_at=0")
+                    self.conn.commit()
+            except Exception:
+                pass
 
     def _migrate_legacy(self):
         try:
@@ -909,6 +943,9 @@ class AmoDB:
             if key in allowed:
                 updates.append(key + "=?")
                 values.append(value)
+        if "relation" in fields:
+            updates.append("relation_at=?")
+            values.append(now_ts())
         if not updates:
             return False
         values.append(str(uid))
@@ -1955,9 +1992,39 @@ class HumanState:
             })
         return ordered
 
+    def _travel_schedule(self, meta):
+        """长假去外省旅游，日程里包含交通、景区、酒店和当地吃饭。"""
+        destinations = [
+            ("云南·大理", "大理古城", "洱海"),
+            ("重庆", "洪崖洞", "解放碑"),
+            ("四川·成都", "宽窄巷子", "锦里"),
+            ("广西·桂林", "漓江", "阳朔西街"),
+            ("陕西·西安", "兵马俑", "回民街"),
+        ]
+        seed = (meta.get("holiday") or "") + (meta.get("date") or "")[:4]
+        city, spot, night_spot = destinations[md5_int(seed) % len(destinations)]
+        return [
+            {"start": "00:00", "end": "06:00", "activity": "在酒店睡觉", "place": city + "·酒店", "category": "sleep"},
+            {"start": "06:00", "end": "07:00", "activity": "起床洗漱", "place": city + "·酒店", "category": "life"},
+            {"start": "07:00", "end": "08:00", "activity": "酒店吃早饭", "place": city + "·酒店", "category": "meal"},
+            {"start": "08:00", "end": "10:00", "activity": "坐高铁/飞机去" + city, "place": "路上", "category": "commute"},
+            {"start": "10:00", "end": "12:00", "activity": "到酒店放行李、去" + spot, "place": city + "·" + spot, "category": "commute"},
+            {"start": "12:00", "end": "13:00", "activity": "在景区附近吃当地午饭", "place": city + "·" + spot, "category": "meal"},
+            {"start": "13:00", "end": "15:00", "activity": "逛" + spot, "place": city + "·" + spot, "category": "play"},
+            {"start": "15:00", "end": "17:00", "activity": "拍照、买点小东西", "place": city + "·" + spot, "category": "play"},
+            {"start": "17:00", "end": "19:00", "activity": "回酒店休息", "place": city + "·酒店", "category": "rest"},
+            {"start": "19:00", "end": "20:00", "activity": "吃当地特色晚饭", "place": city + "·" + night_spot, "category": "meal"},
+            {"start": "20:00", "end": "22:00", "activity": "逛" + night_spot + "夜市", "place": city + "·" + night_spot, "category": "play"},
+            {"start": "22:00", "end": "23:00", "activity": "回酒店洗澡", "place": city + "·酒店", "category": "life"},
+            {"start": "23:00", "end": "23:59", "activity": "睡觉", "place": city + "·酒店", "category": "sleep"},
+        ]
+
     def _fallback_schedule(self):
         """真人化的整点兜底日程：通勤、开会、下午茶、上厕所、摸鱼都有。"""
-        weekday = not day_meta()["rest"]
+        meta = day_meta()
+        if meta["holiday_days"] >= 4:
+            return self._with_daily_events(self._travel_schedule(meta))
+        weekday = not meta["rest"]
         if weekday:
             items = [
                 {"start": "00:00", "end": "01:00", "activity": "睡觉", "place": "家", "category": "sleep"},
@@ -1997,8 +2064,8 @@ class HumanState:
             {"start": "07:00", "end": "08:00", "activity": "赖床、刷手机", "place": "家", "category": "rest"},
             {"start": "08:00", "end": "09:00", "activity": "起床洗漱、吃早餐", "place": "家", "category": "life"},
             {"start": "09:00", "end": "10:00", "activity": "打扫房间、洗衣服", "place": "家", "category": "life"},
-            {"start": "10:00", "end": "11:00", "activity": "出门逛逛", "place": "商场", "category": "play"},
-            {"start": "11:00", "end": "12:00", "activity": "逛街、看东西", "place": "商场", "category": "play"},
+            {"start": "10:00", "end": "11:00", "activity": "去附近公园散步、晒太阳", "place": "附近公园", "category": "play"},
+            {"start": "11:00", "end": "12:00", "activity": "公园里坐着聊天", "place": "附近公园", "category": "rest"},
             {"start": "12:00", "end": "13:00", "activity": "吃午饭", "place": "外面", "category": "meal"},
             {"start": "13:00", "end": "14:00", "activity": "继续逛、买点小东西", "place": "商场", "category": "play"},
             {"start": "14:00", "end": "15:00", "activity": "找地方喝下午茶", "place": "咖啡店", "category": "rest"},
@@ -2043,6 +2110,7 @@ class HumanState:
 
     async def ensure_schedule(self, umo, force=False):
         today = today_str()
+        meta = day_meta()
         existing = None if force else self.schedule.get(today)
         if existing and self.db.kv_get("schedule_version", "") != SCHEDULE_VERSION:
             existing = self._fallback_schedule()
@@ -2050,10 +2118,14 @@ class HumanState:
             self.db.kv_set("schedule_version", SCHEDULE_VERSION)
             self.db.save_schedule(today, existing)
             return existing
-        if existing and day_meta()["rest"] and any(
-            str(item.get("category") or "") in ("work", "study", "commute") for item in existing
-        ):
-            existing = None
+        if existing and meta["rest"]:
+            activities = " ".join(str(item.get("activity") or "") for item in existing)
+            if (
+                any(str(item.get("category") or "") in ("work", "study") for item in existing)
+                or (meta["holiday_days"] >= 4 and not any(word in activities for word in ("景区", "古城", "洱海", "夜市", "漓江", "兵马俑")))
+                or (meta["holiday_days"] < 4 and not any(word in activities for word in ("公园", "附近", "商场", "咖啡")))
+            ):
+                existing = None
         if existing:
             hourly = self._hourly_schedule(existing)
             if hourly != existing:
@@ -2061,25 +2133,16 @@ class HumanState:
                 self.db.kv_set("schedule", self.schedule)
                 self.db.save_schedule(today, hourly)
             return hourly
-        world = await self.ensure_worldview(umo)
-        weather = await self.refresh_weather()
-        period = self.period_info()
-        health = self.health_info()
-        meta = day_meta()
-        items = await self.p.llm.gen_schedule(umo, world, weather, period, health, meta)
-        generated = bool(items)
-        if not items:
+        if meta.get("rest"):
+            # 休息日直接走兜底：长假旅游、短假附近公园，保证不排上班/通勤。
             items = self._fallback_schedule()
-        if generated and meta.get("rest"):
-            has_commute = any(
-                str(item.get("category") or "") == "commute" for item in items
-            )
-            work_minutes = 0
-            for item in items:
-                if str(item.get("category") or "") in ("work", "study"):
-                    work_minutes += max(0, parse_hhmm(item.get("end")) - parse_hhmm(item.get("start")))
-            if has_commute or work_minutes > 240:
-                # 休息日最多允许 4 小时短时加班；通勤/全天上班按休息日兜底。
+        else:
+            world = await self.ensure_worldview(umo)
+            weather = await self.refresh_weather()
+            period = self.period_info()
+            health = self.health_info()
+            items = await self.p.llm.gen_schedule(umo, world, weather, period, health, meta)
+            if not items:
                 items = self._fallback_schedule()
         items = self._with_daily_events(items)
         items = self._hourly_schedule(items)
@@ -3004,6 +3067,7 @@ class HumanCorePlugin(Star):
         self._last_auto_learn = 0.0
         self._proactive_last = 0.0
         self._last_ritual = 0.0
+        self._last_relation_decay = 0.0
         self._bot_initiated = {}
         self._prefix_cache = None
         self._loop_task = None
@@ -5007,6 +5071,19 @@ class HumanCorePlugin(Star):
             except asyncio.CancelledError:
                 return
 
+    def _decay_hate_relations(self):
+        try:
+            cutoff = now_ts() - 7 * 86400
+            rows = self.db.conn.execute(
+                "SELECT uid FROM profiles WHERE relation='仇恨' AND relation_at>0 AND relation_at<=?",
+                (cutoff,),
+            ).fetchall()
+            for row in rows:
+                self.db.update_profile(str(row["uid"]), relation="抵触")
+                logger.info("[amo] 仇恨超过7天，降为抵触: %s" % row["uid"])
+        except Exception as exc:
+            logger.debug("[amo] 仇恨关系衰减失败: %s" % exc)
+
     async def _tick(self):
         if not self._ready or self.state is None:
             return
@@ -5028,6 +5105,9 @@ class HumanCorePlugin(Star):
             pass
 
         now = now_ts()
+        if now - self._last_relation_decay > 3600:
+            self._last_relation_decay = now
+            self._decay_hate_relations()
         if now - self._last_purge > 3600:
             self._last_purge = now
             self.db.purge_memories()
