@@ -123,8 +123,11 @@
     }
     .toast.show { opacity: 1; transform: translate(-50%, 0); }
     .toast.error { border-color: rgba(244, 63, 94, .45); color: #b42318; }
-    .tabs { display: flex; gap: 8px; padding: 4px; background: var(--card); border-radius: 14px; max-width: 100%; min-width: 0; }
-    .tab { flex: 1; border: 0; background: transparent; color: var(--muted); text-align: center; padding: 9px 8px; border-radius: 10px; font-size: 13px; cursor: pointer; }
+    .theme-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 2px 0; }
+    .theme-bar .segmented { flex: 0 0 auto; }
+    .tabs { display: flex; gap: 2px; padding: 3px; background: var(--card); border-radius: 14px; max-width: 100%; min-width: 0; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; position: sticky; top: 0; z-index: 12; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab { flex: 1 1 0; border: 0; background: transparent; color: var(--muted); text-align: center; padding: 7px 1px; border-radius: 9px; font-size: 9.5px; cursor: pointer; white-space: nowrap; min-width: 0; }
     .tab.active { background: var(--card); color: var(--pink); box-shadow: none; }
     .tab-panel { display: flex; flex-direction: column; gap: 14px; width: 100%; min-width: 0; }
     .tab-panel[hidden] { display: none; }
@@ -165,7 +168,15 @@
     .relation-form .input { width: 100%; }
     .relation-form button { width: 100%; }
     .stack-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
-    .stack-actions button { width: 100%; }
+    .stack-actions button { width: 100%; font-size: 12px; padding: 9px 10px; }
+    .template-list { display: flex; flex-direction: column; gap: 8px; }
+    .template-card { border: 1px solid var(--line); border-radius: 10px; padding: 9px; display: flex; flex-direction: column; gap: 7px; }
+    .template-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text); }
+    .template-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    .template-field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
+    .template-field textarea { min-height: 54px; }
+    .template-remove { width: auto; padding: 4px 8px; font-size: 11px; }
+    .template-add { width: 100%; padding: 8px 10px; font-size: 12px; border-style: dashed; }
     .warning-red { color: #dc2626; font-size: 12px; font-weight: 600; line-height: 1.6; margin: 8px 0; }
     .theme-row { justify-content: space-between; margin-bottom: 10px; }
     .segmented { display: flex; gap: 6px; }
@@ -201,6 +212,8 @@
     .setting-row .name { font-size: 12.5px; }
     .setting-row .hint { color: var(--muted); font-size: 11px; margin-top: 2px; line-height: 1.4; }
     .setting-row .control { min-width: 0; display: flex; justify-content: flex-end; }
+    .setting-row.wide { grid-template-columns: 1fr; }
+    .setting-row.wide .control { justify-content: flex-start; }
     .setting-row .control input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--pink); }
     .setting-row .control .input { max-width: 100%; }
     .ghost { background: transparent; border-color: var(--line); }
@@ -214,6 +227,7 @@
       .setting-row { grid-template-columns: 1fr; }
       .setting-row .control { justify-content: flex-start; }
       .status-grid { grid-template-columns: 1fr; }
+      .template-grid { grid-template-columns: 1fr; }
     }
     #thresholdCard { padding: 12px; }
     #thresholdCard .threshold { margin-top: 6px; }
@@ -268,13 +282,27 @@
       <div class="clock" id="clock">--</div>
     </header>
 
+    <div class="theme-bar">
+      <span class="label">面板主题</span>
+      <div class="segmented">
+        <button class="theme-btn active" data-theme="light">白色</button>
+        <button class="theme-btn" data-theme="dark">深色</button>
+      </div>
+    </div>
+
     <nav class="tabs">
       <button class="tab active" data-tab="status">状态</button>
       <button class="tab" data-tab="world">世界</button>
       <button class="tab" data-tab="schedule">日程</button>
       <button class="tab" data-tab="profiles">用户</button>
-      <button class="tab" data-tab="settings">设置</button>
       <button class="tab" data-tab="relations">关系</button>
+      <button class="tab" data-tab="settings" data-group="基础">基础</button>
+      <button class="tab" data-tab="settings" data-group="状态">参数</button>
+      <button class="tab" data-tab="settings" data-group="记忆">记忆</button>
+      <button class="tab" data-tab="settings" data-group="私聊">私聊</button>
+      <button class="tab" data-tab="settings" data-group="心流">心流</button>
+      <button class="tab" data-tab="settings" data-group="分段">分段</button>
+      <button class="tab" data-tab="actions">操作</button>
     </nav>
 
     <div id="tab-status" class="tab-panel">
@@ -326,11 +354,6 @@
           <div class="sub" id="thresholdSub"></div>
         </div>
 
-        <div class="status-actions actions compact">
-          <button id="btnRefresh">刷新状态</button>
-          <button id="btnWeather">刷新天气</button>
-          <button id="btnSchedule">刷新日程</button>
-        </div>
       </section>
     </div>
 
@@ -360,11 +383,6 @@
         </div>
         <div class="warning-red">如需更换语种，请不要在人格提示词中提及具体语种，否则会和这里的选择冲突。</div>
         <article id="worldDoc" class="world-doc">加载中…</article>
-        <div class="stack-actions">
-          <button id="btnWorld">重建世界</button>
-          <button id="btnKb">重建语种</button>
-          <button id="btnScenicKb">重建景区</button>
-        </div>
       </section>
     </div>
 
@@ -445,13 +463,6 @@
 
     <div id="tab-settings" class="tab-panel" hidden>
       <section class="card">
-        <div class="row theme-row">
-          <span class="label">面板主题</span>
-          <div class="segmented">
-            <button class="theme-btn active" data-theme="light">白色</button>
-            <button class="theme-btn" data-theme="dark">深色</button>
-          </div>
-        </div>
         <div class="row">
           <input id="settingsSearch" class="input grow" placeholder="搜索配置项" />
           <button id="btnReloadSettings">刷新</button>
@@ -467,6 +478,21 @@
           <a class="group-link qq-group-link" href="http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&amp;k=AQEkXQn02RRkdb_xlr2c9DA8Ik63KhsT&amp;authKey=xhuF9VxkYe5a73qvZQqCbLT1yy82LNcu7FPcvX2XK2LI0UlD0EwieiKRCmQGGzcJ&amp;noverify=0&amp;group_code=1055679275" target="_blank" rel="noopener noreferrer">点击链接加入群聊【恋爱聊天交流群】</a>
         </div>
 
+    </div>
+
+    <div id="tab-actions" class="tab-panel" hidden>
+      <section class="card">
+        <div class="label">刷新与重建</div>
+        <div class="sub">刷新状态、天气、日程；重建世界、语种、景区。</div>
+        <div class="stack-actions">
+          <button id="btnRefresh">刷新状态</button>
+          <button id="btnWeather">刷新天气</button>
+          <button id="btnSchedule">刷新日程</button>
+          <button id="btnWorld">重建世界</button>
+          <button id="btnKb">重建语种</button>
+          <button id="btnScenicKb">重建景区</button>
+        </div>
+      </section>
     </div>
 
     <footer>数据来自插件后端 · <span id="counts"></span><br>反馈 / 建议：<a class="group-link qq-group-link" href="http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&amp;k=AQEkXQn02RRkdb_xlr2c9DA8Ik63KhsT&amp;authKey=xhuF9VxkYe5a73qvZQqCbLT1yy82LNcu7FPcvX2XK2LI0UlD0EwieiKRCmQGGzcJ&amp;noverify=0&amp;group_code=1055679275" target="_blank" rel="noopener noreferrer">点击加入群聊【恋爱聊天交流群】</a></footer>
@@ -1109,7 +1135,9 @@
     });
 
     async function openSettingsFor(term) {
-      showTab("settings");
+      const group = "状态";
+      const button = tabButtons.find((item) => item.dataset.tab === "settings" && item.dataset.group === group);
+      showTab("settings", group, button);
       if (!configItems.length) await loadSettings();
       const input = document.getElementById("settingsSearch");
       input.value = term;
@@ -1181,8 +1209,12 @@
     }
 
     const tabButtons = Array.from(document.querySelectorAll(".tab"));
-    function showTab(name) {
-      tabButtons.forEach((button) => button.classList.toggle("active", button.dataset.tab === name));
+    let settingsGroupFilter = "基础";
+    function showTab(name, group, activeButton) {
+      tabButtons.forEach((button) => {
+        if (activeButton) button.classList.toggle("active", button === activeButton);
+        else button.classList.toggle("active", button.dataset.tab === name && button.dataset.group === undefined);
+      });
       document.querySelectorAll(".tab-panel").forEach((panel) => {
         panel.hidden = panel.id !== "tab-" + name;
       });
@@ -1190,9 +1222,13 @@
       if (name === "schedule") loadSchedule();
       if (name === "profiles") loadProfiles();
       if (name === "relations") loadRelations();
-      if (name === "settings" && !configItems.length) loadSettings();
+      if (name === "settings") {
+        if (group) settingsGroupFilter = group;
+        if (!configItems.length) loadSettings();
+        else renderSettings();
+      }
     }
-    tabButtons.forEach((button) => button.addEventListener("click", () => showTab(button.dataset.tab)));
+    tabButtons.forEach((button) => button.addEventListener("click", () => showTab(button.dataset.tab, button.dataset.group, button)));
 
     let memoryCandidates = [];
     let profilesCache = [];
@@ -1453,6 +1489,121 @@
       return labels && labels[value] ? labels[value] : value;
     }
 
+    function templateFieldInput(field, value) {
+      const key = "";
+      const type = field && field.type ? field.type : "string";
+      let input;
+      if (type === "bool") {
+        input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = Boolean(value);
+      } else if (type === "int" || type === "float") {
+        input = document.createElement("input");
+        input.className = "input";
+        input.type = "number";
+        input.step = type === "float" ? "0.01" : "1";
+        input.value = value === null || value === undefined ? "" : value;
+      } else if (type === "text" || String(arguments[2] || "").includes("desc")) {
+        input = document.createElement("textarea");
+        input.className = "input";
+        input.rows = 2;
+        input.value = value === null || value === undefined ? "" : value;
+      } else {
+        input = document.createElement("input");
+        input.className = "input";
+        input.type = "text";
+        input.value = value === null || value === undefined ? "" : value;
+      }
+      return input;
+    }
+
+    function appendTemplateCard(container, item, value) {
+      const entries = Object.entries(item.templates || {});
+      let templateKey = value && value.__template_key;
+      if (!templateKey || !(item.templates || {})[templateKey]) {
+        templateKey = entries.length ? entries[0][0] : "";
+      }
+      const meta = (item.templates || {})[templateKey] || {};
+      const card = document.createElement("div");
+      card.className = "template-card";
+      const head = document.createElement("div");
+      head.className = "template-head";
+      const title = document.createElement("span");
+      title.textContent = meta.name || templateKey || "一项";
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "template-remove ghost";
+      remove.textContent = "删除";
+      remove.addEventListener("click", () => card.remove());
+      head.appendChild(title);
+      head.appendChild(remove);
+      card.appendChild(head);
+
+      const grid = document.createElement("div");
+      grid.className = "template-grid";
+      const keyInput = document.createElement("input");
+      keyInput.type = "hidden";
+      keyInput.dataset.templateField = "__template_key";
+      keyInput.dataset.fieldType = "string";
+      keyInput.value = templateKey;
+      grid.appendChild(keyInput);
+
+      Object.entries(meta.items || {}).forEach(([fieldKey, field]) => {
+        const raw = value && value[fieldKey] !== undefined ? value[fieldKey] : field.default;
+        const input = templateFieldInput(field, raw, fieldKey);
+        input.dataset.templateField = fieldKey;
+        input.dataset.fieldType = field.type || "string";
+        if (field.invisible) {
+          input.type = "hidden";
+          grid.appendChild(input);
+          return;
+        }
+        const label = document.createElement("label");
+        label.className = "template-field";
+        label.textContent = field.description || fieldKey;
+        label.appendChild(input);
+        if (field.hint) {
+          const hint = document.createElement("span");
+          hint.className = "sub";
+          hint.textContent = field.hint;
+          label.appendChild(hint);
+        }
+        grid.appendChild(label);
+      });
+      card.appendChild(grid);
+      const add = container.querySelector(".template-add");
+      if (add) container.insertBefore(card, add);
+      else container.appendChild(card);
+    }
+
+    function buildTemplateEditor(container, item) {
+      container.textContent = "";
+      container.className = "template-list";
+      const values = Array.isArray(item.value) ? item.value : [];
+      values.forEach((value) => appendTemplateCard(container, item, value));
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "template-add";
+      add.textContent = "添加一项";
+      add.addEventListener("click", () => appendTemplateCard(container, item, {}));
+      container.appendChild(add);
+    }
+
+    function readTemplateList(container) {
+      return Array.from(container.querySelectorAll(".template-card")).map((card) => {
+        const out = {};
+        card.querySelectorAll("[data-template-field]").forEach((input) => {
+          const key = input.dataset.templateField;
+          const type = input.dataset.fieldType || "string";
+          if (type === "bool") out[key] = Boolean(input.checked);
+          else if (type === "int") out[key] = parseInt(input.value || "0", 10);
+          else if (type === "float") out[key] = parseFloat(input.value || "0");
+          else out[key] = input.value;
+        });
+        return out;
+      });
+    }
+
     function settingControl(item) {
       const wrap = document.createElement("div");
       wrap.className = "control";
@@ -1487,16 +1638,14 @@
           input.value = values.join("\n");
           input.dataset.configType = "list_text";
         } else {
-          try { input.value = JSON.stringify(values, null, 2); }
-          catch (error) { input.value = "[]"; }
+          input.value = values.join("\n");
+          input.dataset.configType = "list_text";
         }
-      } else if (["template_list", "dict", "object"].includes(item.type)) {
-        input = document.createElement("textarea");
-        input.className = "input";
-        input.rows = 3;
-        const fallback = (item.type === "dict" || item.type === "object") ? {} : [];
-        try { input.value = JSON.stringify(item.value ?? fallback, null, 2); }
-        catch (error) { input.value = JSON.stringify(fallback); }
+      } else if (item.type === "template_list") {
+        input = document.createElement("div");
+        input.dataset.configType = "template_list";
+        input._configItem = item;
+        buildTemplateEditor(input, item);
       } else if (item.type === "text") {
         input = document.createElement("textarea");
         input.className = "input";
@@ -1510,6 +1659,7 @@
       }
       input.dataset.configKey = item.key;
       if (!input.dataset.configType) input.dataset.configType = item.type;
+      input._configItem = item;
       wrap.appendChild(input);
       return wrap;
     }
@@ -1518,13 +1668,15 @@
       const box = document.getElementById("settingsList");
       box.textContent = "";
       const term = (document.getElementById("settingsSearch").value || "").trim().toLowerCase();
+      const activeGroup = settingsGroupFilter || "基础";
       const groups = {};
       configItems.forEach((item) => {
+        const groupName = item.group || "基础";
+        if (groupName !== activeGroup) return;
         if (term) {
           const haystack = (item.key + " " + (item.description || "") + " " + (item.hint || "")).toLowerCase();
           if (!haystack.includes(term)) return;
         }
-        const groupName = item.group || "基础";
         if (!groups[groupName]) groups[groupName] = [];
         groups[groupName].push(item);
       });
@@ -1533,7 +1685,7 @@
         const ai = order.indexOf(a); const bi = order.indexOf(b);
         return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
       });
-      if (!names.length) { box.textContent = "没有匹配的配置"; return; }
+      if (!names.length) { box.textContent = "这个分组没有匹配的配置"; return; }
       names.forEach((group) => {
         const details = document.createElement("details");
         details.className = "settings-group";
@@ -1543,16 +1695,16 @@
         details.appendChild(summary);
         groups[group].forEach((item) => {
           const row = document.createElement("div");
-          row.className = "setting-row";
+          row.className = "setting-row" + (item.type === "template_list" ? " wide" : "");
           const left = document.createElement("div");
           const name = document.createElement("div");
           name.className = "name";
           name.textContent = item.description || item.key;
           left.appendChild(name);
-          if (item.hint || item.type === "list") {
+          if (item.hint || item.type === "list" || item.type === "template_list") {
             const hint = document.createElement("div");
             hint.className = "hint";
-            hint.textContent = (item.hint || "") + (item.type === "list" ? "（一行一个，直接输入，不用加引号/JSON）" : "");
+            hint.textContent = (item.hint || "") + (item.type === "list" ? "（一行一个，直接输入，不用加引号/JSON）" : (item.type === "template_list" ? "（在下面逐项填写）" : ""));
             left.appendChild(hint);
           }
           row.appendChild(left);
@@ -1585,6 +1737,7 @@
           if (type === "bool") value = el.checked;
           else if (type === "int") value = parseInt(el.value || "0", 10);
           else if (type === "float") value = parseFloat(el.value || "0");
+          else if (type === "template_list") value = readTemplateList(el);
           else if (type === "list_text") {
             const lines = el.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
             const numeric = lines.length && lines.every((line) => /^-?\d+(?:\.\d+)?$/.test(line));
