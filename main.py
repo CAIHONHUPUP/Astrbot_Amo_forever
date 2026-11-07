@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 4.0.8
+我想永远陪着你 / 我想永远陪伴你 4.2.0
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "4.0.8"
+PLUGIN_VERSION = "4.2.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -988,6 +988,11 @@ class AmoDB:
             )
             self.conn.commit()
         return True
+
+    def delete_profile(self, uid):
+        with self.lock:
+            self.conn.execute("DELETE FROM profiles WHERE uid=?", (str(uid),))
+            self.conn.commit()
 
     def list_profiles(self, keyword="", limit=100):
         limit = max(1, min(int(limit), 500))
@@ -4185,6 +4190,8 @@ class HumanCorePlugin(Star):
             "GROUP BY subject_id"
         )
         counts = {str(row.get("uid")): to_int(row.get("c"), 0) for row in count_rows}
+        if not only_uid:
+            self._cleanup_auto_profiles("memory_companion", uids)
         synced = 0
         for uid in uids:
             if only_uid and uid != str(only_uid):
@@ -4353,6 +4360,28 @@ class HumanCorePlugin(Star):
             users.update(self._angel_uid_tags(self._angel_tags(record), known))
         return len(users)
 
+    def _cleanup_auto_profiles(self, source, real_uids):
+        """删除记忆源自动创建、但不在真实画像列表里的历史空画像。"""
+        real = {str(uid) for uid in real_uids}
+        removed = 0
+        try:
+            for row in self.db.list_profiles(limit=1000):
+                uid = str(row.get("uid") or "")
+                if not uid or uid in real:
+                    continue
+                if str(row.get("platform") or "") != source:
+                    continue
+                if to_int(row.get("msg_count"), 0) > 1:
+                    continue
+                if str(row.get("private_umo") or ""):
+                    continue
+                self.db.delete_profile(uid)
+                removed += 1
+            if removed:
+                logger.info("[amo] 已清理 %d 个非画像用户（%s）" % (removed, source))
+        except Exception as exc:
+            logger.debug("[amo] 清理非画像用户失败: %s" % exc)
+
     def _sync_angel_profiles(self, only_uid=""):
         plugin = self._companion_plugin()
         if not self._is_angel_memory(plugin):
@@ -4385,6 +4414,8 @@ class HumanCorePlugin(Star):
         for uid, bucket in buckets.items():
             if not bucket.get("name") and ledger_names.get(uid):
                 bucket["name"] = ledger_names[uid]
+        if not only_uid:
+            self._cleanup_auto_profiles("angel_memory", buckets.keys())
         synced = 0
         for uid, bucket in buckets.items():
             if only_uid and uid != str(only_uid):
