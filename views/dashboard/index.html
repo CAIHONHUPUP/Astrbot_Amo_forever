@@ -794,7 +794,8 @@
       const box = document.getElementById("scheduleList");
       const day = document.getElementById("scheduleDay");
       box.textContent = "";
-      day.textContent = data.day ? "日期：" + data.day : "";
+      const meta = data.meta || {};
+      day.textContent = data.day ? "日期：" + data.day + (meta.label ? " · " + meta.label : "") + (meta.rest ? " · 休息日" : "") : "";
       const tree = Array.isArray(data.tree) ? data.tree : (Array.isArray(data.schedule_tree) ? data.schedule_tree : []);
       if (!tree.length) {
         box.textContent = "暂无日程，点“刷新”或“重生日程”。";
