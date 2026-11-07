@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.2.8
+我想永远陪着你 / 我想永远陪伴你 3.4.0
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.2.8"
+PLUGIN_VERSION = "3.4.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -2554,6 +2554,8 @@ class LLMService:
             task = "你正在玩游戏，刚遇到一件好玩的事/队友很搞笑/快通关了，想和" + name + "分享。"
         elif kind == "slack":
             task = "你在休息/摸鱼，有点闲，想找" + name + "聊两句。"
+        elif kind == "commute":
+            task = "你正在上班/出门的路上，想跟" + name + "说一声，1 句，自然。"
         elif kind == "offwork":
             task = "你下班了，想问问" + name + "下班没、到家没。"
         elif kind == "comfort":
@@ -5107,7 +5109,7 @@ class HumanCorePlugin(Star):
         if category in ("rest", "play"):
             return "slack"
         if category == "commute":
-            return "offwork"
+            return "offwork" if datetime.now().hour >= 16 else "commute"
         if relation in ("熟识", "相恋") and random.random() < self.cfg_float("proactive_share_prob", 0.35):
             return "share"
         return "greet"
@@ -5128,6 +5130,8 @@ class HumanCorePlugin(Star):
         daily_max = max(0, self.cfg_int("proactive_daily_max", 3))
         for profile in profiles:
             if not profile.get("private_umo"):
+                continue
+            if self._recent_bot_initiated(profile["private_umo"], 3600):
                 continue
             count = to_int(profile.get("proactive_count"))
             if profile.get("proactive_day") != today_str():
