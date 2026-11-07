@@ -4,6 +4,31 @@
 >
 > 反馈、Bug、建议请加 QQ 群：**1055679275**
 
+## 4.0.6 升级公告（重要）
+
+4.0.0 起插件标识就是 **`Astrbot_Amo_forever`**，4.0.6 继续保持这个标识，不再改回 `amo_forever`。
+
+这样安装 4.0.6 会覆盖 4.0.x，而不是变成另一个插件。
+
+同时，3.x 的旧标识 `amo_forever` 数据会自动迁移到新标识：
+
+- 旧数据：`data/plugin_data/amo_forever/amo_forever.db`
+- 新数据：`data/plugin_data/Astrbot_Amo_forever/amo_forever.db`
+- 旧配置：`data/config/amo_forever_config.json`
+- 新配置：`data/config/Astrbot_Amo_forever_config.json`
+
+**插件目录必须是：**
+
+```
+data/plugins/Astrbot_Amo_forever/
+```
+
+不要再用 `amo_forever` 作为插件目录；旧目录只作为迁移来源，迁移完成后可以删除旧代码目录，但不要提前删除旧数据目录。
+
+记忆来源支持 **天使之魂（astrbot_plugin_angel_memory）** 和 **我会牢牢记住你（astrbot_plugin_memory_companion）**，用户画像页会自动列出并读取。
+
+---
+
 基于 AstrBot 的“我想永远陪伴你”。3.8.8 起**群聊只使用完整心流引擎**，**发送只使用完整本地分段引擎**，不需要再单独安装 `astrbot_plugin_xinliuchenjinban` 和 `astrbot_plugin_custome_segment_reply`。
 
 ## 它是怎么工作的
@@ -136,8 +161,13 @@
 1. **先卸载/停用**单独的心流插件和本地分段插件，避免重复触发：
    - `astrbot_plugin_xinliuchenjinban`
    - `astrbot_plugin_custome_segment_reply`
-2. 删除旧的 `data/plugins/Astrbot_Amo_forever` 目录；
-3. 把本插件目录放进 `data/plugins/`，或在 WebUI 上传 zip；
+2. **先备份插件数据**（见下方“数据”），再删除旧插件**代码**目录：
+   - `data/plugins/Astrbot_Amo_forever`（旧 4.x 代码）
+   - `data/plugins/amo_forever`（旧 3.x 代码）
+   - `data/plugins/astrbot_plugin_amo_forever`（如果有）
+   
+   **不要删除** `data/plugin_data/amo_forever`、`data/plugin_data/Astrbot_Amo_forever` 和两个 config，迁移要用；
+3. 把本插件目录以 **`Astrbot_Amo_forever`** 这个名字放进 `data/plugins/`，或在 WebUI 上传 zip；
 4. **重启 AstrBot**（只重载插件不够，旧 Web API 路由会残留）；
 5. 打开插件配置，确认：
    - `hf_enable_heartflow` 开
@@ -191,11 +221,30 @@
 
 - 配置：`data/config/Astrbot_Amo_forever_config.json`
 - 数据：`data/plugin_data/Astrbot_Amo_forever/amo_forever.db`
+- 3.x 旧配置：`data/config/amo_forever_config.json`
+- 3.x 旧数据：`data/plugin_data/amo_forever/amo_forever.db`
 - 面板：`views/dashboard/index.html`
 
 记忆源为陪伴插件时，本插件仍保留本地 DB 作为回退；不会写入陪伴插件的数据。
 
-升级前备份 `amo_forever.db`。
+升级前同时备份：
+
+```
+data/plugin_data/amo_forever/amo_forever.db
+data/plugin_data/Astrbot_Amo_forever/amo_forever.db
+data/config/amo_forever_config.json
+data/config/Astrbot_Amo_forever_config.json
+```
+
+4.0.6 第一次启动会自动迁移 3.x 旧标识数据，并在日志里打印：
+
+```
+[amo] 已迁移旧版 amo_forever 数据: ... -> ...
+[amo] 已迁移旧版 amo_forever 配置: ...（N 项）
+[amo] 升级提示：插件标识保持 Astrbot_Amo_forever；旧 amo_forever 配置/数据已自动迁移。
+```
+
+迁移完成后，确认面板画像/记忆都在，再手动删除旧的 `data/plugin_data/amo_forever` 备份目录。
 
 ## 说明
 

@@ -1,5 +1,30 @@
 # Changelog
 
+## 4.0.6
+
+- **保持 4.0.0 的新标识 `Astrbot_Amo_forever`，不恢复成 `amo_forever`**；
+- 安装 4.0.6 会覆盖 4.0.x，不会变成另一个插件；
+- 自动把 3.x 旧标识数据迁移到新标识：
+  - `data/plugin_data/amo_forever/amo_forever.db`
+  - → `data/plugin_data/Astrbot_Amo_forever/amo_forever.db`
+- 自动合并旧配置：
+  - `data/config/amo_forever_config.json`
+  - → `data/config/Astrbot_Amo_forever_config.json`
+- 插件目录必须使用 `data/plugins/Astrbot_Amo_forever/`；
+- 启动日志会打印迁移提示，README 写明备份和安装路径；
+- 保留 4.0.4 的天使之魂 / 我会牢牢记住你记忆源支持。
+
+## 4.0.4
+
+- 新增 **天使之魂（astrbot_plugin_angel_memory）** 记忆来源：
+  - 自动列出已安装插件；
+  - 读取其 `memory_store` 记录和用户账本；
+  - 同步用户画像（昵称/记忆数量）；
+  - 面板“查看记忆”可显示 Angel Memory 记录。
+- 保留 **我会牢牢记住你（astrbot_plugin_memory_companion）** 的 SQLite 读取；
+- 记忆来源下拉框统一显示可读取/无数据/未启用状态；
+- 自动检测仍以已安装插件为准，不写死某个插件名。
+
 ## 4.0.0
 
 - 插件包名、项目地址改为 Astrbot_Amo_forever；

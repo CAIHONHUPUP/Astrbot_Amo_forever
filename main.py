@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 4.0.0
+我想永远陪着你 / 我想永远陪伴你 4.0.6
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "4.0.0"
+PLUGIN_VERSION = "4.0.6"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -712,18 +712,39 @@ class AmoDB:
         except Exception:
             data_dir = plugin_dir
         self.path = os.path.join(data_dir, "amo_forever.db")
+        # 4.0.0 起插件标识为 Astrbot_Amo_forever。
+        # 4.0.6 保持新标识，并把 3.x 的 amo_forever 旧数据迁移到新目录。
         try:
-            legacy_dir = os.path.join(get_astrbot_data_path(), "plugin_data", "amo_forever")
-            legacy_path = os.path.join(legacy_dir, "amo_forever.db")
-        except Exception:
-            legacy_path = ""
-        if legacy_path and not os.path.exists(self.path) and os.path.exists(legacy_path):
-            try:
-                import shutil as _shutil
-                _shutil.copy2(legacy_path, self.path)
-                logger.info("[amo] 已迁移旧插件数据: %s -> %s" % (legacy_path, self.path))
-            except Exception:
-                pass
+            import shutil as _shutil
+            data_root = get_astrbot_data_path()
+            legacy_paths = [
+                os.path.join(data_root, "plugin_data", "amo_forever", "amo_forever.db"),
+                os.path.join(data_root, "plugin_data", "astrbot_plugin_amo_forever", "amo_forever.db"),
+            ]
+            current_size = os.path.getsize(self.path) if os.path.exists(self.path) else 0
+            if current_size < 4096:
+                for legacy_path in legacy_paths:
+                    if not os.path.exists(legacy_path) or os.path.getsize(legacy_path) < 4096:
+                        continue
+                    if os.path.exists(self.path):
+                        _shutil.copy2(self.path, self.path + ".bak-4.0.6")
+                    for suffix in ("-wal", "-shm", "-journal"):
+                        stale = self.path + suffix
+                        if os.path.exists(stale):
+                            try:
+                                os.remove(stale)
+                            except Exception:
+                                pass
+                    _shutil.copy2(legacy_path, self.path)
+                    for suffix in ("-wal", "-shm"):
+                        source = legacy_path + suffix
+                        if os.path.exists(source):
+                            _shutil.copy2(source, self.path + suffix)
+                    logger.info("[amo] 已迁移旧版 amo_forever 数据: %s -> %s" % (legacy_path, self.path))
+                    logger.info("[amo] 升级提示：插件标识保持 Astrbot_Amo_forever；旧 amo_forever 数据已迁移到新目录，配置文件也会自动合并。")
+                    break
+        except Exception as exc:
+            logger.warning("[amo] 旧版 amo_forever 数据迁移失败: %s" % exc)
         self.lock = threading.RLock()
         self._conn = None
         self._open()
@@ -3053,6 +3074,7 @@ class HumanCorePlugin(Star):
         super().__init__(context)
         self.config = config or {}
         self.plugin_dir = os.path.dirname(os.path.abspath(__file__))
+        self._migrate_legacy_config()
         self.bot_name = self.cfg_str("bot_name", "") or "陪伴"
         self.persona_name = ""
         self._persona_name_cache = {}
@@ -3458,6 +3480,56 @@ class HumanCorePlugin(Star):
             except Exception:
                 pass
 
+    def _migrate_legacy_config(self):
+        """把旧版 amo_forever_config.json 合并到 Astrbot_Amo_forever_config.json。"""
+        path = str(getattr(self.config, "config_path", "") or "")
+        if not path:
+            return
+        base = os.path.dirname(path)
+        legacy_candidates = [
+            os.path.join(base, "amo_forever_config.json"),
+            os.path.join(base, "astrbot_plugin_amo_forever_config.json"),
+        ]
+        legacy = next((item for item in legacy_candidates if os.path.exists(item)), "")
+        if not legacy:
+            return
+        try:
+            import shutil as _shutil
+            with open(path, encoding="utf-8-sig") as stream:
+                current = json.load(stream)
+            with open(legacy, encoding="utf-8-sig") as stream:
+                old = json.load(stream)
+            if not isinstance(current, dict) or not isinstance(old, dict):
+                return
+            schema = {}
+            try:
+                with open(os.path.join(self.plugin_dir, "_conf_schema.json"), encoding="utf-8-sig") as stream:
+                    schema = json.load(stream) or {}
+            except Exception:
+                schema = {}
+            merged = {}
+            for key, value in old.items():
+                meta = schema.get(key) if isinstance(schema.get(key), dict) else {}
+                default = meta.get("default")
+                if key not in current or current.get(key) == default:
+                    current[key] = value
+                    merged[key] = value
+            if not merged:
+                return
+            backup = path + ".bak-4.0.0"
+            if os.path.exists(path) and not os.path.exists(backup):
+                _shutil.copy2(path, backup)
+            self.config.update(current)
+            if hasattr(self.config, "save_config"):
+                self.config.save_config()
+            logger.info(
+                "[amo] 已迁移旧版 amo_forever 配置: %s（%d 项）"
+                % (legacy, len(merged))
+            )
+            logger.info("[amo] 升级提示：插件标识保持 Astrbot_Amo_forever；旧 amo_forever 配置/数据已自动迁移。")
+        except Exception as exc:
+            logger.warning("[amo] 旧版 amo_forever 配置迁移失败: %s" % exc)
+
     def _reload_config_if_changed(self):
         """AstrBot 原生插件配置页保存后，运行中的 self.config 可能不是新对象。
 
@@ -3783,6 +3855,7 @@ class HumanCorePlugin(Star):
         try:
             self._sync_companion_profile(uid)
             self._sync_memory_companion_profile(uid)
+            self._sync_angel_profile(uid)
         except Exception as exc:
             logger.debug("[amo] 陪伴画像同步失败: %s" % exc)
         try:
@@ -4149,6 +4222,213 @@ class HumanCorePlugin(Star):
             self.db.kv_set(key, now_ts())
         self._sync_memory_companion_profiles(only_uid=uid)
 
+    ANGEL_ATTRIBUTE_TAGS = {"用户别名", "事实属性", "技能树", "关系图谱", "活跃项目"}
+
+    @staticmethod
+    def _is_angel_memory(plugin):
+        if plugin is None:
+            return False
+        marker = (
+            str(type(plugin).__module__ or "") + " "
+            + str(getattr(plugin, "name", "") or "")
+        ).lower()
+        if "angel_memory" in marker:
+            return True
+        return (
+            getattr(plugin, "plugin_context", None) is not None
+            and (
+                getattr(plugin, "memory_store", None) is not None
+                or getattr(plugin, "deepmind", None) is not None
+            )
+        )
+
+    @staticmethod
+    def _angel_component(plugin, name):
+        ctx = getattr(plugin, "plugin_context", None)
+        if ctx is not None and hasattr(ctx, "get_component"):
+            try:
+                value = ctx.get_component(name)
+                if value is not None:
+                    return value
+            except Exception:
+                pass
+        if name == "memory_store":
+            return getattr(plugin, "memory_store", None)
+        if name == "memory_sql_manager":
+            return getattr(plugin, "memory_sql_manager", None)
+        return None
+
+    def _angel_records(self, plugin=None):
+        plugin = plugin or self._companion_plugin()
+        if not self._is_angel_memory(plugin):
+            return []
+        store = self._angel_component(plugin, "memory_store")
+        method = getattr(store, "list_records", None)
+        if not callable(method):
+            return []
+        try:
+            return list(method(None, all_scopes=True) or [])
+        except Exception as exc:
+            logger.debug("[amo] 读取 Angel Memory 记录失败: %s" % exc)
+            return []
+
+    def _angel_ledger_users(self, plugin=None):
+        plugin = plugin or self._companion_plugin()
+        if not self._is_angel_memory(plugin):
+            return []
+        ledger = self._angel_component(plugin, "memory_sql_manager")
+        method = getattr(ledger, "list_ledger_users", None)
+        if not callable(method):
+            return []
+        try:
+            return list(method() or [])
+        except Exception as exc:
+            logger.debug("[amo] 读取 Angel Memory 用户账本失败: %s" % exc)
+            return []
+
+    @staticmethod
+    def _angel_tags(record):
+        tags = (record or {}).get("tags") or []
+        if isinstance(tags, str):
+            tags = [item.strip() for item in tags.split(",")]
+        return [str(item).strip() for item in tags if str(item).strip()]
+
+    def _angel_known_ids(self, plugin=None):
+        return {
+            str(item.get("user_id") or "").strip()
+            for item in self._angel_ledger_users(plugin)
+            if isinstance(item, dict) and str(item.get("user_id") or "").strip()
+        }
+
+    @staticmethod
+    def _angel_is_id(tag, known_ids=None):
+        text = str(tag or "").strip()
+        if not text:
+            return False
+        if known_ids and text in known_ids:
+            return True
+        if len(text) <= 5 or any("\u4e00" <= char <= "\u9fff" for char in text):
+            return False
+        if any(char.isspace() for char in text):
+            return False
+        return not text.replace("-", "").replace("_", "").isalpha()
+
+    def _angel_uid_tags(self, tags, known_ids=None):
+        normalized = [str(item).strip() for item in (tags or []) if str(item).strip()]
+        if known_ids:
+            hits = [item for item in normalized if item in known_ids]
+            if hits:
+                return hits
+        return [item for item in normalized if self._angel_is_id(item, known_ids)]
+
+    def _angel_user_count(self, plugin=None):
+        plugin = plugin or self._companion_plugin()
+        if not self._is_angel_memory(plugin):
+            return 0
+        known = self._angel_known_ids(plugin)
+        users = set(known)
+        for record in self._angel_records(plugin):
+            users.update(self._angel_uid_tags(self._angel_tags(record), known))
+        return len(users)
+
+    def _sync_angel_profiles(self, only_uid=""):
+        plugin = self._companion_plugin()
+        if not self._is_angel_memory(plugin):
+            return 0
+        known = self._angel_known_ids(plugin)
+        buckets = {}
+        for record in self._angel_records(plugin):
+            tags = self._angel_tags(record)
+            uids = self._angel_uid_tags(tags, known)
+            if not uids:
+                continue
+            nickname = ""
+            for tag in tags:
+                if tag in known or self._angel_is_id(tag, known):
+                    continue
+                if tag in self.ANGEL_ATTRIBUTE_TAGS:
+                    continue
+                nickname = tag
+                break
+            for uid in uids:
+                bucket = buckets.setdefault(uid, {"name": "", "count": 0})
+                bucket["count"] += 1
+                if nickname and not bucket["name"]:
+                    bucket["name"] = nickname
+        for row in self._angel_ledger_users(plugin):
+            if not isinstance(row, dict):
+                continue
+            uid = str(row.get("user_id") or "").strip()
+            if not uid:
+                continue
+            bucket = buckets.setdefault(uid, {"name": "", "count": 0})
+            if row.get("nickname") and not bucket["name"]:
+                bucket["name"] = str(row.get("nickname"))
+        synced = 0
+        for uid, bucket in buckets.items():
+            if only_uid and uid != str(only_uid):
+                continue
+            profile = self.db.get_profile(uid) or {}
+            if not profile:
+                self.db.touch_profile(uid, bucket.get("name") or uid, "angel_memory", "", "", False)
+                profile = self.db.get_profile(uid) or {}
+            fields = {}
+            name = str(bucket.get("name") or "").strip()
+            if name and (not profile.get("name") or str(profile.get("name")) == uid):
+                fields["name"] = name[:60]
+            if not profile.get("notes") and bucket.get("count"):
+                fields["notes"] = ("Angel Memory：%d 条记忆" % bucket["count"])[:100]
+            if fields:
+                self.db.update_profile(uid, **fields)
+            synced += 1
+        return synced
+
+    def _sync_angel_profile(self, uid, force=False):
+        plugin = self._companion_plugin()
+        if not self._is_angel_memory(plugin):
+            return
+        uid = str(uid)
+        if not force:
+            key = "angel_profile_sync_" + uid
+            if now_ts() - to_float(self.db.kv_get(key, 0)) < 600:
+                return
+            self.db.kv_set(key, now_ts())
+        self._sync_angel_profiles(only_uid=uid)
+
+    def _angel_memories(self, uid, keyword="", limit=50):
+        plugin = self._companion_plugin()
+        if not self._is_angel_memory(plugin):
+            return []
+        known = self._angel_known_ids(plugin)
+        items = []
+        for record in self._angel_records(plugin):
+            tags = self._angel_tags(record)
+            if str(uid) not in self._angel_uid_tags(tags, known):
+                continue
+            content = str(record.get("judgment") or record.get("reasoning") or "").strip()
+            content = re.sub(r"\s+", " ", content)
+            if len(content) < 2:
+                continue
+            if keyword and str(keyword).lower() not in content.lower():
+                continue
+            state = record.get("state") if isinstance(record.get("state"), dict) else {}
+            strength = to_int(state.get("strength"), 1)
+            pinned = bool(state.get("pinned", False))
+            items.append({
+                "content": content[:500],
+                "tier": 2 if pinned or strength >= 3 else (1 if strength >= 2 else 0),
+                "kind": "angel_memory",
+                "source": "angel_memory",
+                "memory_type": "angel",
+                "created_at": record.get("created_at_us") or record.get("created_at") or "",
+                "hits": 0,
+                "expires_at": None,
+            })
+            if len(items) >= max(1, min(100, to_int(limit, 50))):
+                break
+        return items
+
+
     def _companion_plugin_meta(self):
         """优先用配置的插件名；留空或找不到时从已安装插件里自动检测。"""
         name = self.cfg_str("companion_memory_plugin_name", "").strip()
@@ -4180,6 +4460,8 @@ class HumanCorePlugin(Star):
                     score += 1
                 if getattr(plugin, "memory_companion", None) is not None:
                     score += 6
+                if self._is_angel_memory(plugin):
+                    score += 7
                 if isinstance(users, dict) and users:
                     sample = next((item for item in users.values() if isinstance(item, dict)), {})
                     if isinstance(sample.get("companion_memory"), dict):
@@ -4221,6 +4503,9 @@ class HumanCorePlugin(Star):
                 if plugin is not None and self._is_memory_companion(plugin):
                     ready = True
                     count = self._memcomp_user_count(plugin)
+                if plugin is not None and self._is_angel_memory(plugin):
+                    ready = True
+                    count = self._angel_user_count(plugin)
                 items.append({
                     "name": str(getattr(meta, "name", "") or ""),
                     "display_name": str(getattr(meta, "display_name", "") or getattr(meta, "name", "") or ""),
@@ -6537,6 +6822,12 @@ class HumanCorePlugin(Star):
         plugin = self._companion_plugin()
         if plugin is None:
             return {"code": 1, "msg": "未找到记忆来源插件，请先在用户画像页选择已安装插件"}
+        if self._is_angel_memory(plugin):
+            synced = self._sync_angel_profiles()
+            return {
+                "code": 0,
+                "data": {"synced": synced, "profiles": self.db.list_profiles(limit=500)},
+            }
         if self._is_memory_companion(plugin):
             synced = self._sync_memory_companion_profiles()
             return {
@@ -6750,6 +7041,17 @@ class HumanCorePlugin(Star):
             )
         else:
             items = self.db.list_memories(uid, limit)
+        if self._is_angel_memory(self._companion_plugin()):
+            seen = {
+                re.sub(r"\s+", "", str(item.get("content") or "")).lower()
+                for item in items
+            }
+            for item in self._angel_memories(uid, keyword, limit):
+                key = re.sub(r"\s+", "", str(item.get("content") or "")).lower()
+                if key and key not in seen:
+                    seen.add(key)
+                    items.append(item)
+            items = items[:max(1, min(100, limit))]
         if self._is_memory_companion(self._companion_plugin()):
             seen = {
                 re.sub(r"\s+", "", str(item.get("content") or "")).lower()
