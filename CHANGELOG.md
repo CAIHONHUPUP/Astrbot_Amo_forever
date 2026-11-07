@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.8.4
+
+- 兼容 OneBot get_login_info 的 data 包装，真实 QQ 昵称优先；
+- 分开注入 QQ 昵称、群名片/显示名、角色本名，问哪个答哪个；
+- get_login_info 不可用时写 INFO 日志，便于确认回退；
+- 保留 UID 区分和地点一致性兜底。
+
+
 ## 3.8.2
 
 - 机器人 QQ 昵称改为通过 OneBot `get_login_info` 钩子获取，不再拿角色本名冒充；
