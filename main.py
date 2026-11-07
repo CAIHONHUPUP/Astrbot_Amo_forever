@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 4.0.6
+我想永远陪着你 / 我想永远陪伴你 4.0.8
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "4.0.6"
+PLUGIN_VERSION = "4.0.8"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -4106,17 +4106,31 @@ class HumanCorePlugin(Star):
                 except Exception:
                     pass
 
+    def _memcomp_profile_uids(self, plugin=None):
+        """只统计 Memory Companion 真正有画像的人，而不是 identities/memories 里所有 ID。"""
+        plugin = plugin or self._companion_plugin()
+        if not self._is_memory_companion(plugin):
+            return set()
+        rows = self._memcomp_rows(
+            "SELECT person_id FROM portrait_people WHERE person_id!='' "
+            "AND profile_status NOT IN ('deleted','quarantined')"
+        )
+        uids = {str(row.get("person_id") or "").strip() for row in rows}
+        uids.discard("")
+        if uids:
+            return uids
+        # 旧库没有 portrait_people 时，退回 identities，但排除 bot/system/group。
+        rows = self._memcomp_rows(
+            "SELECT entity_id FROM identities WHERE entity_kind='user' AND entity_id!='' "
+            "AND LOWER(COALESCE(role,'')) NOT IN ('bot','assistant','system','group','unknown')"
+        )
+        return {str(row.get("entity_id") or "").strip() for row in rows if str(row.get("entity_id") or "").strip()}
+
     def _memcomp_user_count(self, plugin=None):
         plugin = plugin or self._companion_plugin()
         if not self._is_memory_companion(plugin):
             return 0
-        rows = self._memcomp_rows(
-            "SELECT COUNT(DISTINCT uid) AS c FROM ("
-            "SELECT entity_id AS uid FROM identities WHERE entity_kind='user' AND entity_id!='' "
-            "UNION SELECT subject_id AS uid FROM memories WHERE subject_kind='user' AND subject_id!=''"
-            ")"
-        )
-        return to_int(rows[0].get("c"), 0) if rows else 0
+        return len(self._memcomp_profile_uids(plugin))
 
     def _memcomp_memories(self, uid, keyword="", limit=50):
         plugin = self._companion_plugin()
@@ -4156,30 +4170,26 @@ class HumanCorePlugin(Star):
         plugin = self._companion_plugin()
         if not self._is_memory_companion(plugin):
             return 0
+        uids = self._memcomp_profile_uids(plugin)
+        if not uids:
+            return 0
         identity_rows = self._memcomp_rows(
             "SELECT entity_id, display_name, platform, profile FROM identities "
             "WHERE entity_kind='user' AND entity_id!=''"
         )
+        identities = {str(row.get("entity_id") or ""): row for row in identity_rows}
         count_rows = self._memcomp_rows(
             "SELECT subject_id AS uid, COUNT(*) AS c FROM memories "
             "WHERE subject_kind='user' AND subject_id!='' "
             "AND lifecycle NOT IN ('deleted','archived','quarantined') "
             "GROUP BY subject_id"
         )
-        counts = {}
-        for row in count_rows:
-            counts[str(row.get("uid"))] = to_int(row.get("c"), 0)
-        records = {}
-        for row in identity_rows:
-            uid = str(row.get("entity_id") or "").strip()
-            if uid:
-                records[uid] = row
-        for uid, count in counts.items():
-            records.setdefault(uid, {"entity_id": uid, "display_name": "", "profile": "{}"})
+        counts = {str(row.get("uid")): to_int(row.get("c"), 0) for row in count_rows}
         synced = 0
-        for uid, row in records.items():
+        for uid in uids:
             if only_uid and uid != str(only_uid):
                 continue
+            row = identities.get(uid, {})
             profile = self.db.get_profile(uid) or {}
             parsed = {}
             try:
@@ -4321,13 +4331,25 @@ class HumanCorePlugin(Star):
                 return hits
         return [item for item in normalized if self._angel_is_id(item, known_ids)]
 
+    def _angel_profile_records(self, plugin=None):
+        """Angel 的用户画像只取带画像属性标签的记录，不把普通记忆里的群/机器人 ID 当用户。"""
+        plugin = plugin or self._companion_plugin()
+        if not self._is_angel_memory(plugin):
+            return []
+        result = []
+        for record in self._angel_records(plugin):
+            tags = self._angel_tags(record)
+            if any(tag in self.ANGEL_ATTRIBUTE_TAGS for tag in tags):
+                result.append(record)
+        return result
+
     def _angel_user_count(self, plugin=None):
         plugin = plugin or self._companion_plugin()
         if not self._is_angel_memory(plugin):
             return 0
         known = self._angel_known_ids(plugin)
-        users = set(known)
-        for record in self._angel_records(plugin):
+        users = set()
+        for record in self._angel_profile_records(plugin):
             users.update(self._angel_uid_tags(self._angel_tags(record), known))
         return len(users)
 
@@ -4337,7 +4359,7 @@ class HumanCorePlugin(Star):
             return 0
         known = self._angel_known_ids(plugin)
         buckets = {}
-        for record in self._angel_records(plugin):
+        for record in self._angel_profile_records(plugin):
             tags = self._angel_tags(record)
             uids = self._angel_uid_tags(tags, known)
             if not uids:
@@ -4355,15 +4377,14 @@ class HumanCorePlugin(Star):
                 bucket["count"] += 1
                 if nickname and not bucket["name"]:
                     bucket["name"] = nickname
+        # 账本只用来补昵称，不单独创建画像；Angel 自己也是按画像记录展示用户。
+        ledger_names = {}
         for row in self._angel_ledger_users(plugin):
-            if not isinstance(row, dict):
-                continue
-            uid = str(row.get("user_id") or "").strip()
-            if not uid:
-                continue
-            bucket = buckets.setdefault(uid, {"name": "", "count": 0})
-            if row.get("nickname") and not bucket["name"]:
-                bucket["name"] = str(row.get("nickname"))
+            if isinstance(row, dict) and str(row.get("user_id") or "").strip():
+                ledger_names[str(row["user_id"])] = str(row.get("nickname") or "")
+        for uid, bucket in buckets.items():
+            if not bucket.get("name") and ledger_names.get(uid):
+                bucket["name"] = ledger_names[uid]
         synced = 0
         for uid, bucket in buckets.items():
             if only_uid and uid != str(only_uid):
