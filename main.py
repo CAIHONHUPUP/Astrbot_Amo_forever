@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 4.8.6
+我想永远陪着你 / 我想永远陪伴你 4.8.8
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "4.8.6"
+PLUGIN_VERSION = "4.8.8"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -3517,7 +3517,7 @@ class HumanCorePlugin(Star):
         base = self.cfg_str("dialect_kb_name", "陪伴方言库").strip() or "陪伴方言库"
         style = self.cfg_str("dialect_style", "贵州话").strip()
         if style and style != "贵州话":
-            return base + "·" + style
+            return base + "-" + style
         return base
 
     @staticmethod
@@ -7692,6 +7692,10 @@ class HumanCorePlugin(Star):
                     self.config.save_config()
             except Exception:
                 pass
+        style_now = self.cfg_str("dialect_style", "贵州话").strip()
+        logger.info("[amo] 重建语种: style=%s region=%s rows=%d kb=%s" % (
+            style_now, self._dialect_region(), len(self._dialect_rows()), self._dialect_kb_name()
+        ))
         kb = await self._ensure_dialect_kb()
         if kb is None:
             return {

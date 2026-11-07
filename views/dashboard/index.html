@@ -1055,7 +1055,7 @@
       try {
         const saved = await call("config_save", { changes: { dialect_style: style } });
         if (saved && saved.code && saved.code !== 0) throw new Error(saved.msg || "保存语种失败");
-        const result = await call("kb_regen");
+        const result = await call("kb_regen", { dialect_style: style });
         if (result && result.code && result.code !== 0) throw new Error(result.msg || "重建失败");
         toast("语种库已重建：" + style);
         await load();
