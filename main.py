@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 4.3.2
+我想永远陪着你 / 我想永远陪伴你 4.3.4
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "4.3.2"
+PLUGIN_VERSION = "4.3.4"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -4344,6 +4344,40 @@ class HumanCorePlugin(Star):
             })
         return items
 
+    def _memcomp_all_memories(self, uid, keyword="", limit=50):
+        """完整记忆：不限制 memory_type，用于“查看记忆”和召回。"""
+        plugin = self._companion_plugin()
+        if not self._is_memory_companion(plugin):
+            return []
+        sql = (
+            "SELECT content, importance, memory_type, created_at, updated_at "
+            "FROM memories WHERE (subject_id=? OR object_id=?) AND content!='' "
+            "AND lifecycle NOT IN ('deleted','archived','quarantined') "
+        )
+        params = [str(uid), str(uid)]
+        if keyword:
+            sql += "AND content LIKE ? "
+            params.append("%" + str(keyword) + "%")
+        sql += "ORDER BY importance DESC, updated_at DESC LIMIT ?"
+        params.append(max(1, min(100, to_int(limit, 50))))
+        items = []
+        for row in self._memcomp_rows(sql, tuple(params)):
+            content = re.sub(r"\s+", " ", str(row.get("content") or "")).strip()
+            if len(content) < 2:
+                continue
+            importance = to_float(row.get("importance"), 0.3)
+            items.append({
+                "content": content[:500],
+                "tier": 2 if importance >= 0.72 else (1 if importance >= 0.42 else 0),
+                "kind": "memory_companion",
+                "source": "memory_companion",
+                "memory_type": row.get("memory_type", ""),
+                "created_at": row.get("created_at", ""),
+                "hits": 0,
+                "expires_at": None,
+            })
+        return items
+
     def _sync_memory_companion_profiles(self, only_uid=""):
         plugin = self._companion_plugin()
         if not self._is_memory_companion(plugin):
@@ -4645,6 +4679,57 @@ class HumanCorePlugin(Star):
         return items
 
 
+    def _angel_all_memories(self, uid, keyword="", limit=50):
+        """天使之魂完整记忆，不限制画像标签。"""
+        plugin = self._companion_plugin()
+        if not self._is_angel_memory(plugin):
+            return []
+        known = self._angel_known_ids(plugin)
+        items = []
+        for record in self._angel_records(plugin):
+            tags = self._angel_tags(record)
+            if str(uid) not in self._angel_uid_tags(tags, known):
+                continue
+            content = str(record.get("judgment") or record.get("reasoning") or "").strip()
+            content = re.sub(r"\s+", " ", content)
+            if len(content) < 2:
+                continue
+            if keyword and str(keyword).lower() not in content.lower():
+                continue
+            state = record.get("state") if isinstance(record.get("state"), dict) else {}
+            strength = to_int(state.get("strength"), 1)
+            pinned = bool(state.get("pinned", False))
+            items.append({
+                "content": content[:500],
+                "tier": 2 if pinned or strength >= 3 else (1 if strength >= 2 else 0),
+                "kind": "angel_memory",
+                "source": "angel_memory",
+                "memory_type": "angel",
+                "created_at": record.get("created_at_us") or record.get("created_at") or "",
+                "hits": 0,
+                "expires_at": None,
+            })
+            if len(items) >= max(1, min(100, to_int(limit, 50))):
+                break
+        return items
+
+    def _external_all_memories(self, uid, query="", limit=50):
+        """只读地从已安装记忆插件取完整记忆，不创建画像。"""
+        items = []
+        plugin = self._companion_plugin()
+        if plugin is None:
+            return items
+        try:
+            if self._is_memory_companion(plugin):
+                items.extend(self._memcomp_all_memories(uid, query, limit))
+            elif self._is_angel_memory(plugin):
+                items.extend(self._angel_all_memories(uid, query, limit))
+            else:
+                items.extend(self._companion_memories(uid, query))
+        except Exception as exc:
+            logger.debug("[amo] 外部完整记忆读取失败: %s" % exc)
+        return items
+
     def _companion_plugin_meta(self):
         """优先用配置的插件名；留空或找不到时从已安装插件里自动检测。"""
         name = self.cfg_str("companion_memory_plugin_name", "").strip()
@@ -4928,6 +5013,12 @@ class HumanCorePlugin(Star):
                     memories.append(item)
             except Exception as exc:
                 logger.debug("[amo] 本地记忆检索失败: %s" % exc)
+        try:
+            for item in self._external_all_memories(uid, text, self.cfg_int("memory_recall_limit", 6)):
+                item["source"] = item.get("source") or "external"
+                memories.append(item)
+        except Exception as exc:
+            logger.debug("[amo] 外部记忆检索失败: %s" % exc)
 
         unique = []
         seen = set()
@@ -7231,6 +7322,17 @@ class HumanCorePlugin(Star):
             )
         else:
             items = self.db.list_memories(uid, limit)
+        if self._companion_plugin() is not None:
+            seen = {
+                re.sub(r"\s+", "", str(item.get("content") or "")).lower()
+                for item in items
+            }
+            for item in self._external_all_memories(uid, keyword, limit):
+                key = re.sub(r"\s+", "", str(item.get("content") or "")).lower()
+                if key and key not in seen:
+                    seen.add(key)
+                    items.append(item)
+            items = items[:max(1, min(100, limit))]
         return {"code": 0, "data": items}
 
     async def api_memory_add(self):
