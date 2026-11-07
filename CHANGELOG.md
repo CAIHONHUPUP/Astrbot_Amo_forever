@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.0.0
+
+- 插件包名、项目地址改为 Astrbot_Amo_forever；
+- GitHub 仓库迁移到 https://github.com/GM888888456/Astrbot_Amo_forever；
+- 数据目录改为 plugin_data/Astrbot_Amo_forever，旧 amo_forever 数据会自动复制迁移；
+- Web API、面板、README、Release 链接同步更新。
+
+
 ## 3.8.8
 
 - 润色带上角色人格和风格，咨询回答不再变成“大肥鱼”；
@@ -220,7 +228,7 @@
 - 重建方言库按钮移到设置页；
 - 关系页签移到状态右侧；
 - 插件 INFO 日志静默，只保留 WARNING/ERROR；
-- 作者改为墨辞烟，仓库地址改为 https://github.com/GM888888456/amo_forever；
+- 作者改为墨辞烟，仓库地址改为 https://github.com/GM888888456/Astrbot_Amo_forever；
 - 补充 CHANGELOG，避免 AstrBot 的 “has no changelog file” 警告；
 - 版本号按“尾号 8 进位”规则从 2.8.8 分支修正为 3.0.0。
 
