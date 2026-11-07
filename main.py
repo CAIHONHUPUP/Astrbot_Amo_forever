@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.8.2
+我想永远陪着你 / 我想永远陪伴你 3.8.4
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.8.2"
+PLUGIN_VERSION = "3.8.4"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -4789,12 +4789,13 @@ class HumanCorePlugin(Star):
                 who = "你"
             lines.append(who + "：" + truncate(content, 100))
         transcript = "\n".join(lines[-8:])
-        self_name, self_uid, self_qq_nick = await self._self_identity(event)
+        self_name, self_uid, self_qq_nick, self_display = await self._self_identity(event)
         sender_nick = str(event.get_sender_name() or profile.get("name") or uid).strip()
         system_parts = [
             persona,
             "【你的角色名】" + self_name + "（角色本名，不是QQ昵称）",
-            "【你的QQ账号】QQ昵称：" + self_qq_nick + "；UID：" + (self_uid or "未知") + "。",
+            "【你的QQ账号】QQ昵称：" + self_qq_nick + "；群名片/当前显示名：" + self_display + "；UID：" + (self_uid or "未知") + "。",
+            "【昵称区分】问QQ昵称答 " + self_qq_nick + "；问群名片答 " + self_display + "；问本名/角色名答 " + self_name + "。",
             "【对方】QQ昵称：" + sender_nick + "；UID：" + uid + "；你平时称呼：" + name,
             "【身份区分】同名、同昵称、同爱称也要看 UID；你的 UID 是 " + (self_uid or "未知") + "，对方的 UID 是 " + uid + "。",
             "【角色边界】对方说“我在开车/我在酒店/我刚逛完”是在说他自己，不是你的经历；你的地点只以【此刻状态】为准。",
@@ -5055,6 +5056,17 @@ class HumanCorePlugin(Star):
         except Exception:
             pass
         role_name = str(self.persona_name or self.bot_name or "陪伴")
+        display_name = ""
+        for attr in ("get_self_name", "get_bot_name"):
+            try:
+                value = getattr(event, attr, None)
+                if callable(value):
+                    value = value()
+                if value:
+                    display_name = str(value)
+                    break
+            except Exception:
+                continue
         qq_nick = ""
         if uid and getattr(self, "_self_nickname_uid", "") == uid:
             qq_nick = str(getattr(self, "_self_nickname", "") or "")
@@ -5066,29 +5078,23 @@ class HumanCorePlugin(Star):
                     result = action("get_login_info")
                     if inspect.isawaitable(result):
                         result = await asyncio.wait_for(result, timeout=3)
-                    if isinstance(result, dict):
-                        qq_nick = str(result.get("nickname") or "")
-                        if result.get("user_id"):
-                            uid = str(result.get("user_id"))
+                    data = result.get("data") if isinstance(result, dict) and isinstance(result.get("data"), dict) else result
+                    if isinstance(data, dict):
+                        qq_nick = str(data.get("nickname") or "")
+                        if data.get("user_id"):
+                            uid = str(data.get("user_id"))
             except Exception as exc:
                 logger.debug("[amo] 获取机器人QQ昵称失败: %s" % exc)
         if not qq_nick:
-            for attr in ("get_self_name", "get_bot_name"):
-                try:
-                    value = getattr(event, attr, None)
-                    if callable(value):
-                        value = value()
-                    if value:
-                        qq_nick = str(value)
-                        break
-                except Exception:
-                    continue
-        if not qq_nick:
-            qq_nick = role_name
-        if qq_nick and uid:
+            qq_nick = display_name or role_name
+            logger.info("[amo] get_login_info 不可用，QQ昵称回退为 %s" % qq_nick)
+        if not display_name:
+            display_name = qq_nick
+        if uid:
             self._self_nickname = qq_nick
             self._self_nickname_uid = uid
-        return role_name, uid, qq_nick
+            self._self_display = display_name
+        return role_name, uid, qq_nick, display_name
 
     async def _dynamic_context(self, event):
         await self._sync_persona_name(event)
@@ -5102,8 +5108,8 @@ class HumanCorePlugin(Star):
         sender_nick = str(event.get_sender_name() or profile.get("name") or uid).strip()
         parts = [
             "【你的角色名】" + self_name + "（这是角色本名，不是QQ昵称）",
-            "【你的QQ账号】QQ昵称：" + self_qq_nick + "；UID：" + (self_uid or "未知") + "。这是你自己的QQ账号，不要和对方混淆。",
-            "【昵称区分】别人问“你QQ昵称叫什么”时回答 " + self_qq_nick + "，不要说角色本名；问本名/角色名时才说 " + self_name + "。",
+            "【你的QQ账号】QQ昵称：" + self_qq_nick + "；群名片/当前显示名：" + self_display + "；UID：" + (self_uid or "未知") + "。这是你自己的QQ账号，不要和对方混淆。",
+            "【昵称区分】别人问“你QQ昵称叫什么”时回答 " + self_qq_nick + "；问群名片/备注时才回答 " + self_display + "；问本名/角色名时才说 " + self_name + "。",
             "【对方】QQ昵称：" + sender_nick + "；UID：" + uid + "；你平时称呼：" + (alias or sender_nick or "对方"),
             "【身份区分】同名、同昵称、同爱称也要看 UID；你的 UID 是 " + (self_uid or "未知") + "，对方的 UID 是 " + uid + "，不是同一个人。",
             "【角色边界】对方说“我在开车/我在酒店/我刚逛完”是在说他自己，不是你的经历；你的地点只以【正在】为准，不要把自己当成对方。",
