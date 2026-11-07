@@ -362,6 +362,12 @@
     "description": "回复最大字数",
     "default": 220
   },
+  "reply_max_sentences": {
+    "type": "int",
+    "description": "回复最多几句话",
+    "hint": "默认 3；能一句说清就不说第二句",
+    "default": 3
+  },
   "enable_polish": {
     "type": "bool",
     "description": "AI 润色",
