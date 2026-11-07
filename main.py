@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.4.8
+我想永远陪着你 / 我想永远陪伴你 3.6.0
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.4.8"
+PLUGIN_VERSION = "3.6.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -1994,15 +1994,21 @@ class HumanState:
 
     def _travel_schedule(self, meta):
         """长假去外省旅游，日程里包含交通、景区、酒店和当地吃饭。"""
-        destinations = [
-            ("云南·大理", "大理古城", "洱海"),
-            ("重庆", "洪崖洞", "解放碑"),
-            ("四川·成都", "宽窄巷子", "锦里"),
-            ("广西·桂林", "漓江", "阳朔西街"),
-            ("陕西·西安", "兵马俑", "回民街"),
-        ]
         seed = (meta.get("holiday") or "") + (meta.get("date") or "")[:4]
-        city, spot, night_spot = destinations[md5_int(seed) % len(destinations)]
+        spots = self.p.scenic_spots()
+        home = self.p.cfg_str("weather_city", "")
+        if home in ("铜仁", "贵阳", "遵义", "安顺", "毕节", "六盘水", "凯里", "都匀", "兴义"):
+            spots = [item for item in spots if str(item.get("province") or "") != "贵州"]
+        if spots:
+            chosen = spots[md5_int(seed) % len(spots)]
+            city = str(chosen.get("city") or chosen.get("province") or "")
+            spot = str(chosen.get("name") or "")
+            projects = [str(item) for item in (chosen.get("projects") or []) if str(item)]
+            project_a = projects[0] if projects else "景区主景点"
+            project_b = projects[1] if len(projects) > 1 else "拍照散步"
+            night_spot = city + "·夜市"
+        else:
+            city, spot, project_a, project_b, night_spot = "云南·大理", "大理古城", "大理古城", "洱海", "大理·夜市"
         return [
             {"start": "00:00", "end": "06:00", "activity": "在酒店睡觉", "place": city + "·酒店", "category": "sleep"},
             {"start": "06:00", "end": "07:00", "activity": "起床洗漱", "place": city + "·酒店", "category": "life"},
@@ -2010,8 +2016,8 @@ class HumanState:
             {"start": "08:00", "end": "10:00", "activity": "坐高铁/飞机去" + city, "place": "路上", "category": "commute"},
             {"start": "10:00", "end": "12:00", "activity": "到酒店放行李、去" + spot, "place": city + "·" + spot, "category": "commute"},
             {"start": "12:00", "end": "13:00", "activity": "在景区附近吃当地午饭", "place": city + "·" + spot, "category": "meal"},
-            {"start": "13:00", "end": "15:00", "activity": "逛" + spot, "place": city + "·" + spot, "category": "play"},
-            {"start": "15:00", "end": "17:00", "activity": "拍照、买点小东西", "place": city + "·" + spot, "category": "play"},
+            {"start": "13:00", "end": "15:00", "activity": "逛" + spot + "：" + project_a, "place": city + "·" + spot, "category": "play"},
+            {"start": "15:00", "end": "17:00", "activity": "体验" + project_b, "place": city + "·" + spot, "category": "play"},
             {"start": "17:00", "end": "19:00", "activity": "回酒店休息", "place": city + "·酒店", "category": "rest"},
             {"start": "19:00", "end": "20:00", "activity": "吃当地特色晚饭", "place": city + "·" + night_spot, "category": "meal"},
             {"start": "20:00", "end": "22:00", "activity": "逛" + night_spot + "夜市", "place": city + "·" + night_spot, "category": "play"},
@@ -3170,6 +3176,109 @@ class HumanCorePlugin(Star):
         row = random.choice(candidates)
         return text.replace(str(row["meaning"]), str(row["term"]), 1)
 
+    def scenic_spots(self):
+        if getattr(self, "_scenic_cache", None):
+            return self._scenic_cache
+        try:
+            path = os.path.join(self.plugin_dir, "scenic_spots.json")
+            with open(path, encoding="utf-8") as stream:
+                data = json.load(stream)
+            self._scenic_cache = data if isinstance(data, list) else []
+        except Exception as exc:
+            logger.warning("[amo] 读取景区数据失败: %s" % exc)
+            self._scenic_cache = []
+        return self._scenic_cache
+
+    def _scenic_kb_name(self):
+        return self.cfg_str("scenic_kb_name", "中国景区知识库").strip() or "中国景区知识库"
+
+    def _scenic_text_lines(self):
+        lines = []
+        for spot in self.scenic_spots():
+            if not isinstance(spot, dict):
+                continue
+            projects = spot.get("projects") if isinstance(spot.get("projects"), list) else []
+            lines.append(
+                "景区：%s\n城市：%s·%s\n等级：%s\n游玩项目：%s\n建议时长：%s\n区域：%s" % (
+                    spot.get("name", ""), spot.get("province", ""), spot.get("city", ""),
+                    spot.get("level", ""), "、".join(str(item) for item in projects),
+                    spot.get("duration", ""), spot.get("area", ""),
+                )
+            )
+        return lines
+
+    async def _ensure_scenic_kb(self):
+        if not self.cfg_bool("create_scenic_kb", True):
+            return None
+        try:
+            manager = getattr(self.context, "kb_manager", None)
+            if manager is None:
+                logger.warning("[amo] 当前 AstrBot 没有 kb_manager，景区知识库未创建")
+                return None
+            if callable(manager) and not hasattr(manager, "create_kb"):
+                manager = manager()
+            name = self._scenic_kb_name()
+            kb = await manager.get_kb_by_name(name)
+            if kb is None:
+                providers = list(self.context.get_all_embedding_providers() or [])
+                if not providers:
+                    logger.warning("[amo] 没有 Embedding 供应商，景区知识库未创建")
+                    return None
+                provider_id = str(getattr(providers[0], "provider_config", {}).get("id", "") or "")
+                if not provider_id:
+                    try:
+                        provider_id = str(providers[0].meta().id or "")
+                    except Exception:
+                        provider_id = ""
+                if not provider_id:
+                    logger.warning("[amo] Embedding 供应商没有有效 id，景区知识库未创建")
+                    return None
+                created = manager.create_kb(
+                    name,
+                    "中国 3A 级以上景区、所在城市与具体游玩项目",
+                    emoji="🏞️",
+                    embedding_provider_id=provider_id,
+                )
+                kb = await created if inspect.isawaitable(created) else created
+            lines = self._scenic_text_lines()
+            if lines:
+                try:
+                    docs = await kb.list_documents(search="amo_scenic")
+                    for doc in docs or []:
+                        doc_id = getattr(doc, "doc_id", "") or getattr(doc, "id", "")
+                        if doc_id:
+                            await kb.delete_document(doc_id)
+                except Exception:
+                    pass
+                try:
+                    await kb.upload_document(
+                        "amo_scenic_spots.txt",
+                        "\n\n".join(lines).encode("utf-8"),
+                        "txt",
+                    )
+                except Exception as exc:
+                    logger.warning("[amo] 景区知识库上传失败: %s" % exc)
+            logger.info("[amo] 景区知识库 %s 已同步，共 %d 个景区" % (name, len(lines)))
+            return kb
+        except Exception as exc:
+            logger.warning("[amo] 景区知识库创建失败: %s" % exc)
+            return None
+
+    async def _scenic_kb_context(self, query):
+        try:
+            manager = getattr(self.context, "kb_manager", None)
+            if manager is None or not str(query or "").strip():
+                return ""
+            name = self._scenic_kb_name()
+            kb = await manager.get_kb_by_name(name)
+            if kb is None:
+                return ""
+            result = await manager.retrieve(str(query)[:400], [name], top_m_final=4)
+            return str(result.get("context_text") or "") if isinstance(result, dict) else ""
+        except Exception as exc:
+            logger.debug("[amo] 景区知识库检索失败: %s" % exc)
+            return ""
+
     def _dialect_kb_name(self):
         return self.cfg_str("dialect_kb_name", "陪伴方言库").strip() or "陪伴方言库"
 
@@ -3542,6 +3651,7 @@ class HumanCorePlugin(Star):
             umo = self._last_umo or self._first_private_umo()
             await self._sync_persona_name(umo or "")
             await self._ensure_dialect_kb()
+            await self._ensure_scenic_kb()
             await self.state.ensure_worldview(umo)
             await self.state.ensure_schedule(umo)
         except Exception as exc:
@@ -4665,6 +4775,10 @@ class HumanCorePlugin(Star):
                 "【识人回应】这是让你记称呼/认人，不要复述 @、QQ号或后台记录；"
                 "只自然答应，例如“好，我记住了，这是你朋友吗”。"
             )
+        if re.search(r"(旅游|景区|景点|去哪|好玩|假期|游玩)", text or ""):
+            scenic_text = await self._scenic_kb_context(text or "")
+            if scenic_text:
+                system_parts.append("【景区参考】\n" + scenic_text)
         if relation == "相恋":
             system_parts.append("你可以亲昵、撒娇、用昵称。")
         if bool(re.search(r"(?<![a-z])ai(?![a-z])", (text or "").lower())) or any(word in (text or "").lower() for word in ("机器人", "人机", "人工智能", "不是真人", "程序")):
@@ -4896,6 +5010,10 @@ class HumanCorePlugin(Star):
             "【语气】" + self._tone_with_continuity(umo, self.state.tone_text(snap, relation)),
             "【聊天格式】不要复述 @昵称、QQ号、群号、ID 或后台字段；识人/记称呼时自然回一句“好，我记住了/这是你朋友吗”，不要把记录念出来。",
         ]
+        if re.search(r"(旅游|景区|景点|去哪|好玩|假期|游玩)", event.message_str or ""):
+            scenic_text = await self._scenic_kb_context(event.message_str or "")
+            if scenic_text:
+                parts.append("【景区参考】\n" + scenic_text)
         if getattr(event, "amo_impersonation", False):
             parts.append(
                 "【冒充警告】当前 UID 不是你的恋人，却在冒充或使用恋人称呼；"
@@ -6015,6 +6133,8 @@ class HumanCorePlugin(Star):
             ("/mood_update", self.api_mood_update, ["GET", "POST"]),
             ("/schedule/regen", self.api_schedule_regen, ["GET", "POST"]),
             ("/kb/regen", self.api_kb_regen, ["GET", "POST"]),
+            ("/scenic_kb/regen", self.api_scenic_kb_regen, ["GET", "POST"]),
+            ("/scenic_kb_regen", self.api_scenic_kb_regen, ["GET", "POST"]),
             ("/kb_regen", self.api_kb_regen, ["GET", "POST"]),
             ("/schedule_regen", self.api_schedule_regen, ["GET", "POST"]),
             ("/weather", self.api_weather, ["GET"]),
@@ -6321,6 +6441,8 @@ class HumanCorePlugin(Star):
                 return await self.api_mood_update()
             if name == "schedule":
                 return await self.api_schedule()
+            if name in ("scenic_kb_regen", "regen_scenic_kb"):
+                return await self.api_scenic_kb_regen()
             if name in ("kb_regen", "regen_kb", "dialect_kb_regen"):
                 return await self.api_kb_regen()
             if name in ("schedule_regen", "regen_schedule"):
@@ -6495,6 +6617,16 @@ class HumanCorePlugin(Star):
         else:
             items = self.state._cover_schedule(self.db.get_schedule(day) or [])
         return {"code": 0, "data": {"day": day, "meta": day_meta(day), "items": items, "tree": self.state.schedule_tree(), "current": self.state.current_activity()}}
+
+    async def api_scenic_kb_regen(self):
+        await self._ensure_ready()
+        kb = await self._ensure_scenic_kb()
+        if kb is None:
+            return {
+                "code": 1,
+                "msg": "景区知识库创建失败：请检查 Embedding 供应商，并查看 AstrBot 日志",
+            }
+        return {"code": 0, "msg": "景区知识库已就绪：" + self._scenic_kb_name()}
 
     async def api_kb_regen(self):
         await self._ensure_ready()
