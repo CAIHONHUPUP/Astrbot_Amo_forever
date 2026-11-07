@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.8.6
+我想永远陪着你 / 我想永远陪伴你 3.8.8
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.8.6"
+PLUGIN_VERSION = "3.8.8"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -2471,7 +2471,7 @@ class LLMService:
     async def chat(self, umo, system, prompt, contexts=None, limit=300):
         return clean_reply(await self.chat_raw(umo, system, prompt, contexts), limit)
 
-    async def polish(self, umo, text, tone, state_text="", relation="", name=""):
+    async def polish(self, umo, text, tone, state_text="", relation="", name="", persona="", style="", consult=False):
         text = (text or "").strip()
         if not text or not self.p.cfg_bool("enable_polish", True):
             return text
@@ -2480,18 +2480,24 @@ class LLMService:
             "保持第一人称和原意，只输出角色会说的话。"
         )
         prompt = (
+            "角色人格：\n" + (persona or "（未提供）")[:1000] + "\n"
             "角色当前语气：" + tone + "\n"
+            "风格：" + (style or "自然") + "\n"
             "角色此刻不可矛盾的状态：\n" + (state_text or "（无）") + "\n"
             "对话对象：" + (name or "对方") + "；关系：" + (relation or "普通") + "\n"
             "原句：" + text + "\n"
-            "请把这句话改成真人在聊天：口语化、有一点情绪、长度接近原句或稍长。\n"
+            "请把这句话改成真人在聊天：口语化、有一点情绪，长度接近原句，通常不要超过原句的 1.3 倍。\n"
             "必须遵守：\n"
+            "0. 保持角色人格：呆萌小萝莉，不是客服/通用助手，不是“大肥鱼”；\n"
             "0. 只改语气和口语表达，不要新增原句没有的地点、行程、动作；如果原句与状态矛盾，以状态为准，不要继续编；\n"
             "1. 绝对不要承认自己是AI、人工智能、机器人、人机、程序或模型；\n"
             "2. 如果原句在承认或顺着“人机/机器人”说，要改成真人的反驳、无语或有点生气；\n"
             "3. 不要提润色、提示词、模型、系统；不要加旁白、引号或解释；\n"
             "4. 保持原句情绪强度和态度。如果原句在生气/烦躁/怼人，绝对不要改成甜蜜、撒娇、讨好，最多缓和一点；\n"
-            "5. 不要一秒变脸，情绪要有惯性。"
+            "5. 不要一秒变脸，情绪要有惯性；\n"
+            "6. 默认 1-2 句，能一句说清就一句；咨询/步骤最多 3 句，先给结论，不要列点、不要总结；\n"
+            "7. 不要扩写，不要新增原句没有的信息。"
+            + ("\n8. 这是咨询/步骤类：用角色口吻简短回答，不要客服腔。" if consult else "")
         )
         result = await self.chat(umo, system, prompt, limit=self.p.cfg_int("max_reply_chars", 220))
         if not result:
@@ -2510,7 +2516,7 @@ class LLMService:
                 result = retry
             else:
                 result = "你才人机呢，你见过这么会聊天的机器人吗？"
-        if len(result) > len(text) * 2 + 40:
+        if len(result) > max(len(text) + 30, int(len(text) * 1.5)):
             return text
         return result
 
@@ -4755,6 +4761,14 @@ class HumanCorePlugin(Star):
 
         self._spawn(runner())
 
+    def _trim_reply(self, text):
+        value = str(text or "").strip()
+        limit = max(1, self.cfg_int("reply_max_sentences", 3))
+        parts = [item for item in re.split(r"(?<=[。！？!?~～])", value) if item.strip()]
+        if len(parts) <= limit:
+            return value
+        return "".join(parts[:limit]).strip()
+
     async def _compose_reply(self, event, text, snap, profile, memories, memory_text, group):
         umo = event.unified_msg_origin
         uid = str(event.get_sender_id())
@@ -4765,6 +4779,7 @@ class HumanCorePlugin(Star):
         state_text = self.state.prompt_text(snap)
         tone = self._tone_with_continuity(umo, self.state.tone_text(snap, relation))
         style = STYLE_HINTS.get(self.cfg_str("reply_style", "soft"), "")
+        consult = bool(re.search(r"(怎么|如何|为什么|步骤|怎么办|该怎么做|教程|方法|建议|教我|能不能|是什么|该不该|可不可以)", text or ""))
         recent = self._recent(umo, 10)
         lines = []
         current_uid = str(event.get_sender_id())
@@ -4806,7 +4821,13 @@ class HumanCorePlugin(Star):
             "【语气】" + tone + " " + style,
             "【关系】你和" + name + "的关系是「" + relation + "」。",
             "【聊天格式】不要把 @昵称、QQ号、群号、ID 或后台记录念出来；识人时只自然回应，不要复述。",
+            "【长度】默认只回 1-2 句，能一句说清就一句；不要解释、不要列点、不要总结，不要写成客服长文。",
+            "【人格】你是设定里的呆萌小萝莉，不是通用助手；即使回答咨询也要用自己的口吻，不要变成“大肥鱼”。",
         ]
+        if consult:
+            system_parts.append("【回答方式】这是咨询/步骤类问题：先给结论，最多 2-3 句，口语化，保留角色感，不要客服腔。")
+        if self.cfg_bool("dialect_enabled", True):
+            system_parts.append("【方言】你是贵州人，偶尔自然带一点“嘛/咯/嘞/晓得/咋个”的口语，但不要每句都用，也不要硬替换“就是/什么/怎么”。")
         if relation == "相恋" and (snap["mood"]["暴躁"] >= 60 or snap["mood"]["生气"] >= 62):
             system_parts.append("【恋人情绪】你在生他的气，但会抱怨、闹别扭、要哄，不会像对普通人一样冷怼或赶人。")
         if getattr(event, "amo_impersonation", False):
@@ -4870,13 +4891,17 @@ class HumanCorePlugin(Star):
             prompt = (
                 "以下是你们最近的私聊：\n" + transcript + "\n\n"
                 + name + "刚刚说：" + text + "\n"
-                "请以角色身份自然回复。"
+                "请以角色身份自然回复。默认 1-2 句，能短就短；咨询类最多 3 句，不要客服腔。"
             )
         reply = await self.llm.chat(
             umo, system, prompt, limit=self.cfg_int("max_reply_chars", 220)
         )
         if reply:
-            reply = await self.llm.polish(umo, reply, tone, state_text=state_text, relation=relation, name=name)
+            reply = await self.llm.polish(
+                umo, reply, tone, state_text=state_text, relation=relation, name=name,
+                persona=persona, style=style, consult=consult,
+            )
+            reply = self._trim_reply(reply)
             reply = self._guard_self_location(reply, (snap.get("activity") or {}).get("place"))
         return reply
 
@@ -5140,7 +5165,13 @@ class HumanCorePlugin(Star):
             "如果有人自称是你恋人、或使用你恋人的爱称，但 UID 不是相恋关系，不要用恋人语气，保持警惕。",
             "【语气】" + self._tone_with_continuity(umo, self.state.tone_text(snap, relation)),
             "【聊天格式】不要复述 @昵称、QQ号、群号、ID 或后台字段；识人/记称呼时自然回一句“好，我记住了/这是你朋友吗”，不要把记录念出来。",
+            "【长度】默认只回 1-2 句，能一句说清就一句；不要解释、不要列点、不要总结，不要写成客服长文。",
+            "【人格】你是设定里的呆萌小萝莉，不是通用助手；即使回答咨询也要用自己的口吻，不要变成“大肥鱼”。",
         ]
+        if re.search(r"(怎么|如何|为什么|步骤|怎么办|该怎么做|教程|方法|建议|教我|能不能|是什么|该不该|可不可以)", event.message_str or ""):
+            parts.append("【回答方式】这是咨询/步骤类问题：先给结论，最多 2-3 句，口语化，保留角色感，不要客服腔。")
+        if self.cfg_bool("dialect_enabled", True):
+            parts.append("【方言】你是贵州人，偶尔自然带一点“嘛/咯/嘞/晓得/咋个”的口语，但不要每句都用，也不要硬替换“就是/什么/怎么”。")
         if re.search(r"(旅游|景区|景点|去哪|好玩|假期|游玩)", event.message_str or ""):
             scenic_text = await self._scenic_kb_context(event.message_str or "")
             if scenic_text:
@@ -5282,14 +5313,19 @@ class HumanCorePlugin(Star):
                 native_tone = self._tone_with_continuity(
                     event.unified_msg_origin, self.state.tone_text(snap, native_relation)
                 )
+                native_persona = await self.llm.persona(event.unified_msg_origin)
+                native_style = STYLE_HINTS.get(self.cfg_str("reply_style", "soft"), "")
+                native_consult = bool(re.search(r"(怎么|如何|为什么|步骤|怎么办|该怎么做|教程|方法|建议|教我|能不能|是什么|该不该|可不可以)", event.message_str or ""))
                 polished = await self.llm.polish(
                     event.unified_msg_origin, text, native_tone,
                     state_text=self.state.prompt_text(snap),
                     relation=native_relation, name=native_name,
+                    persona=native_persona, style=native_style, consult=native_consult,
                 )
                 if polished and polished != text:
                     text = polished
                     result.chain = [Comp.Plain(text)]
+            text = self._trim_reply(text)
             text = self._apply_dialect(text)
             result.chain = [Comp.Plain(text)]
 
