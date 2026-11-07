@@ -8,9 +8,9 @@
   <style>
     :root {
       color-scheme: light;
-      --bg1: #f3eef7;
-      --bg2: #f3eef7;
-      --card: #f3eef7;
+      --bg1: #f4f4f6;
+      --bg2: #f4f4f6;
+      --card: #f4f4f6;
       --line: #e7e2f0;
       --text: #2c2738;
       --muted: #857d94;
@@ -26,10 +26,10 @@
     }
     html[data-theme="dark"] {
       color-scheme: dark;
-      --bg1: #1c1824;
-      --bg2: #1c1824;
-      --card: #1c1824;
-      --line: #3b3348;
+      --bg1: #1e1e22;
+      --bg2: #1e1e22;
+      --card: #1e1e22;
+      --line: #3a3a40;
       --text: #f3eff8;
       --muted: #a89fb8;
       --pink: #f472b6;
@@ -166,6 +166,7 @@
     .relation-form button { width: 100%; }
     .stack-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
     .stack-actions button { width: 100%; }
+    .warning-red { color: #dc2626; font-size: 12px; font-weight: 600; line-height: 1.6; margin: 8px 0; }
     .theme-row { justify-content: space-between; margin-bottom: 10px; }
     .segmented { display: flex; gap: 6px; }
     .theme-btn { width: auto; padding: 7px 14px; border-radius: 99px; }
@@ -342,13 +343,27 @@
           </div>
           <div class="row">
             <button id="btnWorldCopy">复制</button>
-            <button id="btnWorld">重建世界</button>
           </div>
         </div>
+        <div class="row" style="gap:8px;align-items:center;">
+          <span class="label">语种</span>
+          <select id="worldDialect" class="input grow">
+            <option value="贵州话">贵州话</option>
+            <option value="东北话">东北话</option>
+            <option value="四川话">四川话</option>
+            <option value="广东话">广东话</option>
+            <option value="台湾腔">台湾腔</option>
+            <option value="天津话">天津话</option>
+            <option value="河南话">河南话</option>
+            <option value="上海话">上海话</option>
+          </select>
+        </div>
+        <div class="warning-red">如需更换语种，请不要在人格提示词中提及具体语种，否则会和这里的选择冲突。</div>
         <article id="worldDoc" class="world-doc">加载中…</article>
         <div class="stack-actions">
-          <button id="btnKb">重建方言库</button>
-          <button id="btnScenicKb">重建景区库</button>
+          <button id="btnWorld">重建世界</button>
+          <button id="btnKb">重建语种</button>
+          <button id="btnScenicKb">重建景区</button>
         </div>
       </section>
     </div>
@@ -737,6 +752,8 @@
     function render(data) {
       const time = data.time || "";
       document.getElementById("clock").textContent = time;
+      const dialectSelect = document.getElementById("worldDialect");
+      if (dialectSelect && data.dialect_style) dialectSelect.value = data.dialect_style;
       document.getElementById("dominant").textContent = data.dominant || "—";
       document.getElementById("moodScore").textContent = data.mood_score ? Math.round(data.mood_score) : "--";
 
@@ -1019,6 +1036,20 @@
     document.getElementById("btnWorld").addEventListener("click", async (e) => {
       await action("worldview_regen", e.currentTarget);
       await loadWorld();
+    });
+    document.getElementById("worldDialect").addEventListener("change", async (event) => {
+      const select = event.currentTarget;
+      const value = select.value;
+      select.disabled = true;
+      try {
+        const result = await call("config_save", { changes: { dialect_style: value } });
+        if (result && result.code && result.code !== 0) throw new Error(result.msg || "切换失败");
+        toast("语种已切换：" + value + "，建议重建语种库");
+      } catch (error) {
+        toast("切换失败：" + (error.message || error), true);
+      } finally {
+        select.disabled = false;
+      }
     });
     document.getElementById("btnKb").addEventListener("click", (e) => action("kb_regen", e.currentTarget));
     document.getElementById("btnScenicKb").addEventListener("click", (e) => action("scenic_kb_regen", e.currentTarget));

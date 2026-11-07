@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 4.6.0
+我想永远陪着你 / 我想永远陪伴你 4.6.2
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,12 +79,22 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "4.6.0"
+PLUGIN_VERSION = "4.6.2"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
 
 RELATIONS = ("仇恨", "抵触", "普通", "熟识", "相恋")
+DIALECT_REGIONS = {
+    "贵州话": "贵州",
+    "东北话": "东北",
+    "四川话": "四川",
+    "广东话": "广东",
+    "台湾腔": "台湾",
+    "天津话": "天津",
+    "河南话": "河南",
+    "上海话": "上海",
+}
 SCHEDULE_VERSION = "human-v4"
 NETWORK_RELATIONS = ("家人", "恋人", "朋友", "同事", "同学", "熟人", "陌生人", "仇人")
 MOOD_KEYS = ("开心", "平静", "郁闷", "生气", "暴躁", "委屈", "疲惫", "焦虑", "兴奋", "依恋")
@@ -1122,6 +1132,83 @@ class AmoDB:
             ("日诀", "骂", "贵州·土家族地区", "莫日诀人"),
             ("割孽", "吵架、打架", "贵州·土家族地区", "两个人割孽"),
             ("扯筋", "扯皮", "贵州·土家族地区", "莫扯筋"),
+            ("咋整", "怎么办", "东北", "咋整啊"),
+            ("得瑟", "显摆", "东北", "别得瑟"),
+            ("忽悠", "骗", "东北", "别忽悠我"),
+            ("埋汰", "脏、讽刺", "东北", "别埋汰人"),
+            ("唠嗑", "聊天", "东北", "来唠嗑"),
+            ("嘎哈", "干什么", "东北", "你嘎哈呢"),
+            ("老铁", "哥们", "东北", "老铁没毛病"),
+            ("贼拉", "非常", "东北", "贼拉冷"),
+            ("稀罕", "喜欢", "东北", "我稀罕你"),
+            ("麻溜", "快点", "东北", "麻溜的"),
+            ("嘚吧", "唠叨", "东北", "别嘚吧了"),
+            ("秃噜", "滑脱、说漏", "东北", "别秃噜了"),
+            ("稀碎", "碎得很", "东北", "摔稀碎"),
+            ("吭哧", "磨蹭", "东北", "别吭哧了"),
+            ("瓜娃子", "傻孩子", "四川", "你个瓜娃子"),
+            ("雄起", "加油", "四川", "雄起"),
+            ("莫得", "没有", "四川", "莫得问题"),
+            ("撇脱", "干脆、利落", "四川", "撇脱点"),
+            ("巴心不得", "求之不得", "四川", "我巴心不得"),
+            ("耍朋友", "谈恋爱", "四川", "耍朋友没"),
+            ("搞快些", "快点", "四川", "搞快些"),
+            ("啷个办", "怎么办", "四川", "啷个办嘛"),
+            ("唔该", "谢谢、劳驾", "广东", "唔该晒"),
+            ("多谢", "谢谢", "广东", "多谢你"),
+            ("食饭", "吃饭", "广东", "去食饭"),
+            ("饮茶", "喝茶", "广东", "去饮茶"),
+            ("靓仔", "帅哥", "广东", "靓仔"),
+            ("靓女", "美女", "广东", "靓女"),
+            ("点解", "为什么", "广东", "点解啊"),
+            ("冇", "没有", "广东", "冇问题"),
+            ("得闲", "有空", "广东", "得闲饮茶"),
+            ("搞掂", "搞定", "广东", "搞掂啦"),
+            ("早唞", "晚安", "广东", "早唞"),
+            ("好正", "很棒", "广东", "好正"),
+            ("唔使", "不用", "广东", "唔使客气"),
+            ("酱紫", "这样", "台湾", "酱紫啊"),
+            ("机车", "麻烦、烦人", "台湾", "很机车"),
+            ("很瞎", "离谱", "台湾", "很瞎"),
+            ("阿嬷", "奶奶", "台湾", "阿嬷"),
+            ("蛮", "很", "台湾", "蛮好的"),
+            ("超赞", "非常棒", "台湾", "超赞"),
+            ("拍谢", "不好意思", "台湾", "拍谢啦"),
+            ("古早", "传统、旧时", "台湾", "古早味"),
+            ("龟毛", "挑剔", "台湾", "别龟毛"),
+            ("嘛呢", "干什么", "天津", "嘛呢"),
+            ("介", "这", "天津", "介是嘛"),
+            ("倍儿", "非常", "天津", "倍儿好"),
+            ("哏儿", "有趣", "天津", "真哏儿"),
+            ("腻歪", "腻烦、黏人", "天津", "别腻歪"),
+            ("得嘞", "好的", "天津", "得嘞"),
+            ("幺蛾子", "麻烦", "天津", "出幺蛾子"),
+            ("耐人", "招人喜欢", "天津", "真耐人"),
+            ("走鸡", "事情办砸", "天津", "走鸡了"),
+            ("各色", "特别、难相处", "天津", "真各色"),
+            ("弄啥嘞", "干什么", "河南", "你弄啥嘞"),
+            ("中", "好", "河南", "中，就这么办"),
+            ("得劲", "舒服", "河南", "真得劲"),
+            ("木有", "没有", "河南", "木有事"),
+            ("恁", "你", "河南", "恁吃饭没"),
+            ("俺", "我", "河南", "俺知道了"),
+            ("嘟囔", "嘀咕", "河南", "别嘟囔"),
+            ("夜儿个", "昨天", "河南", "夜儿个下雨"),
+            ("咋着", "怎么了", "河南", "咋着了"),
+            ("中不中", "行不行", "河南", "中不中"),
+            ("喝汤", "吃晚饭", "河南", "喝汤没"),
+            ("阿拉", "我、我们", "上海", "阿拉晓得"),
+            ("侬", "你", "上海", "侬好"),
+            ("哪能", "怎么", "上海", "哪能办"),
+            ("结棍", "厉害", "上海", "侬结棍"),
+            ("老灵", "很好", "上海", "老灵额"),
+            ("白相", "玩", "上海", "出去白相"),
+            ("适意", "舒服", "上海", "适意"),
+            ("勿", "不", "上海", "勿晓得"),
+            ("谢谢侬", "谢谢你", "上海", "谢谢侬"),
+            ("辰光", "时候", "上海", "啥辰光"),
+            ("困觉", "睡觉", "上海", "去困觉"),
+            ("覅", "不要", "上海", "覅去"),
         ]
         with self.lock:
             for term, meaning, region, example in rows:
@@ -3236,6 +3323,10 @@ class HumanCorePlugin(Star):
         self._persona_name_cache[key] = (now_ts(), name)
         return name
 
+    def _dialect_region(self):
+        style = self.cfg_str("dialect_style", "贵州话").strip()
+        return DIALECT_REGIONS.get(style, style)
+
     def _apply_dialect(self, text):
         """按语境偶尔替换一个方言词；不改变整体意思。"""
         text = str(text or "")
@@ -3249,9 +3340,11 @@ class HumanCorePlugin(Star):
             rows = self.db.list_dialects()
         except Exception:
             return text
+        region = self._dialect_region()
         candidates = [
             row for row in rows
-            if row.get("meaning") and row["meaning"] in text and row.get("term") not in text
+            if region in str(row.get("region") or "")
+            and row.get("meaning") and row["meaning"] in text and row.get("term") not in text
         ]
         if not candidates:
             return text
@@ -3454,7 +3547,7 @@ class HumanCorePlugin(Star):
 
             rows = []
             try:
-                rows = self.db.list_dialects()
+                rows = [row for row in self.db.list_dialects() if self._dialect_region() in str(row.get("region") or "")]
             except Exception:
                 rows = []
             lines = [
@@ -5536,7 +5629,7 @@ class HumanCorePlugin(Star):
         if consult:
             system_parts.append("【回答方式】这是咨询/步骤类问题：先给结论，最多 2-3 句，口语化，保留角色感，不要客服腔。")
         if self.cfg_bool("dialect_enabled", True):
-            system_parts.append("【方言】你是贵州人，偶尔自然带一点“嘛/咯/嘞/晓得/咋个”的口语，但不要每句都用，也不要硬替换“就是/什么/怎么”。")
+            system_parts.append("【方言】你的语种设定是「" + self.cfg_str("dialect_style", "贵州话") + "」，偶尔自然带一点当地方言口语，但不要每句都用，也不要硬替换“就是/什么/怎么”。")
         if relation == "相恋" and (snap["mood"]["暴躁"] >= 60 or snap["mood"]["生气"] >= 62):
             system_parts.append("【恋人情绪】你在生他的气，但会抱怨、闹别扭、要哄，不会像对普通人一样冷怼或赶人。")
         if getattr(event, "amo_impersonation", False):
@@ -5880,7 +5973,7 @@ class HumanCorePlugin(Star):
         if re.search(r"(怎么|如何|为什么|步骤|怎么办|该怎么做|教程|方法|建议|教我|能不能|是什么|该不该|可不可以)", event.message_str or ""):
             parts.append("【回答方式】这是咨询/步骤类问题：先给结论，最多 2-3 句，口语化，保留角色感，不要客服腔。")
         if self.cfg_bool("dialect_enabled", True):
-            parts.append("【方言】你是贵州人，偶尔自然带一点“嘛/咯/嘞/晓得/咋个”的口语，但不要每句都用，也不要硬替换“就是/什么/怎么”。")
+            parts.append("【方言】你的语种设定是「" + self.cfg_str("dialect_style", "贵州话") + "」，偶尔自然带一点当地方言口语，但不要每句都用，也不要硬替换“就是/什么/怎么”。")
         if re.search(r"(旅游|景区|景点|去哪|好玩|假期|游玩)", event.message_str or ""):
             scenic_text = await self._scenic_kb_context(event.message_str or "")
             if scenic_text:
@@ -6548,6 +6641,7 @@ class HumanCorePlugin(Star):
                 "weather_host": self.cfg_str("weather_host", "https://devapi.qweather.com"),
                 "version": PLUGIN_VERSION,
                 "memory_source": self.cfg_str("memory_source", "auto"),
+                "dialect_style": self.cfg_str("dialect_style", "贵州话"),
                 "companion_memory_available": self._companion_plugin() is not None,
             },
         }
