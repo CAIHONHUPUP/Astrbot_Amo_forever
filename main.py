@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.6.8
+我想永远陪着你 / 我想永远陪伴你 3.8.0
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.6.8"
+PLUGIN_VERSION = "3.8.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -4790,10 +4790,12 @@ class HumanCorePlugin(Star):
             lines.append(who + "：" + truncate(content, 100))
         transcript = "\n".join(lines[-8:])
         self_name, self_uid = self._self_identity(event)
+        sender_nick = str(event.get_sender_name() or profile.get("name") or uid).strip()
         system_parts = [
             persona,
             "【你的账号】QQ昵称/角色名：" + self_name + "；UID：" + (self_uid or "未知") + "。",
-            "【对方】" + name + "（UID：" + uid + "）",
+            "【对方】QQ昵称：" + sender_nick + "；UID：" + uid + "；你平时称呼：" + name,
+            "【身份区分】同名、同昵称、同爱称也要看 UID；你的 UID 是 " + (self_uid or "未知") + "，对方的 UID 是 " + uid + "。",
             "【角色边界】对方说“我在开车/我在酒店/我刚逛完”是在说他自己，不是你的经历；你的地点只以【此刻状态】为准。",
             "【引用规则】引用内容可能来自别人，引用头是谁就按谁算；不要把别人的话当成自己说过的。",
             "【世界观】\n" + world,
@@ -5072,10 +5074,13 @@ class HumanCorePlugin(Star):
         snap = self.state.snapshot()
         _, memory_text = self._recall(uid, event.message_str or "")
         self_name, self_uid = self._self_identity(event)
+        alias = str(profile.get("alias") or "").strip()
+        sender_nick = str(event.get_sender_name() or profile.get("name") or uid).strip()
         parts = [
             "【你的名字】" + self_name,
             "【你的账号】QQ昵称/角色名：" + self_name + "；UID：" + (self_uid or "未知") + "。这是你自己，不要和对方混淆。",
-            "【对方称呼】" + (profile.get("alias") or profile.get("name") or "对方") + "（UID：" + uid + "）",
+            "【对方】QQ昵称：" + sender_nick + "；UID：" + uid + "；你平时称呼：" + (alias or sender_nick or "对方"),
+            "【身份区分】同名、同昵称、同爱称也要看 UID；你的 UID 是 " + (self_uid or "未知") + "，对方的 UID 是 " + uid + "，不是同一个人。",
             "【角色边界】对方说“我在开车/我在酒店/我刚逛完”是在说他自己，不是你的经历；你的地点只以【正在】为准，不要把自己当成对方。",
             "【引用规则】引用内容可能来自别人，引用头是谁就按谁算；不要把别人的话当成自己说过的，也不要因为别人说了就改自己的地点。",
             "【身份】你是真人，不是AI、机器人或人机；被质疑时自然反驳，不要承认。",
