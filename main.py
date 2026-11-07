@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.8.4
+我想永远陪着你 / 我想永远陪伴你 3.8.6
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.8.4"
+PLUGIN_VERSION = "3.8.6"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -5083,6 +5083,13 @@ class HumanCorePlugin(Star):
                         qq_nick = str(data.get("nickname") or "")
                         if data.get("user_id"):
                             uid = str(data.get("user_id"))
+                    if not qq_nick and uid:
+                        stranger = action("get_stranger_info", user_id=int(uid))
+                        if inspect.isawaitable(stranger):
+                            stranger = await asyncio.wait_for(stranger, timeout=3)
+                        stranger_data = stranger.get("data") if isinstance(stranger, dict) and isinstance(stranger.get("data"), dict) else stranger
+                        if isinstance(stranger_data, dict):
+                            qq_nick = str(stranger_data.get("nickname") or "")
             except Exception as exc:
                 logger.debug("[amo] 获取机器人QQ昵称失败: %s" % exc)
         if not qq_nick:
@@ -5094,6 +5101,12 @@ class HumanCorePlugin(Star):
             self._self_nickname = qq_nick
             self._self_nickname_uid = uid
             self._self_display = display_name
+        if getattr(self, "_self_identity_logged", "") != (uid + "|" + qq_nick + "|" + display_name):
+            self._self_identity_logged = uid + "|" + qq_nick + "|" + display_name
+            logger.info(
+                "[amo] 自身身份 | 角色名=%s | QQ昵称=%s | 显示名=%s | UID=%s"
+                % (role_name, qq_nick, display_name, uid or "未知")
+            )
         return role_name, uid, qq_nick, display_name
 
     async def _dynamic_context(self, event):
@@ -5198,11 +5211,10 @@ class HumanCorePlugin(Star):
                     part = part.mark_as_temp()
                 except Exception:
                     pass
+                req.system_prompt = (req.system_prompt or "") + "\n\n<amo_state>\n" + context_text + "\n</amo_state>"
                 parts = getattr(req, "extra_user_content_parts", None)
                 if parts is not None:
                     parts.append(part)
-                else:
-                    req.system_prompt = (req.system_prompt or "") + "\n\n" + context_text
             else:
                 req.system_prompt = (req.system_prompt or "") + "\n\n" + context_text
         except Exception as exc:
