@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 4.3.6
+我想永远陪着你 / 我想永远陪伴你 4.3.8
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "4.3.6"
+PLUGIN_VERSION = "4.3.8"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -4755,6 +4755,86 @@ class HumanCorePlugin(Star):
             logger.debug("[amo] 外部完整记忆读取失败: %s" % exc)
         return items
 
+    def _external_profile_memories(self, uid, name="", alias="", limit=200):
+        """按 UID 或名字/称呼从已安装记忆插件取完整记忆；只读，不建画像。"""
+        plugin = self._companion_plugin()
+        if plugin is None:
+            return []
+        items = []
+        names = [str(name or "").strip(), str(alias or "").strip()]
+        names = [item for item in names if item]
+        try:
+            if self._is_memory_companion(plugin):
+                items.extend(self._memcomp_all_memories(uid, "", limit))
+                if not items and names:
+                    sql = (
+                        "SELECT content, importance, memory_type, created_at, updated_at "
+                        "FROM memories WHERE content!='' "
+                        "AND lifecycle NOT IN ('deleted','archived','quarantined') "
+                        "AND (" + " OR ".join("content LIKE ?" for _ in names) + ") "
+                        "ORDER BY importance DESC, updated_at DESC LIMIT ?"
+                    )
+                    params = ["%" + item + "%" for item in names] + [max(1, min(100, limit))]
+                    for row in self._memcomp_rows(sql, tuple(params)):
+                        content = re.sub(r"\s+", " ", str(row.get("content") or "")).strip()
+                        if len(content) < 2:
+                            continue
+                        importance = to_float(row.get("importance"), 0.3)
+                        items.append({
+                            "content": content[:500],
+                            "tier": 2 if importance >= 0.72 else (1 if importance >= 0.42 else 0),
+                            "kind": "memory_companion",
+                            "source": "memory_companion",
+                            "created_at": row.get("created_at", ""),
+                        })
+            elif self._is_angel_memory(plugin):
+                items.extend(self._angel_all_memories(uid, "", limit))
+                if not items and names:
+                    known = self._angel_known_ids(plugin)
+                    for record in self._angel_records(plugin):
+                        tags = self._angel_tags(record)
+                        content = str(record.get("judgment") or record.get("reasoning") or "")
+                        haystack = content + " " + " ".join(tags)
+                        if not any(item in haystack for item in names):
+                            continue
+                        content = re.sub(r"\s+", " ", content).strip()
+                        if len(content) >= 2:
+                            items.append({
+                                "content": content[:500],
+                                "tier": 1,
+                                "kind": "angel_memory",
+                                "source": "angel_memory",
+                                "created_at": record.get("created_at_us") or record.get("created_at") or "",
+                            })
+                        if len(items) >= limit:
+                            break
+            else:
+                items.extend(self._companion_memories(uid, ""))
+                if not items and names:
+                    data = getattr(plugin, "data", None)
+                    users = data.get("users") if isinstance(data, dict) else None
+                    if isinstance(users, dict):
+                        for other_uid, user in users.items():
+                            if not isinstance(user, dict):
+                                continue
+                            values = [user.get("name"), user.get("nickname"), user.get("display_name")]
+                            values += list(user.get("aliases") or []) if isinstance(user.get("aliases"), list) else []
+                            if any(item and item in " ".join(str(v or "") for v in values) for item in names):
+                                try:
+                                    items.extend(self._companion_memories(str(other_uid), ""))
+                                except Exception:
+                                    pass
+        except Exception as exc:
+            logger.debug("[amo] 外部画像记忆读取失败: %s" % exc)
+        unique = []
+        seen = set()
+        for item in items:
+            key = re.sub(r"\s+", "", str(item.get("content") or "")).lower()
+            if key and key not in seen:
+                seen.add(key)
+                unique.append(item)
+        return unique[:max(1, min(500, limit))]
+
     def _companion_plugin_meta(self):
         """优先用配置的插件名；留空或找不到时从已安装插件里自动检测。"""
         name = self.cfg_str("companion_memory_plugin_name", "").strip()
@@ -7340,7 +7420,17 @@ class HumanCorePlugin(Star):
         if not uid:
             return {"code": 1, "msg": "uid 不能为空"}
         limit = to_int(data.get("limit") or self._q("limit", 200), 200)
-        return {"code": 0, "data": self.db.chat_history(uid, limit)}
+        profile = self.db.get_profile(uid) or {}
+        memories = self._external_profile_memories(
+            uid, profile.get("name", ""), profile.get("alias", ""), limit
+        )
+        return {
+            "code": 0,
+            "data": {
+                "chat": self.db.chat_history(uid, limit),
+                "memories": memories,
+            },
+        }
 
     async def api_memories(self):
         await self._ensure_ready()

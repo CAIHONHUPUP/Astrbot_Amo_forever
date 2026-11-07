@@ -1224,10 +1224,12 @@
       box.textContent = "读取中…";
       try {
         const result = await call("chat_history", { uid, limit: 1000 });
-        const items = listFrom(result);
+        const payload = objectFrom(result);
+        const chat = Array.isArray(payload.chat) ? payload.chat : listFrom(result);
+        const memories = Array.isArray(payload.memories) ? payload.memories : [];
         box.textContent = "";
-        if (!items.length) { box.textContent = "暂无聊天记录"; return; }
-        items.forEach((item) => {
+        if (!chat.length && !memories.length) { box.textContent = "暂无聊天记录或外部记忆"; return; }
+        chat.forEach((item) => {
           const line = document.createElement("div");
           const who = item.role === "bot" ? "她" : (item.name || "对方");
           const ts = Number(item.created_at || 0);
@@ -1235,6 +1237,18 @@
           line.textContent = (time ? "[" + time + "] " : "") + who + "：" + (item.content || "");
           box.appendChild(line);
         });
+        if (memories.length) {
+          const header = document.createElement("div");
+          header.className = "sub";
+          header.textContent = "外部记忆（" + memories.length + " 条）";
+          box.appendChild(header);
+          memories.forEach((item) => {
+            const line = document.createElement("div");
+            const source = item.source === "angel_memory" ? "天使之魂" : (item.source === "memory_companion" ? "我会牢牢记住你" : "其他插件");
+            line.textContent = "· [" + source + "] " + (item.content || "");
+            box.appendChild(line);
+          });
+        }
       } catch (error) {
         box.textContent = "读取失败：" + (error.message || error);
       }
