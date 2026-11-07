@@ -442,8 +442,9 @@
     const PLUGIN_NAME = "Astrbot_Amo_forever";
     const MOOD_KEYS = ["开心", "平静", "郁闷", "生气", "暴躁", "委屈", "疲惫", "焦虑", "兴奋", "依恋"];
     const MOOD_COLORS = {
-      "开心": "#d97706", "平静": "#0284c7", "郁闷": "#7c3aed", "生气": "#dc2626",
-      "暴躁": "#b91c1c", "委屈": "#db2777", "疲惫": "#64748b", "焦虑": "#b45309", "兴奋": "#059669", "依恋": "#e8489a"
+      "开心": "#e8489a", "平静": "#e8489a", "郁闷": "#e8489a", "生气": "#e8489a",
+      "暴躁": "#e8489a", "委屈": "#e8489a", "疲惫": "#e8489a", "焦虑": "#e8489a",
+      "兴奋": "#e8489a", "依恋": "#e8489a"
     };
     let lastData = null;
     let toastTimer = null;
@@ -700,7 +701,7 @@
         const fill = document.createElement("span");
         fill.className = "fill";
         fill.style.width = value + "%";
-        fill.style.background = "linear-gradient(90deg, " + (MOOD_COLORS[key] || "#e8489a") + ", rgba(255,255,255,.9))";
+        fill.style.background = "linear-gradient(90deg, var(--pink), #f3a6c8)";
         track.appendChild(fill);
         const num = document.createElement("span");
         num.className = "num";
