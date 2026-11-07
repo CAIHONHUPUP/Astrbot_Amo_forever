@@ -446,7 +446,7 @@
   <div class="toast" id="toast"></div>
 
   <script>
-    const PLUGIN_NAME = "amo_forever";
+    const PLUGIN_NAME = "Astrbot_Amo_forever";
     const MOOD_KEYS = ["开心", "平静", "郁闷", "生气", "暴躁", "委屈", "疲惫", "焦虑", "兴奋", "依恋"];
     const MOOD_COLORS = {
       "开心": "#d97706", "平静": "#0284c7", "郁闷": "#7c3aed", "生气": "#dc2626",
@@ -603,9 +603,9 @@
       } catch (error) {}
       const bases = [
         "/api/v1/plugins/extensions/" + PLUGIN_NAME,
-        "/api/v1/plugins/extensions/astrbot_plugin_amo_forever",
+        "/api/v1/plugins/extensions/astrbot_plugin_Astrbot_Amo_forever",
         "/api/plug/" + PLUGIN_NAME,
-        "/api/plug/astrbot_plugin_amo_forever",
+        "/api/plug/astrbot_plugin_Astrbot_Amo_forever",
       ];
       for (const base of bases) {
         for (const route of routeCandidates(action)) {
