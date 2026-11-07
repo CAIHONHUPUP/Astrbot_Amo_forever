@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.8.6
+
+- 自身身份写 INFO 日志：角色名、QQ昵称、显示名、UID；
+- get_login_info 取不到时再尝试 get_stranger_info；
+- 状态同时写入 system_prompt，原生回复更严格识别自己；
+- 日志里可直接确认 QQ 昵称到底是什么。
+
+
 ## 3.8.4
 
 - 兼容 OneBot get_login_info 的 data 包装，真实 QQ 昵称优先；
