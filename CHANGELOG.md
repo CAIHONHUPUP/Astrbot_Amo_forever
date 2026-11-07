@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.2.8
+
+- Memory Companion 以 `portrait_people` 为准：
+  - 7 个画像就是 7 个，不再把 112 个 identities 全算进来；
+  - “查看记忆”只读 portrait_facts / 画像类记忆；
+  - 名字优先从 portrait_facts 的名字/称呼提取；
+  - 没有名字时显示“画像 xxxxxx”，不再显示完整 `person_` 哈希；
+- 同步时清理 angel_memory / memory_companion 两个旧来源自动生成、但不在当前真实画像里的空档案；
+- 不影响手动画像（platform 为 aiocqhttp/web 等）。
+
 ## 4.2.6
 
 - Memory Companion 画像改为以 `portrait_facts` 为准：

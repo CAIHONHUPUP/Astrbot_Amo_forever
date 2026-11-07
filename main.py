@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 4.2.6
+我想永远陪着你 / 我想永远陪伴你 4.2.8
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "4.2.6"
+PLUGIN_VERSION = "4.2.8"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -4156,21 +4156,28 @@ class HumanCorePlugin(Star):
         if not self._is_memory_companion(plugin):
             return []
         rows = self._memcomp_rows(
-            "SELECT p.person_id, COUNT(f.id) AS fact_count FROM portrait_people p "
-            "JOIN portrait_facts f ON f.person_id=p.person_id AND f.status='active' "
-            "WHERE p.profile_status='active' "
-            "GROUP BY p.person_id ORDER BY fact_count DESC"
+            "SELECT person_id, 0 AS fact_count FROM portrait_people "
+            "WHERE profile_status='active' AND person_id!='' "
+            "ORDER BY updated_at DESC"
         )
         items = []
         for row in rows:
             uid = str(row.get("person_id") or "").strip()
             if not uid:
                 continue
+            name = self._memcomp_person_name(uid)
+            if not name:
+                ident = self._memcomp_rows(
+                    "SELECT display_name FROM identities WHERE entity_id=? AND display_name!='' LIMIT 1",
+                    (uid,),
+                )
+                if ident:
+                    name = str(ident[0].get("display_name") or "").strip()
             items.append({
                 "uid": uid,
-                "name": self._memcomp_person_name(uid),
+                "name": name or ("画像 " + uid[-6:]),
                 "count": to_int(row.get("fact_count"), 0),
-                "source": "portrait_facts",
+                "source": "portrait_people",
             })
         if items:
             return items
@@ -4457,7 +4464,7 @@ class HumanCorePlugin(Star):
                 uid = str(row.get("uid") or "")
                 if not uid or uid in real:
                     continue
-                if str(row.get("platform") or "") != source:
+                if str(row.get("platform") or "") not in ("angel_memory", "memory_companion"):
                     continue
                 if to_int(row.get("msg_count"), 0) > 1:
                     continue

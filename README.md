@@ -4,11 +4,11 @@
 >
 > 反馈、Bug、建议请加 QQ 群：**1055679275**
 
-## 4.2.6 升级公告（重要）
+## 4.2.8 升级公告（重要）
 
-4.0.0 起插件标识就是 **`Astrbot_Amo_forever`**，4.2.6 继续保持这个标识，不再改回 `amo_forever`。
+4.0.0 起插件标识就是 **`Astrbot_Amo_forever`**，4.2.8 继续保持这个标识，不再改回 `amo_forever`。
 
-这样安装 4.2.6 会覆盖 4.0.x，而不是变成另一个插件。
+这样安装 4.2.8 会覆盖 4.0.x，而不是变成另一个插件。
 
 同时，3.x 的旧标识 `amo_forever` 数据会自动迁移到新标识：
 
@@ -25,7 +25,7 @@ data/plugins/Astrbot_Amo_forever/
 
 不要再用 `amo_forever` 作为插件目录；旧目录只作为迁移来源，迁移完成后可以删除旧代码目录，但不要提前删除旧数据目录。
 
-4.2.6 修复：Memory Companion 以 portrait_facts 为准，只显示真正有画像事实的用户和画像事实本身；不再扫 112 个 identities，也不会把全部长期记忆塞进画像。名字从画像事实里提取。
+4.2.8 修复：Memory Companion 以 portrait_people 为准，只显示真正的 7 个画像；不再扫 112 个 identities。旧来源自动生成的画像会在同步时清理；名字优先从画像事实/身份读取。
 
 记忆来源支持 **天使之魂（astrbot_plugin_angel_memory）** 和 **我会牢牢记住你（astrbot_plugin_memory_companion）**，用户画像页会自动列出并读取。
 
@@ -238,7 +238,7 @@ data/config/amo_forever_config.json
 data/config/Astrbot_Amo_forever_config.json
 ```
 
-4.2.6 第一次启动会自动迁移 3.x 旧标识数据，并在日志里打印：
+4.2.8 第一次启动会自动迁移 3.x 旧标识数据，并在日志里打印：
 
 ```
 [amo] 已迁移旧版 amo_forever 数据: ... -> ...
