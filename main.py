@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 4.8.8
+我想永远陪着你 / 我想永远陪伴你 5.0.0
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "4.8.8"
+PLUGIN_VERSION = "5.0.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -3516,9 +3516,7 @@ class HumanCorePlugin(Star):
     def _dialect_kb_name(self):
         base = self.cfg_str("dialect_kb_name", "陪伴方言库").strip() or "陪伴方言库"
         style = self.cfg_str("dialect_style", "贵州话").strip()
-        if style and style != "贵州话":
-            return base + "-" + style
-        return base
+        return base + "-" + style if style else base
 
     @staticmethod
     def _embedding_provider_id(provider):

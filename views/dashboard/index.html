@@ -754,9 +754,11 @@
       const time = data.time || "";
       document.getElementById("clock").textContent = time;
       const dialectSelect = document.getElementById("worldDialect");
-      if (dialectSelect && data.dialect_style) dialectSelect.value = data.dialect_style;
+      const statusConfig = data.config || {};
+      const selectedDialect = data.dialect_style || statusConfig.dialect_style || "贵州话";
+      if (dialectSelect) dialectSelect.value = selectedDialect;
       const dialectHint = document.getElementById("dialectHint");
-      if (dialectHint) dialectHint.textContent = "当前语种词条：" + (data.dialect_count || 0) + " 条";
+      if (dialectHint) dialectHint.textContent = "当前语种词条：" + (data.dialect_count || statusConfig.dialect_count || 0) + " 条";
       document.getElementById("dominant").textContent = data.dominant || "—";
       document.getElementById("moodScore").textContent = data.mood_score ? Math.round(data.mood_score) : "--";
 
