@@ -286,8 +286,8 @@
       <button class="tab active" data-tab="status">状态</button>
       <button class="tab" data-tab="world">世界</button>
       <button class="tab" data-tab="schedule">日程</button>
-      <button class="tab" data-tab="profiles">用户</button>
       <button class="tab" data-tab="relations">关系</button>
+      <button class="tab" data-tab="profiles">用户</button>
       <button class="tab" data-tab="settings" data-group="基础">基础</button>
       <button class="tab" data-tab="settings" data-group="状态">参数</button>
       <button class="tab" data-tab="settings" data-group="记忆">记忆</button>
@@ -355,9 +355,6 @@
           <div>
             <div class="label">世界文档</div>
             <div class="sub">她的生活设定、城市、工作、性格与边界。</div>
-          </div>
-          <div class="row">
-            <button id="btnWorldCopy">复制</button>
           </div>
         </div>
         <div class="row" style="gap:8px;align-items:center;">
@@ -463,12 +460,6 @@
         <div class="sub">保存后写入插件配置，并重建心流/分段引擎，立即生效。</div>
         <div id="settingsList" class="settings-list"><div class="sub">加载中…</div></div>
       </section>
-
-        <div class="card feedback-card">
-          <div class="label">加入交流群</div>
-          <div class="sub">Bug、反馈、建议都欢迎进群说。</div>
-          <a class="group-link qq-group-link" href="http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&amp;k=AQEkXQn02RRkdb_xlr2c9DA8Ik63KhsT&amp;authKey=xhuF9VxkYe5a73qvZQqCbLT1yy82LNcu7FPcvX2XK2LI0UlD0EwieiKRCmQGGzcJ&amp;noverify=0&amp;group_code=1055679275" target="_blank" rel="noopener noreferrer">点击链接加入群聊【恋爱聊天交流群】</a>
-        </div>
 
     </div>
 
@@ -1112,15 +1103,6 @@
         document.getElementById("worldDoc").textContent = "读取失败：" + (error.message || error);
       }
     }
-
-    document.getElementById("btnWorldCopy").addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(document.getElementById("worldDoc").innerText || "");
-        toast("世界文档已复制");
-      } catch (error) {
-        toast("复制失败，请长按选择文本", true);
-      }
-    });
 
     async function openSettingsFor(term) {
       const group = "状态";
