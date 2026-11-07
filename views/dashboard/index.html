@@ -17,6 +17,29 @@
       --pink: #e8489a;
       --pink2: #f43f5e;
       --ok: #0284c7;
+      --hover: #ece6f2;
+      --track: rgba(44, 39, 56, 0.08);
+      --canvas-grid: rgba(44, 39, 56, 0.12);
+      --canvas-axis: rgba(44, 39, 56, 0.10);
+      --canvas-label: rgba(44, 39, 56, 0.68);
+      --canvas-fill: rgba(232, 72, 154, 0.16);
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --bg1: #1c1824;
+      --bg2: #1c1824;
+      --card: #1c1824;
+      --line: #3b3348;
+      --text: #f3eff8;
+      --muted: #a89fb8;
+      --pink: #f472b6;
+      --pink2: #fb7185;
+      --hover: #2a2434;
+      --track: rgba(255, 255, 255, 0.10);
+      --canvas-grid: rgba(255, 255, 255, 0.12);
+      --canvas-axis: rgba(255, 255, 255, 0.08);
+      --canvas-label: rgba(243, 239, 248, 0.72);
+      --canvas-fill: rgba(244, 114, 182, 0.20);
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; min-height: 100%; width: 100%; max-width: 100%; overflow-x: hidden; }
@@ -24,7 +47,7 @@
       width: 100%;
       max-width: 100%;
       overscroll-behavior-x: none;
-      background: #f3eef7;
+      background: var(--card);
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
       padding: max(16px, env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
@@ -53,7 +76,7 @@
     .bar-row { display: grid; grid-template-columns: 34px 1fr 30px; align-items: center; gap: 7px; font-size: 12px; }
     .bar-row span:first-child { color: var(--muted); }
     .bar-row .num { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
-    .track { height: 6px; background: rgba(44, 39, 56, 0.08); border-radius: 99px; overflow: hidden; }
+    .track { height: 6px; background: var(--track); border-radius: 99px; overflow: hidden; }
     .fill { display: block; height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, var(--pink), var(--pink2)); transition: width .5s ease; }
     .grid { display: grid; grid-template-columns: 1fr; gap: 8px; }
     .grid .card { padding: 9px 12px; }
@@ -67,7 +90,7 @@
     .threshold .track { flex: 1; height: 9px; }
     .threshold .num { font-size: 18px; font-weight: 700; color: var(--pink); font-variant-numeric: tabular-nums; }
     .schedule { list-style: none; padding: 0; margin: 10px 0 0; display: flex; flex-direction: column; gap: 7px; }
-    .schedule li { display: flex; gap: 10px; font-size: 12.5px; padding: 7px 9px; border-radius: 10px; background: var(--card); }
+    .schedule li { display: flex; gap: 10px; font-size: 12.5px; padding: 7px 9px; border-radius: 10px; background: transparent; border: 1px solid var(--line); }
     .schedule li.current { background: rgba(244, 114, 182, 0.14); border: 1px solid rgba(244, 114, 182, 0.32); }
     .schedule .t { color: var(--muted); min-width: 82px; font-variant-numeric: tabular-nums; }
     .schedule .a { flex: 1; }
@@ -83,12 +106,12 @@
     .schedule .detail { color: var(--muted); font-size: 11px; margin-left: 4px; }
     .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     button {
-      appearance: none; border: 1px solid rgba(44, 39, 56, 0.12);
-      background: var(--card); color: var(--text);
+      appearance: none; border: 1px solid var(--line);
+      background: var(--card); color: var(--text); text-align: left;
       border-radius: 12px; padding: 11px 12px; font-size: 13px; cursor: pointer;
       transition: .2s ease;
     }
-    button:hover { background: #ece6f2; }
+    button:hover { background: var(--hover); }
     button:disabled { opacity: .5; cursor: wait; }
     footer { text-align: center; color: var(--muted); font-size: 11px; padding-top: 4px; }
     .toast {
@@ -101,7 +124,7 @@
     .toast.show { opacity: 1; transform: translate(-50%, 0); }
     .toast.error { border-color: rgba(244, 63, 94, .45); color: #b42318; }
     .tabs { display: flex; gap: 8px; padding: 4px; background: var(--card); border-radius: 14px; max-width: 100%; min-width: 0; }
-    .tab { flex: 1; border: 0; background: transparent; color: var(--muted); padding: 9px 8px; border-radius: 10px; font-size: 13px; cursor: pointer; }
+    .tab { flex: 1; border: 0; background: transparent; color: var(--muted); text-align: center; padding: 9px 8px; border-radius: 10px; font-size: 13px; cursor: pointer; }
     .tab.active { background: var(--card); color: var(--pink); box-shadow: none; }
     .tab-panel { display: flex; flex-direction: column; gap: 14px; width: 100%; min-width: 0; }
     .tab-panel[hidden] { display: none; }
@@ -137,7 +160,21 @@
     .schedule-group .current, .schedule-hour .current, .schedule-mini li.current { color: var(--pink); }
     .memory-source { margin-top: 10px; }
     .relation-form { margin-top: 10px; }
-    .relation-form .input { flex: 1 1 120px; }
+    .relation-form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+    .relation-form label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); }
+    .relation-form .input { width: 100%; }
+    .relation-form button { width: 100%; }
+    .stack-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+    .stack-actions button { width: 100%; }
+    .theme-row { justify-content: space-between; margin-bottom: 10px; }
+    .segmented { display: flex; gap: 6px; }
+    .theme-btn { width: auto; padding: 7px 14px; border-radius: 99px; }
+    .theme-btn.active { color: var(--pink); border-color: var(--pink); }
+    .status-shell { display: flex; flex-direction: column; }
+    .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+    .status-item { padding: 12px 0; border-top: 1px solid var(--line); min-width: 0; }
+    .status-section { padding: 14px 0; border-top: 1px solid var(--line); min-width: 0; }
+    .status-actions { padding-top: 12px; border-top: 1px solid var(--line); }
     .relation-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
     .relation-row .rel-main { min-width: 0; overflow-wrap: anywhere; }
     .relation-row .rel-badge { color: var(--pink); font-size: 12px; white-space: nowrap; }
@@ -175,6 +212,7 @@
       .form-grid { grid-template-columns: 1fr; }
       .setting-row { grid-template-columns: 1fr; }
       .setting-row .control { justify-content: flex-start; }
+      .status-grid { grid-template-columns: 1fr; }
     }
     #thresholdCard { padding: 12px; }
     #thresholdCard .threshold { margin-top: 6px; }
@@ -239,61 +277,60 @@
     </nav>
 
     <div id="tab-status" class="tab-panel">
-    <section class="card">
-      <div class="hero-top">
-        <div>
-          <div class="label">当前心情</div>
-          <div class="dominant" id="dominant">读取中…</div>
+      <section class="card status-shell">
+        <div class="hero-top">
+          <div>
+            <div class="label">当前心情</div>
+            <div class="dominant" id="dominant">读取中…</div>
+          </div>
+          <div class="hero-score"><span id="moodScore">--</span><small>/100</small></div>
         </div>
-        <div class="hero-score"><span id="moodScore">--</span><small>/100</small></div>
-      </div>
-      <canvas id="radar" width="300" height="300"></canvas>
-      <div class="bars" id="moodBars"></div>
-    </section>
+        <canvas id="radar" width="300" height="300"></canvas>
+        <div class="bars" id="moodBars"></div>
 
-    <section class="grid">
-      <div class="card clickable" id="periodCard" title="点击修改生理期设置">
-        <div class="label">生理期</div>
-        <div class="value" id="period">—</div>
-        <div class="track status-track"><span class="fill" id="periodBar"></span></div>
-        <div class="phase-strip" id="periodPhases"></div>
-        <div class="sub" id="periodSub"></div>
-      </div>
-      <div class="card clickable" id="healthCard" title="点击修改身体设置">
-        <div class="label">身体</div>
-        <div class="value" id="health">—</div>
-        <div class="track status-track"><span class="fill" id="healthBar"></span></div>
-        <div class="sub" id="healthSub"></div>
-      </div>
-      <div class="card">
-        <div class="label">天气</div>
-        <div class="value" id="weather">—</div>
-        <div class="track status-track"><span class="fill" id="weatherBar"></span></div>
-        <div class="sub" id="weatherSub"></div>
-      </div>
-      <div class="card">
-        <div class="label">正在</div>
-        <div class="value" id="activity">—</div>
-        <div class="track status-track"><span class="fill" id="activityBar"></span></div>
-        <div class="sub" id="activitySub"></div>
-      </div>
-    </section>
+        <div class="status-grid">
+          <div class="status-item clickable" id="periodCard" title="点击修改生理期设置">
+            <div class="label">生理期</div>
+            <div class="value" id="period">—</div>
+            <div class="track status-track"><span class="fill" id="periodBar"></span></div>
+            <div class="phase-strip" id="periodPhases"></div>
+            <div class="sub" id="periodSub"></div>
+          </div>
+          <div class="status-item clickable" id="healthCard" title="点击修改身体设置">
+            <div class="label">身体</div>
+            <div class="value" id="health">—</div>
+            <div class="track status-track"><span class="fill" id="healthBar"></span></div>
+            <div class="sub" id="healthSub"></div>
+          </div>
+          <div class="status-item">
+            <div class="label">天气</div>
+            <div class="value" id="weather">—</div>
+            <div class="track status-track"><span class="fill" id="weatherBar"></span></div>
+            <div class="sub" id="weatherSub"></div>
+          </div>
+          <div class="status-item">
+            <div class="label">正在</div>
+            <div class="value" id="activity">—</div>
+            <div class="track status-track"><span class="fill" id="activityBar"></span></div>
+            <div class="sub" id="activitySub"></div>
+          </div>
+        </div>
 
-    <section class="card" id="thresholdCard">
-      <div class="label">心流阈值</div>
-      <div class="threshold">
-        <div class="track"><span class="fill" id="thresholdBar"></span></div>
-        <div class="num" id="thresholdValue">--</div>
-      </div>
-      <div class="sub" id="thresholdSub"></div>
-    </section>
+        <div class="status-section" id="thresholdCard">
+          <div class="label">心流阈值</div>
+          <div class="threshold">
+            <div class="track"><span class="fill" id="thresholdBar"></span></div>
+            <div class="num" id="thresholdValue">--</div>
+          </div>
+          <div class="sub" id="thresholdSub"></div>
+        </div>
 
-    <section class="card actions compact">
-      <button id="btnRefresh">刷新状态</button>
-      <button id="btnWeather">刷新天气</button>
-      <button id="btnSchedule">刷新日程</button>
-    </section>
-
+        <div class="status-actions actions compact">
+          <button id="btnRefresh">刷新状态</button>
+          <button id="btnWeather">刷新天气</button>
+          <button id="btnSchedule">刷新日程</button>
+        </div>
+      </section>
     </div>
 
     <div id="tab-world" class="tab-panel" hidden>
@@ -309,6 +346,10 @@
           </div>
         </div>
         <article id="worldDoc" class="world-doc">加载中…</article>
+        <div class="stack-actions">
+          <button id="btnKb">重建方言库</button>
+          <button id="btnScenicKb">重建景区库</button>
+        </div>
       </section>
     </div>
 
@@ -316,7 +357,6 @@
       <section class="card">
         <div class="row between">
           <div class="label">日程一览</div>
-          <button id="btnRefreshSchedule">刷新</button>
         </div>
         <div class="sub" id="scheduleDay"></div>
         <div id="scheduleList" class="schedule-groups"><div class="sub">加载中…</div></div>
@@ -324,7 +364,7 @@
     </div>
 
     <div id="tab-profiles" class="tab-panel" hidden>
-      <section class="card">
+      <section class="card" id="profileListCard">
         <div class="row">
           <input id="profileSearch" class="input grow" placeholder="搜索 UID / 名字 / 称呼" />
           <button id="btnProfileSearch">搜索</button>
@@ -354,9 +394,9 @@
           <label>好感<input id="pAffection" class="input" type="number" min="0" max="100" /></label>
         </div>
         <label class="block">备注<textarea id="pNotes" class="input" rows="3" placeholder="关于这个人的备注"></textarea></label>
-        <div class="row">
+        <div class="stack-actions">
           <button id="btnSaveProfile">保存画像</button>
-          <button id="btnLoadMemories">查看聊天记录</button>
+          <button id="btnLoadMemories">聊天记录</button>
         </div>
         <div id="profileMemories" class="memory-list"></div>
       </section>
@@ -366,22 +406,22 @@
       <section class="card">
         <div class="label">关系网</div>
         <div class="sub">查看和编辑用户之间的关系；仅 AstrBot 管理员可修改。</div>
-        <div class="row relation-form">
-          <select id="relA" class="input grow"></select>
-          <select id="relB" class="input grow"></select>
-          <select id="relType" class="input">
-            <option value="朋友">朋友</option>
-            <option value="家人">家人</option>
-            <option value="恋人">恋人</option>
-            <option value="同事">同事</option>
-            <option value="同学">同学</option>
-            <option value="熟人">熟人</option>
-            <option value="陌生人">陌生人</option>
-            <option value="仇人">仇人</option>
-          </select>
-        </div>
-        <div class="row">
-          <input id="relNote" class="input grow" placeholder="备注（可选）" />
+        <div class="relation-form">
+          <label>用户 A<select id="relA" class="input"></select></label>
+          <label>用户 B<select id="relB" class="input"></select></label>
+          <label>关系
+            <select id="relType" class="input">
+              <option value="朋友">朋友</option>
+              <option value="家人">家人</option>
+              <option value="恋人">恋人</option>
+              <option value="同事">同事</option>
+              <option value="同学">同学</option>
+              <option value="熟人">熟人</option>
+              <option value="陌生人">陌生人</option>
+              <option value="仇人">仇人</option>
+            </select>
+          </label>
+          <label>备注<input id="relNote" class="input" placeholder="备注（可选）" /></label>
           <button id="btnSaveRelation">添加 / 更新</button>
         </div>
         <div id="relationList" class="profile-list"><div class="sub">加载中…</div></div>
@@ -390,6 +430,13 @@
 
     <div id="tab-settings" class="tab-panel" hidden>
       <section class="card">
+        <div class="row theme-row">
+          <span class="label">面板主题</span>
+          <div class="segmented">
+            <button class="theme-btn active" data-theme="light">白色</button>
+            <button class="theme-btn" data-theme="dark">深色</button>
+          </div>
+        </div>
         <div class="row">
           <input id="settingsSearch" class="input grow" placeholder="搜索配置项" />
           <button id="btnReloadSettings">刷新</button>
@@ -398,18 +445,7 @@
         <div class="sub">保存后写入插件配置，并重建心流/分段引擎，立即生效。</div>
         <div id="settingsList" class="settings-list"><div class="sub">加载中…</div></div>
       </section>
-      <section class="card">
-        <div class="row between">
-          <div>
-            <div class="label">方言知识库</div>
-            <div class="sub">创建或重建 AstrBot 知识库“陪伴方言库”，需要先配置 Embedding 供应商。</div>
-          </div>
-          <div class="row">
-            <button id="btnKb">重建方言库</button>
-            <button id="btnScenicKb">重建景区库</button>
-          </div>
-        </div>
-      </section>
+
         <div class="card feedback-card">
           <div class="label">加入交流群</div>
           <div class="sub">Bug、反馈、建议都欢迎进群说。</div>
@@ -445,6 +481,26 @@
     };
     let lastData = null;
     let toastTimer = null;
+    const THEME_KEY = "amo_panel_theme";
+
+    function applyTheme(theme, persist) {
+      const value = theme === "dark" ? "dark" : "light";
+      document.documentElement.dataset.theme = value;
+      document.querySelectorAll(".theme-btn").forEach((button) => {
+        button.classList.toggle("active", button.dataset.theme === value);
+      });
+      if (persist) {
+        try { localStorage.setItem(THEME_KEY, value); } catch (error) {}
+      }
+      if (lastData) {
+        try { render(lastData); } catch (error) {}
+      }
+    }
+    document.querySelectorAll(".theme-btn").forEach((button) => {
+      button.addEventListener("click", () => applyTheme(button.dataset.theme, true));
+    });
+    try { applyTheme(localStorage.getItem(THEME_KEY) || "light", false); }
+    catch (error) { applyTheme("light", false); }
 
     function officialBridge() {
       if (!window.parent || window.parent === window) return null;
@@ -872,7 +928,13 @@
       const angle = (i) => -Math.PI / 2 + (i * Math.PI * 2) / count;
       ctx.clearRect(0, 0, size, size);
 
-      ctx.strokeStyle = "rgba(44,39,56,.12)";
+      const cssVars = getComputedStyle(document.documentElement);
+      const gridColor = cssVars.getPropertyValue("--canvas-grid").trim() || "rgba(44,39,56,.12)";
+      const axisColor = cssVars.getPropertyValue("--canvas-axis").trim() || "rgba(44,39,56,.10)";
+      const labelColor = cssVars.getPropertyValue("--canvas-label").trim() || "rgba(44,39,56,.68)";
+      const fillColor = cssVars.getPropertyValue("--canvas-fill").trim() || "rgba(232,72,154,.16)";
+      const strokeColor = cssVars.getPropertyValue("--pink").trim() || "#e8489a";
+      ctx.strokeStyle = gridColor;
       ctx.lineWidth = 1;
       for (let ring = 1; ring <= 4; ring += 1) {
         ctx.beginPath();
@@ -886,7 +948,7 @@
         ctx.stroke();
       }
 
-      ctx.strokeStyle = "rgba(44,39,56,.10)";
+      ctx.strokeStyle = axisColor;
       for (let i = 0; i < count; i += 1) {
         ctx.beginPath();
         ctx.moveTo(cx, cy);
@@ -895,7 +957,7 @@
       }
 
       ctx.font = "12px -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif";
-      ctx.fillStyle = "rgba(44,39,56,.68)";
+      ctx.fillStyle = labelColor;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       for (let i = 0; i < count; i += 1) {
@@ -913,15 +975,15 @@
         ctx.beginPath();
         points.forEach(([x, y], i) => { if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
         ctx.closePath();
-        ctx.fillStyle = "rgba(232,72,154,.16)";
+        ctx.fillStyle = fillColor;
         ctx.fill();
-        ctx.strokeStyle = "rgba(232,72,154,.95)";
+        ctx.strokeStyle = strokeColor;
         ctx.lineWidth = 2;
         ctx.stroke();
         points.forEach(([x, y]) => {
           ctx.beginPath();
           ctx.arc(x, y, 3, 0, Math.PI * 2);
-          ctx.fillStyle = "#e8489a";
+          ctx.fillStyle = strokeColor;
           ctx.fill();
         });
       }
@@ -951,7 +1013,6 @@
       finally { btn.disabled = false; }
     });
     document.getElementById("btnWeather").addEventListener("click", (e) => action("weather", e.currentTarget));
-    document.getElementById("btnRefreshSchedule").addEventListener("click", loadSchedule);
     document.getElementById("btnSchedule").addEventListener("click", async () => {
       try { await loadSchedule(); showTab("schedule"); toast("日程已刷新"); } catch (error) { toast("刷新失败", true); }
     });
@@ -1121,7 +1182,7 @@
       if (!filtered.length) {
         const empty = document.createElement("div");
         empty.className = "sub";
-        empty.textContent = list.length ? "没有匹配的用户" : "还没有画像。可以点“同步陪伴档案”或“新建档案”。";
+        empty.textContent = list.length ? "没有匹配的用户" : "还没有画像，可以点“新建档案”。";
         box.appendChild(empty);
         return;
       }
@@ -1172,7 +1233,9 @@
       document.getElementById("pAffection").value = Number(profile.affection || 0);
       document.getElementById("pNotes").value = profile.notes || "";
       document.getElementById("profileMemories").textContent = "";
+      document.getElementById("profileListCard").hidden = true;
       document.getElementById("profileEditor").hidden = false;
+      window.scrollTo({ top: 0, behavior: "smooth" });
     }
 
     document.getElementById("btnNewProfile").addEventListener("click", () => {
@@ -1186,11 +1249,14 @@
       document.getElementById("pAffection").value = 10;
       document.getElementById("pNotes").value = "";
       document.getElementById("profileMemories").textContent = "";
+      document.getElementById("profileListCard").hidden = true;
       document.getElementById("profileEditor").hidden = false;
+      window.scrollTo({ top: 0, behavior: "smooth" });
     });
 
     document.getElementById("btnCloseEditor").addEventListener("click", () => {
       document.getElementById("profileEditor").hidden = true;
+      document.getElementById("profileListCard").hidden = false;
     });
 
     document.getElementById("btnSaveProfile").addEventListener("click", async () => {
@@ -1380,7 +1446,20 @@
         input.type = "number";
         input.step = item.type === "float" ? "0.01" : "1";
         input.value = item.value === null || item.value === undefined ? "" : item.value;
-      } else if (["list", "template_list", "dict", "object"].includes(item.type)) {
+      } else if (item.type === "list") {
+        const values = Array.isArray(item.value) ? item.value : [];
+        const simple = values.every((value) => ["string", "number"].includes(typeof value));
+        input = document.createElement("textarea");
+        input.className = "input";
+        input.rows = 3;
+        if (simple) {
+          input.value = values.join("\n");
+          input.dataset.configType = "list_text";
+        } else {
+          try { input.value = JSON.stringify(values, null, 2); }
+          catch (error) { input.value = "[]"; }
+        }
+      } else if (["template_list", "dict", "object"].includes(item.type)) {
         input = document.createElement("textarea");
         input.className = "input";
         input.rows = 3;
@@ -1399,7 +1478,7 @@
         input.value = item.value ?? "";
       }
       input.dataset.configKey = item.key;
-      input.dataset.configType = item.type;
+      if (!input.dataset.configType) input.dataset.configType = item.type;
       wrap.appendChild(input);
       return wrap;
     }
@@ -1439,10 +1518,10 @@
           name.className = "name";
           name.textContent = item.description || item.key;
           left.appendChild(name);
-          if (item.hint) {
+          if (item.hint || item.type === "list") {
             const hint = document.createElement("div");
             hint.className = "hint";
-            hint.textContent = item.hint;
+            hint.textContent = (item.hint || "") + (item.type === "list" ? "（一行一个，直接输入，不用加引号/JSON）" : "");
             left.appendChild(hint);
           }
           row.appendChild(left);
@@ -1475,7 +1554,11 @@
           if (type === "bool") value = el.checked;
           else if (type === "int") value = parseInt(el.value || "0", 10);
           else if (type === "float") value = parseFloat(el.value || "0");
-          else if (["list", "template_list", "dict", "object"].includes(type)) {
+          else if (type === "list_text") {
+            const lines = el.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+            const numeric = lines.length && lines.every((line) => /^-?\d+(?:\.\d+)?$/.test(line));
+            value = numeric ? lines.map(Number) : lines;
+          } else if (["template_list", "dict", "object"].includes(type)) {
             try { value = JSON.parse(el.value || (type === "dict" || type === "object" ? "{}" : "[]")); }
             catch (error) { throw new Error(el.dataset.configKey + " 的 JSON 格式错误"); }
           } else value = el.value;
