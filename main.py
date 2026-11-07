@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 3.8.8
+我想永远陪着你 / 我想永远陪伴你 4.0.0
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -78,8 +78,8 @@ except Exception:
             logger.error("[amo] 内置心流/分段模块加载失败: %s" % _engine_exc)
 
 
-PLUGIN_NAME = "amo_forever"
-PLUGIN_VERSION = "3.8.8"
+PLUGIN_NAME = "Astrbot_Amo_forever"
+PLUGIN_VERSION = "4.0.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -712,6 +712,18 @@ class AmoDB:
         except Exception:
             data_dir = plugin_dir
         self.path = os.path.join(data_dir, "amo_forever.db")
+        try:
+            legacy_dir = os.path.join(get_astrbot_data_path(), "plugin_data", "amo_forever")
+            legacy_path = os.path.join(legacy_dir, "amo_forever.db")
+        except Exception:
+            legacy_path = ""
+        if legacy_path and not os.path.exists(self.path) and os.path.exists(legacy_path):
+            try:
+                import shutil as _shutil
+                _shutil.copy2(legacy_path, self.path)
+                logger.info("[amo] 已迁移旧插件数据: %s -> %s" % (legacy_path, self.path))
+            except Exception:
+                pass
         self.lock = threading.RLock()
         self._conn = None
         self._open()
@@ -5760,7 +5772,7 @@ class HumanCorePlugin(Star):
         raw = (event.message_str or "").strip()
         raw = re.sub(r"^[/／]\s*", "", raw)
         parts = raw.split()
-        if parts and parts[0].lower() in ("amo", "陪伴", "amo_forever"):
+        if parts and parts[0].lower() in ("amo", "陪伴", "amo_forever", "astrbot_amo_forever"):
             parts = parts[1:]
         return parts
 
@@ -6247,6 +6259,7 @@ class HumanCorePlugin(Star):
             getattr(self, "name", None),
             PLUGIN_NAME,
             os.path.basename(self.plugin_dir),
+            "astrbot_plugin_Astrbot_Amo_forever",
             "astrbot_plugin_amo_forever",
         ])
         # 清除上一实例/旧版本残留的 Web API 路由。
