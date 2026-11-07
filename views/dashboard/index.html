@@ -331,15 +331,8 @@
         <div class="row">
           <input id="profileSearch" class="input grow" placeholder="搜索 UID / 名字 / 称呼" />
           <button id="btnProfileSearch">搜索</button>
-          <button id="btnSyncProfiles">同步陪伴档案</button>
           <button id="btnNewProfile">新建档案</button>
         </div>
-        <div class="row memory-source">
-          <span class="label">记忆来源</span>
-          <select id="memoryPluginSelect" class="input grow"></select>
-          <button id="btnDetectMemory">检测已安装插件</button>
-        </div>
-        <div class="sub" id="memorySourceHint"></div>
         <div id="profileList" class="profile-list"><div class="sub">加载中…</div></div>
       </section>
       <section class="card" id="profileEditor" hidden>
@@ -1105,62 +1098,13 @@
       });
       if (name === "world") loadWorld();
       if (name === "schedule") loadSchedule();
-      if (name === "profiles") { loadMemoryCandidates(); loadProfiles(); }
+      if (name === "profiles") loadProfiles();
       if (name === "relations") loadRelations();
       if (name === "settings" && !configItems.length) loadSettings();
     }
     tabButtons.forEach((button) => button.addEventListener("click", () => showTab(button.dataset.tab)));
 
     let memoryCandidates = [];
-    async function loadMemoryCandidates() {
-      const select = document.getElementById("memoryPluginSelect");
-      const hint = document.getElementById("memorySourceHint");
-      try {
-        const result = await call("memory_candidates");
-        const data = objectFrom(result);
-        memoryCandidates = Array.isArray(data.items) ? data.items : [];
-        const selected = data.selected || "auto";
-        select.textContent = "";
-        const autoOption = document.createElement("option");
-        autoOption.value = "auto";
-        autoOption.textContent = "自动检测（推荐）";
-        select.appendChild(autoOption);
-        memoryCandidates.forEach((item) => {
-          const option = document.createElement("option");
-          option.value = item.name;
-          const state = item.ready ? "可读取" : (item.users ? "无画像数据" : "无记忆数据");
-          option.textContent = (item.display_name || item.name) + "（" + (item.users || 0) + "人 · " + state + (item.activated === false ? " · 未启用" : "") + "）";
-          select.appendChild(option);
-        });
-        if (selected && selected !== "auto" && !memoryCandidates.some((item) => item.name === selected)) {
-          const missing = document.createElement("option");
-          missing.value = selected;
-          missing.textContent = selected + "（未安装或名称不匹配）";
-          select.appendChild(missing);
-        }
-        select.value = selected || "auto";
-        const detected = data.detected || "";
-        hint.textContent = detected
-          ? "当前读取：" + detected
-          : "当前没有可读取的陪伴记忆插件；可以安装/启用后在下方选择。";
-      } catch (error) {
-        hint.textContent = "检测失败：" + (error.message || error);
-      }
-    }
-
-    document.getElementById("btnDetectMemory").addEventListener("click", loadMemoryCandidates);
-    document.getElementById("memoryPluginSelect").addEventListener("change", async (event) => {
-      const value = event.currentTarget.value || "";
-      try {
-        const result = await call("config_save", { changes: { companion_memory_plugin_name: value } });
-        if (result && result.code && result.code !== 0) throw new Error(result.msg || "保存失败");
-        toast(value ? "记忆来源已切换" : "已切换为自动检测");
-        await loadMemoryCandidates();
-      } catch (error) {
-        toast("保存失败：" + (error.message || error), true);
-      }
-    });
-
     let profilesCache = [];
     let currentProfileUid = "";
 
@@ -1292,17 +1236,6 @@
         });
       } catch (error) {
         box.textContent = "读取失败：" + (error.message || error);
-      }
-    });
-
-    document.getElementById("btnSyncProfiles").addEventListener("click", async () => {
-      try {
-        const result = await call("profiles_sync", {});
-        const data = objectFrom(result);
-        toast("已同步 " + (data.synced || 0) + " 个陪伴档案");
-        await loadProfiles();
-      } catch (error) {
-        toast("同步失败：" + (error.message || error), true);
       }
     });
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 4.3.0
+我想永远陪着你 / 我想永远陪伴你 4.3.2
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "4.3.0"
+PLUGIN_VERSION = "4.3.2"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -3651,10 +3651,27 @@ class HumanCorePlugin(Star):
             self._migrate_typing_defaults()
             self._migrate_memory_source_default()
             self._migrate_legacy_admin_default()
+            self._cleanup_legacy_memory_profiles()
             self.state = HumanState(self)
             self._ready = True
             self._loop_task = self._spawn(self._background_loop())
             self._spawn(self._warm_up())
+
+    def _cleanup_legacy_memory_profiles(self):
+        """4.3.2 回到原版：删除旧版本从记忆插件导入的画像，只保留本地聊天档案。"""
+        try:
+            if self.db.kv_get("legacy_memory_profiles_cleaned_432", False):
+                return
+            removed = 0
+            for row in self.db.list_profiles(limit=1000):
+                if str(row.get("platform") or "") in ("angel_memory", "memory_companion"):
+                    self.db.delete_profile(str(row.get("uid") or ""))
+                    removed += 1
+            self.db.kv_set("legacy_memory_profiles_cleaned_432", True)
+            if removed:
+                logger.info("[amo] 已移除 %d 个旧记忆插件导入画像，恢复本地画像模式" % removed)
+        except Exception as exc:
+            logger.debug("[amo] 清理旧记忆画像失败: %s" % exc)
 
     def _migrate_typing_defaults(self):
         """2.6.2 起把旧的 55ms/字默认值迁移到更真实的 400ms/字。"""
@@ -3857,12 +3874,6 @@ class HumanCorePlugin(Star):
         elif relation == "熟识" and senti["insult"]:
             fields["relation"] = "抵触"
         self.db.update_profile(uid, **fields)
-        try:
-            self._sync_companion_profile(uid)
-            self._sync_memory_companion_profile(uid)
-            self._sync_angel_profile(uid)
-        except Exception as exc:
-            logger.debug("[amo] 陪伴画像同步失败: %s" % exc)
         try:
             self._learn_alias(event, text, uid, profile)
         except Exception as exc:
@@ -7023,38 +7034,12 @@ class HumanCorePlugin(Star):
         return {"code": 0, "data": {"saved": saved}}
 
     async def api_profiles_sync(self):
-        await self._ensure_ready()
-        plugin = self._companion_plugin()
-        if plugin is None:
-            return {"code": 1, "msg": "未找到记忆来源插件，请先在用户画像页选择已安装插件"}
-        if self._is_angel_memory(plugin):
-            synced = self._sync_angel_profiles()
-            return {
-                "code": 0,
-                "data": {"synced": synced, "profiles": self.db.list_profiles(limit=500)},
-            }
-        if self._is_memory_companion(plugin):
-            synced = self._sync_memory_companion_profiles()
-            return {
-                "code": 0,
-                "data": {"synced": synced, "profiles": self.db.list_profiles(limit=500)},
-            }
-        data = getattr(plugin, "data", None)
-        users = data.get("users") if isinstance(data, dict) else None
-        if not isinstance(users, dict):
-            return {"code": 1, "msg": "陪伴插件没有 users 数据"}
-        synced = 0
-        for uid, user in users.items():
-            if not isinstance(user, dict):
-                continue
-            try:
-                self._sync_companion_profile(str(uid), force=True)
-                synced += 1
-            except Exception as exc:
-                logger.debug("[amo] 同步 %s 画像失败: %s" % (uid, exc))
+        # 4.3.2 起用户画像只来自本插件聊天/手动建档；
+        # 不再把记忆插件的用户导入画像，记忆由 LLM hook 读取。
         return {
             "code": 0,
-            "data": {"synced": synced, "profiles": self.db.list_profiles(limit=500)},
+            "data": {"synced": 0, "profiles": self.db.list_profiles(limit=500)},
+            "msg": "原版模式：画像只从聊天建立，不再从记忆插件同步用户",
         }
 
     async def api_memory_candidates(self):
@@ -7246,28 +7231,6 @@ class HumanCorePlugin(Star):
             )
         else:
             items = self.db.list_memories(uid, limit)
-        if self._is_angel_memory(self._companion_plugin()):
-            seen = {
-                re.sub(r"\s+", "", str(item.get("content") or "")).lower()
-                for item in items
-            }
-            for item in self._angel_memories(uid, keyword, limit):
-                key = re.sub(r"\s+", "", str(item.get("content") or "")).lower()
-                if key and key not in seen:
-                    seen.add(key)
-                    items.append(item)
-            items = items[:max(1, min(100, limit))]
-        if self._is_memory_companion(self._companion_plugin()):
-            seen = {
-                re.sub(r"\s+", "", str(item.get("content") or "")).lower()
-                for item in items
-            }
-            for item in self._memcomp_memories(uid, keyword, limit):
-                key = re.sub(r"\s+", "", str(item.get("content") or "")).lower()
-                if key and key not in seen:
-                    seen.add(key)
-                    items.append(item)
-            items = items[:max(1, min(100, limit))]
         return {"code": 0, "data": items}
 
     async def api_memory_add(self):
