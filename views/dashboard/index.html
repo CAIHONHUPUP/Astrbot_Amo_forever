@@ -102,7 +102,7 @@
     .toast.error { border-color: rgba(244, 63, 94, .45); color: #b42318; }
     .tabs { display: flex; gap: 8px; padding: 4px; background: rgba(44, 39, 56, 0.045); border-radius: 14px; max-width: 100%; min-width: 0; }
     .tab { flex: 1; border: 0; background: transparent; color: var(--muted); padding: 9px 8px; border-radius: 10px; font-size: 13px; cursor: pointer; }
-    .tab.active { background: #ffffff; color: var(--pink); box-shadow: 0 2px 8px rgba(74, 58, 104, 0.08); }
+    .tab.active { background: var(--card); color: var(--pink); box-shadow: none; }
     .tab-panel { display: flex; flex-direction: column; gap: 14px; width: 100%; min-width: 0; }
     .tab-panel[hidden] { display: none; }
     .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
@@ -205,8 +205,8 @@
     .modal[hidden] { display: none; }
     .modal-card {
       width: min(420px, 100%); max-height: 86vh; overflow-y: auto;
-      background: #fff; border: 1px solid var(--line); border-radius: 16px;
-      padding: 14px; box-shadow: 0 20px 60px rgba(50, 35, 80, 0.2);
+      background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+      padding: 14px; box-shadow: none;
       display: flex; flex-direction: column; gap: 10px;
     }
     .mood-editor { display: flex; flex-direction: column; gap: 7px; }
