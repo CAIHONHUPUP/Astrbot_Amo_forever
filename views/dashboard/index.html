@@ -811,12 +811,8 @@
         time.textContent = (block.start || "") + "-" + (block.end || "");
         const label = document.createElement("span");
         label.textContent = block.title || block.activity || "";
-        const place = document.createElement("span");
-        place.className = "place";
-        place.textContent = block.place || "";
         summary.appendChild(time);
         summary.appendChild(label);
-        summary.appendChild(place);
         details.appendChild(summary);
         (block.children || []).forEach((hour) => {
           const hourBox = document.createElement("details");
