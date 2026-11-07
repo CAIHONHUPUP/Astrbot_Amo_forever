@@ -125,7 +125,7 @@
     .toast.error { border-color: rgba(244, 63, 94, .45); color: #b42318; }
     .theme-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 2px 0; }
     .theme-bar .segmented { flex: 0 0 auto; }
-    .tabs { display: flex; gap: 8px; padding: 4px; background: var(--card); border-radius: 14px; max-width: 100%; min-width: 0; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; touch-action: pan-x; position: sticky; top: 0; z-index: 12; }
+    .tabs { display: flex; gap: 8px; padding: 4px; background: var(--card); border-radius: 14px; max-width: 100%; min-width: 0; flex-wrap: wrap; row-gap: 6px; overflow: visible; position: sticky; top: 0; z-index: 12; }
     .tabs::-webkit-scrollbar { display: none; }
     .tab { flex: 0 0 auto; border: 0; background: transparent; color: var(--muted); text-align: center; padding: 9px 10px; border-radius: 10px; font-size: 13px; cursor: pointer; white-space: nowrap; min-width: 0; }
     .tab.active { background: var(--card); color: var(--pink); box-shadow: none; }
