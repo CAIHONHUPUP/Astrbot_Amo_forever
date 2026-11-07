@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 4.2.4
+我想永远陪着你 / 我想永远陪伴你 4.2.6
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -79,7 +79,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "4.2.4"
+PLUGIN_VERSION = "4.2.6"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -4111,11 +4111,70 @@ class HumanCorePlugin(Star):
                 except Exception:
                     pass
 
-    def _memcomp_profile_uids(self, plugin=None):
-        """取 Memory Companion 真正有画像资料的用户，返回真实 UID 而不是 person_ 哈希。"""
+    def _memcomp_person_name(self, person_id):
+        """从 portrait_facts 的名字类事实里取画像显示名。"""
+        rows = self._memcomp_rows(
+            "SELECT dimension, claim_summary FROM portrait_facts "
+            "WHERE person_id=? AND status='active' "
+            "ORDER BY confidence DESC, updated_at DESC LIMIT 40",
+            (str(person_id),),
+        )
+        name_dims = {
+            "name", "display_name", "nickname", "preferred_address",
+            "用户别名", "称呼", "昵称", "姓名", "名字",
+        }
+        patterns = (
+            r"(?:名字|姓名|昵称|称呼|别名)(?:是|叫|为|：|:)\s*([^\s，。；;,.!?！？]{1,20})",
+            r"(?:叫我|叫做|名为)\s*([^\s，。；;,.!?！？]{1,20})",
+        )
+        for row in rows:
+            dimension = str(row.get("dimension") or "").strip().lower()
+            claim = re.sub(r"\s+", " ", str(row.get("claim_summary") or "")).strip()
+            if not claim:
+                continue
+            if dimension in name_dims:
+                text = claim
+                for pattern in patterns:
+                    match = re.search(pattern, text)
+                    if match:
+                        text = match.group(1)
+                        break
+                text = text.strip("「」“”\"' ")
+                if 1 <= len(text) <= 20:
+                    return text
+            for pattern in patterns:
+                match = re.search(pattern, claim)
+                if match:
+                    text = match.group(1).strip("「」“”\"' ")
+                    if 1 <= len(text) <= 20:
+                        return text
+        return ""
+
+    def _memcomp_profile_rows(self, plugin=None):
+        """以 portrait_facts 为准：只有真正有画像事实的人才是用户画像。"""
         plugin = plugin or self._companion_plugin()
         if not self._is_memory_companion(plugin):
-            return set()
+            return []
+        rows = self._memcomp_rows(
+            "SELECT p.person_id, COUNT(f.id) AS fact_count FROM portrait_people p "
+            "JOIN portrait_facts f ON f.person_id=p.person_id AND f.status='active' "
+            "WHERE p.profile_status='active' "
+            "GROUP BY p.person_id ORDER BY fact_count DESC"
+        )
+        items = []
+        for row in rows:
+            uid = str(row.get("person_id") or "").strip()
+            if not uid:
+                continue
+            items.append({
+                "uid": uid,
+                "name": self._memcomp_person_name(uid),
+                "count": to_int(row.get("fact_count"), 0),
+                "source": "portrait_facts",
+            })
+        if items:
+            return items
+        # 老库没有 portrait_facts 时，退回 identities，但只取真实用户/有资料者。
         user_roles = (
             "conversation_partner", "external_memory_owner", "user", "admin",
             "member", "friend", "owner", "lover", "partner",
@@ -4128,35 +4187,63 @@ class HumanCorePlugin(Star):
             "AND COALESCE(profile,'') NOT IN ('', '{}', 'null')",
             user_roles,
         )
-        uids = {str(row.get("entity_id") or "").strip() for row in rows}
-        uids.discard("")
-        if uids:
-            return uids
-        rows = self._memcomp_rows(
-            "SELECT entity_id FROM identities WHERE entity_kind='user' AND entity_id!='' "
-            "AND LOWER(COALESCE(role,'')) NOT IN ('bot','assistant','system','group','unknown')",
-        )
-        uids = {str(row.get("entity_id") or "").strip() for row in rows}
-        uids.discard("")
-        if uids:
-            return uids
-        # 兜底：老库只有 portrait_people，没有可用 identities。
-        rows = self._memcomp_rows(
-            "SELECT person_id FROM portrait_people WHERE person_id!='' "
-            "AND profile_status='active'"
-        )
-        return {str(row.get("person_id") or "").strip() for row in rows if str(row.get("person_id") or "").strip()}
+        items = []
+        for row in rows:
+            uid = str(row.get("entity_id") or "").strip()
+            if not uid:
+                continue
+            name = str(row.get("display_name") or "").strip()
+            if not name:
+                try:
+                    parsed = json.loads(row.get("profile") or "{}")
+                    if isinstance(parsed, dict):
+                        name = str(parsed.get("name") or parsed.get("nickname") or "").strip()
+                except Exception:
+                    pass
+            items.append({"uid": uid, "name": name, "count": 0, "source": "identities"})
+        return items
+
+    def _memcomp_profile_uids(self, plugin=None):
+        plugin = plugin or self._companion_plugin()
+        return {row["uid"] for row in self._memcomp_profile_rows(plugin)}
 
     def _memcomp_user_count(self, plugin=None):
         plugin = plugin or self._companion_plugin()
         if not self._is_memory_companion(plugin):
             return 0
-        return len(self._memcomp_profile_uids(plugin))
+        return len(self._memcomp_profile_rows(plugin))
 
     def _memcomp_memories(self, uid, keyword="", limit=50):
         plugin = self._companion_plugin()
         if not self._is_memory_companion(plugin):
             return []
+        rows = self._memcomp_rows(
+            "SELECT claim_summary, dimension, confidence, created_at, updated_at "
+            "FROM portrait_facts WHERE person_id=? AND status='active' "
+            "ORDER BY confidence DESC, updated_at DESC LIMIT ?",
+            (str(uid), max(1, min(100, to_int(limit, 50)))),
+        )
+        items = []
+        for row in rows:
+            content = re.sub(r"\s+", " ", str(row.get("claim_summary") or "")).strip()
+            if len(content) < 2:
+                continue
+            if keyword and str(keyword).lower() not in content.lower():
+                continue
+            confidence = to_float(row.get("confidence"), 0.5)
+            items.append({
+                "content": content[:500],
+                "tier": 2 if confidence >= 0.8 else (1 if confidence >= 0.55 else 0),
+                "kind": "memory_companion",
+                "source": "memory_companion",
+                "memory_type": row.get("dimension", "profile"),
+                "created_at": row.get("created_at", ""),
+                "hits": 0,
+                "expires_at": None,
+            })
+        if items:
+            return items
+        # 兼容旧库：没有 portrait_facts 时，只返回画像类 memory_type。
         sql = (
             "SELECT content, importance, memory_type, created_at, updated_at "
             "FROM memories WHERE (subject_id=? OR object_id=?) AND content!='' "
@@ -4169,9 +4256,7 @@ class HumanCorePlugin(Star):
             params.append("%" + str(keyword) + "%")
         sql += "ORDER BY importance DESC, updated_at DESC LIMIT ?"
         params.append(max(1, min(100, to_int(limit, 50))))
-        rows = self._memcomp_rows(sql, tuple(params))
-        items = []
-        for row in rows:
+        for row in self._memcomp_rows(sql, tuple(params)):
             content = re.sub(r"\s+", " ", str(row.get("content") or "")).strip()
             if len(content) < 2:
                 continue
@@ -4192,54 +4277,39 @@ class HumanCorePlugin(Star):
         plugin = self._companion_plugin()
         if not self._is_memory_companion(plugin):
             return 0
-        uids = self._memcomp_profile_uids(plugin)
-        if not uids:
+        rows = self._memcomp_profile_rows(plugin)
+        if not rows:
             return 0
-        identity_rows = self._memcomp_rows(
-            "SELECT entity_id, display_name, platform, profile FROM identities "
-            "WHERE entity_kind='user' AND entity_id!=''"
-        )
-        identities = {str(row.get("entity_id") or ""): row for row in identity_rows}
-        count_rows = self._memcomp_rows(
-            "SELECT subject_id AS uid, COUNT(*) AS c FROM memories "
-            "WHERE subject_kind='user' AND subject_id!='' "
-            "AND lifecycle NOT IN ('deleted','archived','quarantined') "
-            "AND memory_type IN ('user_profile','user_preference','relationship_claim','user_habit') "
-            "GROUP BY subject_id"
-        )
-        counts = {str(row.get("uid")): to_int(row.get("c"), 0) for row in count_rows}
+        identities = {}
+        try:
+            identity_rows = self._memcomp_rows(
+                "SELECT entity_id, display_name, profile FROM identities "
+                "WHERE entity_kind='user' AND entity_id!=''"
+            )
+            identities = {str(row.get("entity_id") or ""): row for row in identity_rows}
+        except Exception:
+            identities = {}
         if not only_uid:
-            self._cleanup_auto_profiles("memory_companion", uids)
+            self._cleanup_auto_profiles("memory_companion", [row["uid"] for row in rows])
         synced = 0
-        for uid in uids:
-            if only_uid and uid != str(only_uid):
+        for row in rows:
+            uid = str(row.get("uid") or "")
+            if not uid or (only_uid and uid != str(only_uid)):
                 continue
-            row = identities.get(uid, {})
             profile = self.db.get_profile(uid) or {}
-            parsed = {}
-            try:
-                raw = row.get("profile")
-                parsed = json.loads(raw) if isinstance(raw, str) and raw.strip() else {}
-            except Exception:
-                parsed = {}
-            if not isinstance(parsed, dict):
-                parsed = {}
-            name = str(
-                row.get("display_name") or parsed.get("name")
-                or parsed.get("nickname") or parsed.get("display_name") or ""
-            ).strip()
-            count = counts.get(uid, 0)
+            name = str(row.get("name") or "").strip()
+            if not name:
+                ident = identities.get(uid) or {}
+                name = str(ident.get("display_name") or "").strip()
+            count = to_int(row.get("count"), 0)
             if not profile:
                 self.db.touch_profile(uid, name or uid, "memory_companion", "", "", False)
                 profile = self.db.get_profile(uid) or {}
             fields = {}
             if name and (not profile.get("name") or str(profile.get("name")) == uid):
                 fields["name"] = name[:60]
-            birthday = str(parsed.get("birthday") or parsed.get("birth_date") or "").strip()
-            if birthday and not profile.get("birthday"):
-                fields["birthday"] = birthday[:20]
             if not profile.get("notes") and count:
-                fields["notes"] = ("记忆 %d 条（Memory Companion）" % count)[:100]
+                fields["notes"] = ("画像 %d 条（Memory Companion）" % count)[:100]
             if fields:
                 self.db.update_profile(uid, **fields)
             synced += 1
