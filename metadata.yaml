@@ -8,6 +8,7 @@ astrbot_version: ">=4.5.7"
 repo: https://github.com/GM888888456/Astrbot_Amo_forever
 support_platforms:
   - aiocqhttp
+  - lark
 tags:
   - 陪伴
   - 心流
