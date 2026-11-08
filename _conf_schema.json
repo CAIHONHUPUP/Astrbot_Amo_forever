@@ -3,7 +3,7 @@
     "type": "string",
     "description": "城市显示名",
     "default": "",
-    "hint": "weather_city 填 LocationID（数字）时用，比如填 101281601、这里填东莞；留空就显示城市原值"
+    "hint": "天气里显示的城市名；填数字 ID 时用它显示中文（填 101281601、这里填东莞）。用中文城市名设置时会自动填好。"
   },
   "weather_alert_enabled": {
     "type": "bool",
@@ -47,7 +47,7 @@
   "weather_city": {
     "type": "string",
     "description": "天气城市",
-    "hint": "留空则跟随日程城市（人格/世界观解析结果）；例如：贵阳、杭州、北京",
+    "hint": "可直接填中文城市名（如：东莞、北京朝阳），保存后会自动换算成 LocationID 回填；也可直接填数字 ID。留空则跟随日程城市。",
     "default": ""
   },
   "weather_host": {
