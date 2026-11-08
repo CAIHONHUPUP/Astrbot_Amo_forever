@@ -162,6 +162,17 @@ class SegmentEngine:
             await asyncio.sleep(wait)
         return wait
 
+    def _remember_bot_text(self, event, text):
+        """把正常回复回写给 amo 的 messages 表（它的发送函数不走这里）。"""
+        plugin = getattr(self, "plugin", None)
+        remember = getattr(plugin, "_remember_bot_message", None)
+        if remember is None:
+            return
+        try:
+            remember(event.unified_msg_origin, text)
+        except Exception as exc:
+            logger.debug(f"[分段] 记录回复失败: {exc}")
+
     async def handle_segment_reply(self, event: AstrMessageEvent, quote_id=None, group=False):
         """拦截 LLM 回复，执行分段并逐条发送。返回 True 表示已接管发送。"""
         result = event.get_result()
@@ -188,6 +199,7 @@ class SegmentEngine:
                 # 即使只有一段，也要先按字数等待打字时间；返回 False 让 AstrBot 自己发。
                 await self._wait_segment(event, segments[0], "", 0.0)
                 await self._set_typing(event, False)
+                self._remember_bot_text(event, raw_text)
                 return False
 
             if is_proactive:
@@ -222,6 +234,7 @@ class SegmentEngine:
             await self._set_typing(event, False)
 
             await self._save_to_conversation_history(event, full_segmented_text)
+            self._remember_bot_text(event, full_segmented_text)
             logger.info(f"[amo] 分段回复 -> {event.unified_msg_origin}: {full_segmented_text[:300]}")
             logger.info(f"[amo] 分段回复完成，共 {len(segments)} 段")
             return True
