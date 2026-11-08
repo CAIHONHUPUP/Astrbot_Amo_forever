@@ -133,7 +133,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.9.2"
+PLUGIN_VERSION = "5.9.4"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -3341,7 +3341,7 @@ class LLMService:
             "（刚才说吃过了，现在就不能说去买吃的）。"
         )
         try:
-            rows = self.p.db.recent_messages(umo, 12)
+            rows = self.p._recent(umo, 12)
         except Exception:
             rows = []
         analysis = _pg_analyze_rows(rows, now=now_ts()) if _pg_analyze_rows else {
@@ -3719,6 +3719,9 @@ class HumanCorePlugin(Star):
         self._last_pending_check = 0.0
         self._last_proactive_activity = {}
         self._last_bot_saved = {}
+        # 近聊上下文缓冲（只在内存里；本地聊天可以不落库，用记忆终端补）
+        self._ctx_buffer = {}
+        self._ctx_hydrated = set()
         self._last_schedule_save = ""
         self._disturb_cooldown = {}
         self._disturb_reset_at = {}
@@ -4678,7 +4681,10 @@ class HumanCorePlugin(Star):
             profile["is_admin"] = 1
 
         self.state.observe(text)
-        self.db.add_message(umo, uid, name, "user", text)
+        # 上下文先进内存；本地缓存默认关掉，原始聊天交给记忆终端
+        self._ctx_remember(umo, uid, name, "user", text)
+        if self.cfg_bool("local_chat_cache", False):
+            self.db.add_message(umo, uid, name, "user", text)
         try:
             await self._data_call("add_message", self._data_bot_id(), umo, uid, name, "user", text, platform=self._platform_of(event))
         except Exception as exc:
@@ -4885,11 +4891,124 @@ class HumanCorePlugin(Star):
                         self.db.update_profile(target, alias=(current + "；" + plain).strip("；")[:80])
                     self.db.kv_set(seen_key, 0)
 
+    # ---------- 近聊上下文（内存缓冲 + 记忆终端钩子） ----------
+    CONTEXT_BUFFER_LIMIT = 60
+
+    def _ctx_remember(self, umo, uid, name, role, content):
+        """把一句话放进内存缓冲；不落库也能有上下文。"""
+        umo = str(umo or "")
+        text = str(content or "").strip()
+        if not umo or not text:
+            return
+        buf = getattr(self, "_ctx_buffer", None)
+        if buf is None:
+            buf = {}
+            self._ctx_buffer = buf
+        rows = buf.get(umo)
+        if rows is None:
+            rows = []
+            buf[umo] = rows
+        rows.append({
+            "umo": umo,
+            "uid": str(uid or ""),
+            "name": str(name or ""),
+            "role": "bot" if str(role) == "bot" else "user",
+            "content": text,
+            "created_at": now_ts(),
+        })
+        if len(rows) > self.CONTEXT_BUFFER_LIMIT:
+            del rows[:len(rows) - self.CONTEXT_BUFFER_LIMIT]
+
     def _recent(self, umo, limit=10):
+        """近聊上下文钩子：内存缓冲优先，没有再读本地缓存表。"""
+        size = max(1, int(limit or 10))
         try:
-            return self.db.recent_messages(umo, limit)
+            rows = list((getattr(self, "_ctx_buffer", {}) or {}).get(str(umo), []))
+        except Exception:
+            rows = []
+        if len(rows) >= size:
+            return rows[-size:]
+        try:
+            local = self.db.recent_messages(umo, size)
+        except Exception:
+            local = []
+        if not rows:
+            return local
+        # 缓冲只有一小段时，用本地补前面
+        known = {(row.get("role"), row.get("content")) for row in rows}
+        merged = [row for row in local if (row.get("role"), row.get("content")) not in known]
+        merged.extend(rows)
+        return merged[-size:]
+
+    async def _recent_by_uid(self, uid, limit=20):
+        """按 uid 取近聊：记忆终端优先，没有再退回内存缓冲/本地缓存。"""
+        uid = str(uid or "")
+        size = max(1, int(limit or 20))
+        mem = self._data_mem()
+        lister = getattr(mem, "list_messages", None) if mem is not None else None
+        if callable(lister):
+            try:
+                rows = await lister(self._data_bot_id(), "", size, uid=uid) or []
+            except TypeError:
+                try:
+                    rows = await lister(self._data_bot_id(), "", size) or []
+                except Exception:
+                    rows = []
+            except Exception:
+                rows = []
+            if rows:
+                return sorted(rows, key=lambda item: to_float(item.get("created_at"), 0))[-size:]
+        merged = []
+        for rows in list((getattr(self, "_ctx_buffer", {}) or {}).values()):
+            merged.extend([row for row in rows if str(row.get("uid") or "") == uid])
+        if merged:
+            return sorted(merged, key=lambda item: to_float(item.get("created_at"), 0))[-size:]
+        try:
+            return self.db.messages_by_uid(uid, size)
         except Exception:
             return []
+
+    async def _hydrate_recent(self, umo, limit=30):
+        """从记忆终端把这个会话最近的话捞回内存，重启后也有上下文。"""
+        umo = str(umo or "")
+        if not umo:
+            return
+        if str(umo) in getattr(self, "_ctx_hydrated", set()):
+            return
+        mem = self._data_mem()
+        lister = getattr(mem, "list_messages", None) if mem is not None else None
+        rows = []
+        if callable(lister):
+            try:
+                rows = await lister(self._data_bot_id(), umo, max(1, int(limit))) or []
+            except Exception as exc:
+                logger.debug("[amo] 从记忆终端取上下文失败: %s" % exc)
+                rows = []
+        if not rows:
+            try:
+                rows = self.db.recent_messages(umo, max(1, int(limit)))
+            except Exception:
+                rows = []
+        if not rows:
+            return
+        ordered = sorted(rows, key=lambda item: to_float(item.get("created_at"), 0))
+        buf = getattr(self, "_ctx_buffer", None)
+        if buf is None:
+            buf = {}
+            self._ctx_buffer = buf
+        buf[umo] = [
+            {
+                "umo": umo,
+                "uid": str(item.get("uid") or ""),
+                "name": str(item.get("name") or ""),
+                "role": "bot" if str(item.get("role")) == "bot" else "user",
+                "content": str(item.get("content") or ""),
+                "created_at": to_float(item.get("created_at"), 0),
+            }
+            for item in ordered[-self.CONTEXT_BUFFER_LIMIT:]
+        ]
+        self._ctx_hydrated = getattr(self, "_ctx_hydrated", set())
+        self._ctx_hydrated.add(str(umo))
 
     def _is_talking_to_me(self, event):
         """这句是不是冲她来的：私聊、被 @ / 叫名字、或心流判定对象是 bot。"""
@@ -4995,7 +5114,7 @@ class HumanCorePlugin(Star):
     def _group_speaker_count(self, umo, limit=20, window=600):
         """最近一段时间内群聊里的不同发言人数。"""
         try:
-            rows = self.db.recent_messages(umo, limit)
+            rows = self._recent(umo, limit)
         except Exception:
             return 0
         cutoff = now_ts() - window
@@ -7045,7 +7164,7 @@ class HumanCorePlugin(Star):
     def _disturb_pressure(self, umo, uid, text="", group=False):
         """最近窗口内，同一个人连续发消息数 / 群里叫机器人的消息数。"""
         try:
-            rows = self.db.recent_messages(umo, 24)
+            rows = self._recent(umo, 24)
         except Exception:
             return 0
         window = max(1, self.cfg_int("disturb_window_minutes", 10)) * 60
@@ -7676,7 +7795,9 @@ class HumanCorePlugin(Star):
             saved = self._last_bot_saved.get(umo)
             if saved and saved[0] == text and time.time() - saved[1] < 180:
                 return
-            self.db.add_message(umo, "bot", self.bot_name, "bot", text)
+            self._ctx_remember(umo, "bot", self.bot_name, "bot", text)
+            if self.cfg_bool("local_chat_cache", False):
+                self.db.add_message(umo, "bot", self.bot_name, "bot", text)
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(self._data_call(
@@ -7820,6 +7941,10 @@ class HumanCorePlugin(Star):
     async def _dynamic_context(self, event):
         await self._sync_persona_name(event)
         umo = event.unified_msg_origin
+        try:
+            await self._hydrate_recent(umo, 30)
+        except Exception:
+            pass
         uid = self._canonical_uid(event)
         profile = self.db.get_profile(uid)
         relation = profile.get("relation", "普通")
@@ -8278,6 +8403,11 @@ class HumanCorePlugin(Star):
             logger.debug("[amo] 天气提醒失败: %s" % exc)
 
         umo = self._last_umo or self._first_private_umo()
+        if umo:
+            try:
+                await self._hydrate_recent(umo, 30)
+            except Exception:
+                pass
         if (
             not self.state.schedule.get(today_str())
             or self.db.kv_get("schedule_version", "") != SCHEDULE_VERSION
@@ -8353,7 +8483,7 @@ class HumanCorePlugin(Star):
             if now_ts() - last < 1800:
                 continue
             try:
-                rows = self.db.messages_by_uid(uid, 20)
+                rows = await self._recent_by_uid(uid, 20)
                 lines = [row.get("name", "") + "：" + row.get("content", "") for row in rows]
                 facts = await self.llm.extract_facts(
                     self._last_umo, user.get("name", "") or uid, lines
@@ -8505,7 +8635,7 @@ class HumanCorePlugin(Star):
 
     def _ritual_should_send(self, umo, kind):
         try:
-            rows = self.db.recent_messages(umo, 10)
+            rows = self._recent(umo, 10)
         except Exception:
             rows = []
         now = now_ts()
@@ -8774,7 +8904,7 @@ class HumanCorePlugin(Star):
             facts.append("明天最高 " + str(tomorrow.get("tempMax")) + "℃")
         recent_lines = []
         try:
-            for row in self.db.recent_messages(umo, 8):
+            for row in self._recent(umo, 8):
                 content = str(row.get("content") or "").strip()
                 if not content:
                     continue
