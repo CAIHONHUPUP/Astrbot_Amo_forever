@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -60,7 +61,9 @@ class AnalyzeRowsTests(unittest.TestCase):
     def test_context_text_has_time_and_speaker(self):
         result = analyze_rows(CHAT, now=NOW)
         self.assertIn("用户：今天的粽子是猪肉粽", result["context_text"])
-        self.assertIn("14:40", result["context_text"])
+        # 时间按本机时区渲染，CI 是 UTC，别写死 14:40
+        expected = time.strftime("%H:%M", time.localtime(1794120038.7))
+        self.assertIn(expected, result["context_text"])
 
     def test_empty_and_junk_rows(self):
         self.assertEqual(analyze_rows([], now=NOW)["unanswered_text"], "")
