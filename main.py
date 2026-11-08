@@ -133,7 +133,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.8.6"
+PLUGIN_VERSION = "5.8.8"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -5384,6 +5384,17 @@ class HumanCorePlugin(Star):
             return None
         try:
             return await func(*args, **kwargs)
+        except TypeError:
+            # 数据插件是旧版（还没有 platform 参数）时退一步，别把聊天记录整个丢掉
+            if "platform" in kwargs:
+                try:
+                    trimmed = {k: v for k, v in kwargs.items() if k != "platform"}
+                    return await func(*args, **trimmed)
+                except Exception as exc:
+                    logger.debug("[amo] 数据插件 %s 调用失败: %s" % (name, exc))
+                    return None
+            logger.debug("[amo] 数据插件 %s 参数不匹配" % name)
+            return None
         except Exception as exc:
             logger.debug("[amo] 数据插件 %s 调用失败: %s" % (name, exc))
             return None
