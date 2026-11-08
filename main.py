@@ -78,15 +78,25 @@ except Exception:
             logger.error("[amo] 内置心流/分段模块加载失败: %s" % _engine_exc)
 
 try:
-    from .weather_alert import evaluate as evaluate_weather_alert, parse_daily as parse_weather_daily
+    from .weather_alert import evaluate as evaluate_weather_alert, parse_daily as parse_weather_daily, next_check_slot, parse_clock, slot_key, is_weather_query, forecast_brief
 except Exception:
     try:
-        from weather_alert import evaluate as evaluate_weather_alert, parse_daily as parse_weather_daily
+        from weather_alert import evaluate as evaluate_weather_alert, parse_daily as parse_weather_daily, next_check_slot, parse_clock, slot_key, is_weather_query, forecast_brief
     except Exception:
         def evaluate_weather_alert(*args, **kwargs):
             return ""
         def parse_weather_daily(*args, **kwargs):
             return []
+        def next_check_slot(*args, **kwargs):
+            return ""
+        def parse_clock(*args, **kwargs):
+            return 0
+        def slot_key(today, slot):
+            return "%s|%s" % (today, slot)
+        def is_weather_query(*args, **kwargs):
+            return False
+        def forecast_brief(*args, **kwargs):
+            return ""
 
 try:
     from .proactive_guard import analyze_rows as _pg_analyze_rows, compose_task as _pg_compose_task, near_duplicate as _pg_near_duplicate
@@ -2418,7 +2428,8 @@ class HumanState:
             or "贵阳"
         )
         return {
-            "city": city,
+            # 存显示名，refresh_weather 的缓存签名才比得上（weather_city 可能是数字 ID）
+            "city": (self.p.cfg_str("weather_city_name", "") or "").strip() or city,
             "text": text, "tag": tag, "temp": temp,
             "humidity": rng.randint(40, 90),
             "wind": random.choice(["东风", "南风", "西北风", "微风"]) + str(rng.randint(1, 4)) + "级",
@@ -2529,12 +2540,16 @@ class HumanState:
             logger.warning("[amo] 和风天气接口失败: %s %r" % (type(exc).__name__, exc))
             return None
 
-    async def _fetch_qweather_daily(self, key, city, days=3):
-        """明天/后天的预报；缓存 3 小时，避免后台循环反复打接口。"""
+    async def _fetch_qweather_daily(self, key, city, days=3, fresh=False):
+        """明天/后天的预报；缓存 3 小时，避免后台循环反复打接口。
+
+        fresh=True 跳过缓存：晚上发预警前要拿最新的一份，早上判断的那份不算数。
+        """
         cache = self.db.kv_get("weather_daily", {}) or {}
         city = str(city or "").strip()
         if (
-            isinstance(cache, dict)
+            not fresh
+            and isinstance(cache, dict)
             and cache.get("ts")
             and now_ts() - to_float(cache.get("ts"), 0) < 3 * 3600
             and str(cache.get("city") or "") == city
@@ -2591,8 +2606,11 @@ class HumanState:
         )
         host = self.p.cfg_str("weather_host", "")
         # 配置里的城市/Key/Host 变了就必须重取，不能继续用旧缓存。
+        # 比较用显示名：weather_city 可能是数字 LocationID，缓存里存的却是「东莞」这种名字，
+        # 拿数字去比永远不相等 → 每次轮询都强制重取天气（30 秒一次，免费额度会被打光）。
+        city_label = (self.p.cfg_str("weather_city_name", "") or "").strip() or city
         current_signature = (current.get("city"), bool(current.get("key_set")), current.get("host"))
-        desired_signature = (city, bool(key), host)
+        desired_signature = (city_label, bool(key), host)
         if current_signature != desired_signature:
             force = True
         if not force and current.get("ts") and now_ts() - current["ts"] < 1800:
@@ -7174,6 +7192,16 @@ class HumanCorePlugin(Star):
             samples = DIALECT_SAMPLES.get(style, "")
             if style and samples:
                 parts.append("【方言】你的语种设定是「" + style + "」，偶尔自然用一点当地方言口语（如" + samples + "），但不要每句都用，也不要硬替换“就是/什么/怎么”。")
+        if self.cfg_bool("weather_query_enabled", True) and is_weather_query(event.message_str or ""):
+            try:
+                parts.append(await self._weather_query_context(event.message_str or ""))
+                parts.append(
+                    "【天气怎么答】只按【天气查询】里的数据答：先答他问的那一档（现在/今天/明天），"
+                    "一两句就够；里面没有的数字、雨雪、温度一律不要编，就说“我这边看不太准”。"
+                    "他问“明天要不要带伞/降温没”就直接照明天那条说。"
+                )
+            except Exception as exc:
+                logger.debug("[amo] 天气查询注入失败: %s" % exc)
         if re.search(r"(旅游|景区|景点|去哪|好玩|假期|游玩)", event.message_str or ""):
             scenic_text = await self._scenic_kb_context(event.message_str or "")
             if scenic_text:
@@ -7976,38 +8004,95 @@ class HumanCorePlugin(Star):
         text = self._clean_weather_alert(text)
         return text or fallback
 
+    async def _weather_query_context(self, text=""):
+        """他问天气时，用缓存里的「现在天气 + 今天 + 明天」拼一段给他看。
+
+        只有缓存过期才会真的请求和风（现在天气 30 分钟一份、预报 3 小时一份），
+        所以连着问十遍通常一次都不多请。
+        """
+        key = self.cfg_str("hefeng_key", "")
+        city = (
+            self.cfg_str("weather_city", "").strip()
+            or str((getattr(self.state, "schedule_profile", {}) or {}).get("city") or "").strip()
+            or "贵阳"
+        )
+        now_data = {}
+        try:
+            now_data = await self.state.refresh_weather()
+        except Exception as exc:
+            logger.debug("[amo] 天气查询取现在天气失败: %s" % exc)
+        if not now_data:
+            now_data = getattr(self.state, "weather", {}) or {}
+        items = []
+        if key:
+            try:
+                items = await self.state._fetch_qweather_daily(key, city, 3)
+            except Exception as exc:
+                logger.debug("[amo] 天气查询取预报失败: %s" % exc)
+        today = items[0] if items else {}
+        tomorrow = items[1] if len(items) > 1 else {}
+        brief = forecast_brief(now_data, today, tomorrow)
+        if not brief:
+            logger.info("[amo] 天气查询：没有可用数据")
+            return "【天气查询】这会儿取不到天气数据，别编温度，直接说看不太准。"
+        logger.info("[amo] 天气查询: %s" % brief)
+        return "【天气查询】" + brief
+
     async def _maybe_weather_alert(self):
-        """明天天气变坏时，到点提醒一次（每天最多一条）。"""
+        """明天天气变坏时，到点提醒一次（每天最多一条）。
+
+        判断一天只做两次：
+        - 早上 `weather_alert_morning_time`（默认 08:00）：只判断、不发送；
+        - 晚上 `weather_alert_time`（默认 20:00）：到点才真的发预报，
+          且**跳过预报缓存**拿最新一份，保证当天晚上这条的准确性。
+
+        以前每 30 秒的后台循环都会重算一遍，日志刷屏、还每次都要请一次和风接口。
+        用 `weather_alert_checked`（形如 `2026-11-08|evening`）记住今天哪个槽位
+        已经判断过，没到点 / 判断过的直接返回。
+        """
         if not self.cfg_bool("weather_alert_enabled", False):
             return
         key = self.cfg_str("hefeng_key", "")
         if not key:
             return
         target = self.cfg_str("weather_alert_time", "20:00")
-        try:
-            hour, minute = [int(x) for x in str(target).split(":")[:2]]
-        except Exception:
-            hour, minute = 20, 0
+        evening_min = parse_clock(target, 20, 0)
+        morning_raw = str(self.cfg_str("weather_alert_morning_time", "08:00") or "").strip()
+        morning_min = parse_clock(morning_raw, 8, 0) if morning_raw else None
         now = datetime.now()
-        if now.hour * 60 + now.minute < hour * 60 + minute:
-            return
         today = today_str()
         if str(self.db.kv_get("weather_alert_sent", "") or "") == today:
             return
+        checked = str(self.db.kv_get("weather_alert_checked", "") or "")
+        slot = next_check_slot(
+            now.hour * 60 + now.minute, morning_min, evening_min, checked, today
+        )
+        if not slot:
+            return
+        label = "早上" if slot == "morning" else "晚上"
         city = (
             self.cfg_str("weather_city", "").strip()
             or str((getattr(self.state, "schedule_profile", {}) or {}).get("city") or "").strip()
             or "贵阳"
         )
-        items = await self.state._fetch_qweather_daily(key, city, 3)
+        # 晚上要发预警，必须用最新预报：跳过 3 小时缓存。
+        items = await self.state._fetch_qweather_daily(
+            key, city, 3, fresh=(slot == "evening")
+        )
         if len(items) < 2:
+            # 拿不到预报就别每 30 秒重试，今天不提醒。
+            self.db.kv_set("weather_alert_checked", slot_key(today, slot))
             return
         text = evaluate_weather_alert(
             items[0], items[1], self.cfg_int("weather_alert_temp_drop", 8)
         )
-        self.db.kv_set("weather_alert_checked", today)
+        self.db.kv_set("weather_alert_checked", slot_key(today, slot))
         if not text:
-            logger.info("[amo] 天气提醒：明天天气正常，不提醒")
+            logger.info("[amo] 天气提醒（%s）：明天天气正常，不提醒" % label)
+            return
+        if slot == "morning":
+            # 早上只判断，真正的预报晚上再发，一天一条不追发。
+            logger.info("[amo] 天气提醒（早上）：明天要变天，晚上 %s 再发给他" % target)
             return
         umos = self._weather_alert_umos()
         if not umos:
@@ -8030,6 +8115,8 @@ class HumanCorePlugin(Star):
             self.db.kv_set("weather_alert_open", today)
             logger.info("[amo] 天气提醒已发送: %s -> %s" % (text, sent_umo))
         else:
+            # 所有平台都失败：清掉 checked 让下一轮重试（原来也是每轮重试）。
+            self.db.kv_set("weather_alert_checked", "")
             logger.warning("[amo] 天气提醒所有平台都失败: %s" % umos)
 
     async def _maybe_proactive(self):
