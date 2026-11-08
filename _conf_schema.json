@@ -959,5 +959,17 @@
     "description": "方言知识库名称",
     "hint": "默认“陪伴方言库”；改名会创建新库，旧库不会自动删除",
     "default": "陪伴方言库"
+  },
+  "proactive_user_idle_minutes": {
+    "type": "int",
+    "description": "对方刚说过话的静默期（分钟）",
+    "hint": "最近这么多分钟内有你的消息，就不发主动消息，避免你在聊天时插话。0 = 关闭。",
+    "default": 10
+  },
+  "proactive_forced_gap_minutes": {
+    "type": "int",
+    "description": "「日常关心」两条之间的最小间隔（分钟）",
+    "hint": "重启不会重置这个间隔（按数据库里的上次主动时间算），避免重启后立刻又发一条。",
+    "default": 30
   }
 }

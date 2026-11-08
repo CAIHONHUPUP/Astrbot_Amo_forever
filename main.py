@@ -6567,6 +6567,20 @@ class HumanCorePlugin(Star):
             return "share"
         return "greet"
 
+    # ---- 主动消息节流 ----
+    def _proactive_user_just_talked(self, profile, now):
+        """对方刚说过话就别主动插话。0 表示关闭这项检查。"""
+        minutes = max(0, self.cfg_int("proactive_user_idle_minutes", 10))
+        if not minutes:
+            return False
+        last_user_at = to_float(profile.get("last_seen"), 0)
+        return bool(last_user_at) and (now - last_user_at) < minutes * 60
+
+    def _proactive_forced_allowed(self, profile, now):
+        """「日常关心」也要跟上次主动拉开间隔，避免重启后立刻又发。"""
+        gap = max(1, self.cfg_int("proactive_forced_gap_minutes", 30)) * 60
+        return (now - to_float(profile.get("last_proactive", 0))) >= gap
+
     async def _maybe_proactive(self):
         quiet = quiet_now(self.cfg_str("quiet_hours", "23:30-07:30"))
         try:
@@ -6585,6 +6599,8 @@ class HumanCorePlugin(Star):
             if not profile.get("private_umo"):
                 continue
             if self._recent_bot_initiated(profile["private_umo"], 3600):
+                continue
+            if self._proactive_user_just_talked(profile, now):
                 continue
             count = to_int(profile.get("proactive_count"))
             if profile.get("proactive_day") != today_str():
@@ -6612,6 +6628,7 @@ class HumanCorePlugin(Star):
             forced = (
                 relation == "相恋"
                 and category in ("meal", "rest", "play", "commute")
+                and self._proactive_forced_allowed(profile, now)
                 and self._last_proactive_activity.get(str(profile.get("uid"))) != today_str() + ":" + str(datetime.now().hour)
             )
             if not guaranteed and not forced and now - to_float(profile.get("last_proactive", 0)) < interval:
