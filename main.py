@@ -78,6 +78,17 @@ except Exception:
             logger.error("[amo] 内置心流/分段模块加载失败: %s" % _engine_exc)
 
 try:
+    from .weather_alert import evaluate as evaluate_weather_alert, parse_daily as parse_weather_daily
+except Exception:
+    try:
+        from weather_alert import evaluate as evaluate_weather_alert, parse_daily as parse_weather_daily
+    except Exception:
+        def evaluate_weather_alert(*args, **kwargs):
+            return ""
+        def parse_weather_daily(*args, **kwargs):
+            return []
+
+try:
     from .schedule_engine import ScheduleEngine
 except Exception:
     try:
@@ -2397,6 +2408,131 @@ class HumanState:
         except Exception as exc:
             logger.warning("[amo] 和风天气接口失败: %s" % exc)
             return None
+
+    async def _qweather_get(self, url, params):
+        """和风请求：用系统网络栈（线程里 urllib），避免 aiohttp 在部分环境超时。"""
+        import urllib.parse
+        import urllib.request
+
+        key = self.p.cfg_str("hefeng_key", "")
+        query = dict(params or {})
+        query["key"] = key
+        full = url + ("&" if "?" in url else "?") + urllib.parse.urlencode(query)
+
+        def _do():
+            req = urllib.request.Request(
+                full, headers={"X-QW-Api-Key": key, "Accept-Encoding": "identity"}
+            )
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                raw = resp.read()
+            if raw[:2] == b"\x1f\x8b":
+                import gzip
+                raw = gzip.decompress(raw)
+            return json.loads(raw.decode("utf-8"))
+
+        return await asyncio.to_thread(_do)
+
+    async def _fetch_qweather(self, key, city):
+        host = (self.p.cfg_str("weather_host", "") or "").strip().rstrip("/")
+        if not host:
+            return None
+        legacy_hosts = {"https://devapi.qweather.com", "https://api.qweather.com"}
+        if host in legacy_hosts:
+            logger.warning("[amo] 和风天气公共 API 域名已停服，请在配置里填写控制台的 API Host")
+        geo_raw = (self.p.cfg_str("weather_geo_host", "") or "").strip().rstrip("/")
+        if geo_raw and not geo_raw.startswith(("http://", "https://")):
+            geo_raw = "https://" + geo_raw
+        if geo_raw:
+            geo_base = geo_raw
+            if geo_base.endswith("/city/lookup"):
+                geo_base = geo_base[: -len("/city/lookup")]
+            if not geo_base.endswith(("/geo/v2", "/v2")):
+                geo_base += "/geo/v2"
+        else:
+            geo_base = host + "/geo/v2"
+        location = str(city)
+        try:
+            if not location.isdigit():
+                geo = await self._qweather_get(
+                    geo_base + "/city/lookup", {"location": location, "number": 1}
+                )
+                if str(geo.get("code") or "") != "200" or not isinstance(geo.get("location"), list):
+                    return None
+                first = geo["location"][0] if geo["location"] else None
+                if not isinstance(first, dict) or not first.get("id"):
+                    return None
+                location = str(first["id"])
+            data = await self._qweather_get(host + "/v7/weather/now", {"location": location})
+            if not isinstance(data, dict) or str(data.get("code") or "") != "200":
+                logger.warning("[amo] 和风天气 now 返回异常: %s" % str(data)[:160])
+                return None
+            now = data.get("now")
+            if not isinstance(now, dict):
+                logger.warning("[amo] 和风天气 now 字段缺失或格式异常")
+                return None
+            text = str(now.get("text") or "多云")
+            city_name = (self.p.cfg_str("weather_city_name", "") or "").strip() or city
+            return {
+                "city": city_name, "text": text, "tag": self._weather_tag(text),
+                "temp": to_int(now.get("temp")), "humidity": to_int(now.get("humidity")),
+                "wind": str(now.get("windDir", "")) + str(now.get("windScale", "")) + "级",
+                "ts": now_ts(), "source": "qweather", "ok": True, "error": "",
+                "key_set": True,
+                "host": host,
+            }
+        except Exception as exc:
+            logger.warning("[amo] 和风天气接口失败: %s %r" % (type(exc).__name__, exc))
+            return None
+
+    async def _fetch_qweather_daily(self, key, city, days=3):
+        """明天/后天的预报；缓存 3 小时，避免后台循环反复打接口。"""
+        cache = self.db.kv_get("weather_daily", {}) or {}
+        city = str(city or "").strip()
+        if (
+            isinstance(cache, dict)
+            and cache.get("ts")
+            and now_ts() - to_float(cache.get("ts"), 0) < 3 * 3600
+            and str(cache.get("city") or "") == city
+            and to_int(cache.get("days")) == int(days)
+        ):
+            items = cache.get("items")
+            return items if isinstance(items, list) else []
+        host = (self.p.cfg_str("weather_host", "") or "").strip().rstrip("/")
+        if not host:
+            return []
+        geo_raw = (self.p.cfg_str("weather_geo_host", "") or "").strip().rstrip("/")
+        if geo_raw and not geo_raw.startswith(("http://", "https://")):
+            geo_raw = "https://" + geo_raw
+        if geo_raw:
+            geo_base = geo_raw
+            if geo_base.endswith("/city/lookup"):
+                geo_base = geo_base[: -len("/city/lookup")]
+            if not geo_base.endswith(("/geo/v2", "/v2")):
+                geo_base += "/geo/v2"
+        else:
+            geo_base = host + "/geo/v2"
+        location = str(city)
+        try:
+            if not location.isdigit():
+                geo = await self._qweather_get(
+                    geo_base + "/city/lookup", {"location": location, "number": 1}
+                )
+                if str(geo.get("code") or "") != "200" or not isinstance(geo.get("location"), list):
+                    return []
+                first = geo["location"][0] if geo["location"] else None
+                if not isinstance(first, dict) or not first.get("id"):
+                    return []
+                location = str(first["id"])
+            data = await self._qweather_get(host + "/v7/weather/%dd" % int(days), {"location": location})
+            if not isinstance(data, dict) or str(data.get("code") or "") != "200":
+                logger.warning("[amo] 和风天气预报返回异常: %s" % str(data)[:160])
+                return []
+            items = parse_weather_daily(data)
+        except Exception as exc:
+            logger.warning("[amo] 和风天气预报接口失败: %s %r" % (type(exc).__name__, exc))
+            return []
+        self.db.kv_set("weather_daily", {"ts": now_ts(), "city": city, "days": int(days), "items": items})
+        return items
 
     async def refresh_weather(self, force=False):
         try:
@@ -6889,6 +7025,22 @@ class HumanCorePlugin(Star):
                 "只自然答应，例如“好，我记住了，这是你朋友吗”，不要把人机式记录念出来。"
             )
         try:
+            _is_private_event = bool(event.is_private_chat())
+        except Exception:
+            _is_private_event = False
+        try:
+            if (
+                str(self.db.kv_get("weather_alert_open", "") or "") == today_str()
+                and _is_private_event
+            ):
+                parts.append(
+                    "【天气提醒之后】你今晚已经提醒过他天气了，他说“知道了/好/嗯/收到”就自然应一句，"
+                    "不要再提天气、带伞、加衣服，也不要追问；只有他主动再问天气才回答。"
+                )
+        except Exception:
+            pass
+
+        try:
             merged_count = int(event.get_extra("amo_debounce_count") or 0)
         except Exception:
             merged_count = 0
@@ -6912,6 +7064,7 @@ class HumanCorePlugin(Star):
                 "不要把刚才的话换个说法再说一遍：最多补一句新的，或者一句带过（“嗯，就这么办”）。"
                 % int(max(1, now_ts() - last_at))
             )
+
         parts.append("以上是你的内在状态，不要直接复述，只影响语气、长度和是否愿意说话。")
         return "\n".join(parts)
 
@@ -7079,6 +7232,10 @@ class HumanCorePlugin(Star):
             self.state.daily_tick()
         self.state.roll_health()
         await self.state.refresh_weather()
+        try:
+            await self._maybe_weather_alert()
+        except Exception as exc:
+            logger.debug("[amo] 天气提醒失败: %s" % exc)
 
         umo = self._last_umo or self._first_private_umo()
         if (
@@ -7503,6 +7660,154 @@ class HumanCorePlugin(Star):
                 return umo
         return items[0][1]
 
+
+    def _weather_alert_umos(self):
+        """天气提醒的候选会话，按最近活跃排序。
+
+        只用她**真的收到过消息**的会话（channels:<uid> + private_umo），
+        没配飞书的人候选里就只有 QQ，不会随机到一个不存在的平台。
+        """
+        pairs = []
+        try:
+            for profile in self.db.proactive_profiles(limit=20):
+                uid = str(profile.get("uid") or "")
+                data = self.db.kv_get("channels:%s" % uid, {}) or {}
+                if isinstance(data, dict):
+                    for value in data.values():
+                        if isinstance(value, dict) and value.get("umo"):
+                            pairs.append((float(value.get("ts") or 0), str(value["umo"])))
+                item = str(profile.get("private_umo") or "")
+                if item:
+                    pairs.append((0.0, item))
+        except Exception as exc:
+            logger.debug("[amo] 天气提醒选平台失败: %s" % exc)
+        pairs.sort(key=lambda pair: -pair[0])
+        seen = []
+        for _, umo in pairs:
+            if umo and umo not in seen:
+                seen.append(umo)
+        if not seen:
+            fallback = self._last_umo or self._first_private_umo()
+            if fallback:
+                seen.append(fallback)
+        return seen
+
+    def _pick_weather_alert_umo(self):
+        """兼容旧调用：返回最该优先尝试的那个会话。"""
+        items = self._weather_alert_umos()
+        return items[0] if items else ""
+
+    @staticmethod
+    def _clean_weather_alert(text):
+        """把模型偶尔蹦出的客服腔/播报腔挡掉，宁可退回模板。"""
+        value = str(text or "").strip().strip('"').strip("“”").strip()
+        value = re.sub(r"^(?:天气提醒|提醒你|温馨提示)[：:，,\s]*", "", value)
+        for bad in ("请注意", "建议您", "提醒您", "天气预报", "温馨提示", "作为AI", "作为 AI", "助手"):
+            if bad in value:
+                return ""
+        if len(value) > 80:
+            return ""
+        return value
+
+    async def _weather_alert_text(self, umo, tomorrow, fallback):
+        """用她自己的语气说这句提醒；模型失败就退回模板。"""
+        facts = []
+        day_text = (str(tomorrow.get("textDay") or "") + " " + str(tomorrow.get("textNight") or "")).strip()
+        if day_text:
+            facts.append("明天天气：" + day_text)
+        if tomorrow.get("tempMax"):
+            facts.append("明天最高 " + str(tomorrow.get("tempMax")) + "℃")
+        recent_lines = []
+        try:
+            for row in self.db.recent_messages(umo, 8):
+                content = str(row.get("content") or "").strip()
+                if not content:
+                    continue
+                who = "他" if str(row.get("role") or "") == "user" else "你"
+                recent_lines.append(who + "：" + content[:80])
+        except Exception:
+            recent_lines = []
+        try:
+            state_text = self.state.prompt_text(self.state.snapshot())
+        except Exception:
+            state_text = ""
+        system = (
+            await self.llm.persona(umo) + "\n\n"
+            "规则：你就是角色本人，只输出要发出去的消息，不要解释、不要旁白、不要复述数据。"
+        )
+        prompt = (
+            (state_text + "\n" if state_text else "")
+            + "事实：\n" + "\n".join(facts) + "\n"
+            + ("最近聊天：\n" + "\n".join(recent_lines) + "\n" if recent_lines else "")
+            + "参考说法（不要照抄）：" + fallback + "\n"
+            + "请用你平时跟他说话的语气，主动提一句明天的天气。\n"
+            "要求：只发一句，20-30 字以内；像真人随口说的，不要像天气播报、客服或助手；\n"
+            "不要用“提醒您/请注意/建议您/记得带伞哦/注意保暖”这种模板，不要罗列温度风力；\n"
+            "可以带一点情绪（关心、吐槽、嫌麻烦都行），但别煽情；不要问“要不要带伞”，不要重复你刚说过的话。"
+        )
+        try:
+            text = await self.llm.chat(umo, system, prompt, limit=60)
+        except Exception as exc:
+            logger.debug("[amo] 天气提醒文案生成失败: %s" % exc)
+            text = ""
+        text = self._clean_weather_alert(text)
+        return text or fallback
+
+    async def _maybe_weather_alert(self):
+        """明天天气变坏时，到点提醒一次（每天最多一条）。"""
+        if not self.cfg_bool("weather_alert_enabled", False):
+            return
+        key = self.cfg_str("hefeng_key", "")
+        if not key:
+            return
+        target = self.cfg_str("weather_alert_time", "20:00")
+        try:
+            hour, minute = [int(x) for x in str(target).split(":")[:2]]
+        except Exception:
+            hour, minute = 20, 0
+        now = datetime.now()
+        if now.hour * 60 + now.minute < hour * 60 + minute:
+            return
+        today = today_str()
+        if str(self.db.kv_get("weather_alert_sent", "") or "") == today:
+            return
+        city = (
+            self.cfg_str("weather_city", "").strip()
+            or str((getattr(self.state, "schedule_profile", {}) or {}).get("city") or "").strip()
+            or "贵阳"
+        )
+        items = await self.state._fetch_qweather_daily(key, city, 3)
+        if len(items) < 2:
+            return
+        text = evaluate_weather_alert(
+            items[0], items[1], self.cfg_int("weather_alert_temp_drop", 8)
+        )
+        self.db.kv_set("weather_alert_checked", today)
+        if not text:
+            logger.info("[amo] 天气提醒：明天天气正常，不提醒")
+            return
+        umos = self._weather_alert_umos()
+        if not umos:
+            logger.info("[amo] 天气提醒：没有可发送的会话")
+            return
+        text = await self._weather_alert_text(umos[0], items[1], text)
+        if self.cfg_bool("weather_alert_dry_run", False):
+            logger.info("[amo] 天气提醒（试跑，不发送）: %s -> %s" % (text, umos[0]))
+            self.db.kv_set("weather_alert_sent", today)
+            return
+        # 一个一个平台试：某个平台的会话失效时换下一个，而不是整天发不出去
+        sent_umo = ""
+        for umo in umos:
+            if await self._send_to_umo(umo, text):
+                sent_umo = umo
+                break
+            logger.warning("[amo] 天气提醒这个平台发送失败，换下一个: %s" % umo)
+        if sent_umo:
+            self.db.kv_set("weather_alert_sent", today)
+            self.db.kv_set("weather_alert_open", today)
+            logger.info("[amo] 天气提醒已发送: %s -> %s" % (text, sent_umo))
+        else:
+            logger.warning("[amo] 天气提醒所有平台都失败: %s" % umos)
 
     async def _maybe_proactive(self):
         quiet = quiet_now(self.cfg_str("quiet_hours", "23:30-07:30"))

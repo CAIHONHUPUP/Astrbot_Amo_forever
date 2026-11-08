@@ -1,4 +1,31 @@
 {
+  "weather_city_name": {
+    "type": "string",
+    "description": "城市显示名",
+    "default": "",
+    "hint": "weather_city 填 LocationID（数字）时用，比如填 101281601、这里填东莞；留空就显示城市原值"
+  },
+  "weather_alert_enabled": {
+    "type": "bool",
+    "description": "明晚天气变坏时提醒一次",
+    "default": false,
+    "hint": "每晚 weather_alert_time 之后检查一次明天的预报；下雨/下雪/打雷或明显降温时主动发一条"
+  },
+  "weather_alert_time": {
+    "type": "string",
+    "description": "提醒时间（HH:MM）",
+    "default": "20:00"
+  },
+  "weather_alert_temp_drop": {
+    "type": "int",
+    "description": "降温多少度算变坏",
+    "default": 8
+  },
+  "weather_alert_dry_run": {
+    "type": "bool",
+    "description": "天气提醒只写日志不发送（调试用）",
+    "default": false
+  },
   "hefeng_key": {
     "type": "string",
     "description": "和风天气 Key",
