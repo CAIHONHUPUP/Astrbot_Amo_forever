@@ -19,7 +19,7 @@ import re
 import sqlite3
 import threading
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 try:
     import astrbot.api.message_components as Comp
@@ -756,6 +756,165 @@ def typing_delay_ms(text, base=700, per_char=400, cap=20000):
 # ---------------------------------------------------------------------------
 # 数据库
 # ---------------------------------------------------------------------------
+
+# ---- 用量统计（读 AstrBot 的 data_v4.db provider_stats） ----
+USAGE_PEAK_HOURS = ((9, 12), (14, 18))
+USAGE_DEFAULT_PRICES = {
+    "hit_peak": 0.04, "hit_idle": 0.02,
+    "miss_peak": 2.0, "miss_idle": 1.0,
+    "out_peak": 8.0, "out_idle": 4.0,
+}
+
+
+def usage_is_peak(ts):
+    """北京时间工作日 9-12、14-18 为高峰；周末全天算空闲（法定节假日未处理）。"""
+    try:
+        dt = datetime.fromtimestamp(float(ts), timezone.utc) + timedelta(hours=8)
+    except Exception:
+        return False
+    if dt.weekday() >= 5:
+        return False
+    return any(start <= dt.hour < end for start, end in USAGE_PEAK_HOURS)
+
+
+def _usage_row_ts(start_time, created_at):
+    try:
+        value = float(start_time or 0)
+        if value > 0:
+            return value
+    except Exception:
+        pass
+    try:
+        dt = datetime.fromisoformat(str(created_at or "").strip())
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except Exception:
+        return 0.0
+
+
+def _empty_bucket():
+    return {"calls": 0, "input_miss": 0, "input_cached": 0, "output": 0}
+
+
+def summarize_token_usage(db_path, start_ts=None, end_ts=None, model_filter=None):
+    """按 provider_stats 汇总 token。start_ts/end_ts 为 epoch 秒，None 表示不限。"""
+    usage = _empty_bucket()
+    usage.update({"cache_rate": 0.0, "peak": _empty_bucket(), "idle": _empty_bucket(), "by_model": {}})
+    if not db_path or not os.path.exists(db_path):
+        usage["error"] = "找不到 AstrBot 数据库"
+        return usage
+    try:
+        conn = sqlite3.connect("file:%s?mode=ro" % str(db_path).replace("\\", "/"), uri=True)
+    except Exception as exc:
+        usage["error"] = "打开数据库失败: %s" % exc
+        return usage
+    try:
+        rows = conn.execute(
+            "SELECT provider_model, token_input_other, token_input_cached, token_output, "
+            "start_time, created_at FROM provider_stats"
+        ).fetchall()
+    except Exception as exc:
+        usage["error"] = "读取 provider_stats 失败: %s" % exc
+        conn.close()
+        return usage
+    conn.close()
+
+    for model, miss, cached, out, start_time, created_at in rows:
+        model = str(model or "")
+        if model_filter and model_filter not in model:
+            continue
+        ts = _usage_row_ts(start_time, created_at)
+        if start_ts is not None and ts and ts < float(start_ts):
+            continue
+        if end_ts is not None and ts and ts >= float(end_ts):
+            continue
+        miss = int(miss or 0)
+        cached = int(cached or 0)
+        out = int(out or 0)
+        usage["calls"] += 1
+        usage["input_miss"] += miss
+        usage["input_cached"] += cached
+        usage["output"] += out
+        bucket = usage["peak"] if usage_is_peak(ts) else usage["idle"]
+        bucket["calls"] += 1
+        bucket["input_miss"] += miss
+        bucket["input_cached"] += cached
+        bucket["output"] += out
+        item = usage["by_model"].setdefault(model or "unknown", _empty_bucket())
+        item["calls"] += 1
+        item["input_miss"] += miss
+        item["input_cached"] += cached
+        item["output"] += out
+
+    total_in = usage["input_miss"] + usage["input_cached"]
+    usage["cache_rate"] = (usage["input_cached"] / total_in) if total_in else 0.0
+    usage["by_model"] = [
+        dict(model=key, **value) for key, value in
+        sorted(usage["by_model"].items(), key=lambda kv: -(kv[1]["input_miss"] + kv[1]["input_cached"]))
+    ]
+    return usage
+
+
+def usage_cost(usage, prices=None):
+    """按空闲/高峰两档单价（元/百万 token）估算花费。"""
+    table = dict(USAGE_DEFAULT_PRICES)
+    if isinstance(prices, dict):
+        for key, value in prices.items():
+            try:
+                table[key] = float(value)
+            except (TypeError, ValueError):
+                continue
+    cost = 0.0
+    for bucket, prefix in ((usage.get("peak") or {}, "peak"), (usage.get("idle") or {}, "idle")):
+        cost += float(bucket.get("input_cached") or 0) * table["hit_" + prefix] / 1e6
+        cost += float(bucket.get("input_miss") or 0) * table["miss_" + prefix] / 1e6
+        cost += float(bucket.get("output") or 0) * table["out_" + prefix] / 1e6
+    return round(cost, 6)
+
+
+def fetch_deepseek_balance(api_key, base_url="https://api.deepseek.com", timeout=8.0):
+    """查 DeepSeek 余额；失败返回 {ok: False, error}，不抛异常。"""
+    api_key = str(api_key or "").strip()
+    if not api_key:
+        return {"ok": False, "error": "未配置 API Key"}
+    import urllib.request
+    url = str(base_url or "https://api.deepseek.com").rstrip("/") + "/user/balance"
+    request = urllib.request.Request(url, headers={
+        "Authorization": "Bearer " + api_key,
+        "Accept": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:120]}
+    infos = payload.get("balance_infos") or []
+    chosen = None
+    for item in infos:
+        if str(item.get("currency") or "").upper() == "CNY":
+            chosen = item
+            break
+    if chosen is None and infos:
+        chosen = infos[0]
+    if not isinstance(chosen, dict):
+        return {"ok": False, "error": "返回里没有余额信息"}
+
+    def money(value):
+        try:
+            return round(float(value), 2)
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "ok": True,
+        "available": bool(payload.get("is_available")),
+        "currency": str(chosen.get("currency") or "CNY"),
+        "amount": money(chosen.get("total_balance")),
+        "granted": money(chosen.get("granted_balance")),
+        "topped_up": money(chosen.get("topped_up_balance")),
+    }
+
 
 class AmoDB:
     def __init__(self, plugin_dir):
@@ -7183,6 +7342,8 @@ class HumanCorePlugin(Star):
             ("/memory_candidates", self.api_memory_candidates, ["GET"]),
             ("/profiles_sync", self.api_profiles_sync, ["GET", "POST"]),
             ("/config", self.api_config, ["GET"]),
+            ("/usage", self.api_usage, ["GET"]),
+            ("/balance", self.api_balance, ["GET"]),
             ("/config/save", self.api_config_save, ["GET", "POST"]),
             ("/config_save", self.api_config_save, ["GET", "POST"]),
             ("/profile/save", self.api_profile_save, ["GET", "POST"]),
@@ -7377,6 +7538,78 @@ class HumanCorePlugin(Star):
     async def api_config(self):
         await self._ensure_ready()
         return {"code": 0, "data": {"items": self._config_schema_items()}}
+
+    # ---- 用量 / 余额 ----
+    def _usage_db_path(self):
+        try:
+            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+            return os.path.join(str(get_astrbot_data_path()), "data_v4.db")
+        except Exception:
+            try:
+                data_dir = os.path.dirname(os.path.dirname(os.path.dirname(str(self.db.path))))
+                return os.path.join(data_dir, "data_v4.db")
+            except Exception:
+                return ""
+
+    def _deepseek_api_key(self):
+        key = str(self.cfg_str("deepseek_api_key", "") or "").strip()
+        if key:
+            return key
+        for name in ("DEEPSEEK_API_KEY", "COMPANION_V2_BALANCE_API_KEY"):
+            value = str(os.environ.get(name, "") or "").strip()
+            if value:
+                return value
+        return ""
+
+    def _usage_prices(self):
+        prices = {}
+        for key in ("hit_peak", "hit_idle", "miss_peak", "miss_idle", "out_peak", "out_idle"):
+            prices[key] = self.cfg_float("usage_price_" + key, USAGE_DEFAULT_PRICES[key])
+        return prices
+
+    def _usage_start_of_today(self):
+        now = datetime.now()
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        return start.timestamp()
+
+    async def _balance_cached(self):
+        """余额 60 秒内复用，避免面板每刷一次就打一次外网。"""
+        now = time.time()
+        cache = getattr(self, "_balance_cache", None)
+        if isinstance(cache, dict) and now - float(cache.get("at") or 0) < 60:
+            return cache.get("data") or {"ok": False, "error": "查询失败"}
+        key = self._deepseek_api_key()
+        data = await asyncio.to_thread(fetch_deepseek_balance, key)
+        self._balance_cache = {"at": now, "data": data}
+        return data
+
+    async def api_usage(self):
+        await self._ensure_ready()
+        if not self.cfg_bool("usage_stats_enabled", True):
+            return {"code": 0, "data": {"enabled": False}}
+        db_path = self._usage_db_path()
+        prices = self._usage_prices()
+        day_start = self._usage_start_of_today()
+
+        def build():
+            result = {"enabled": True, "currency": "元", "prices": prices}
+            for label, start in (("today", day_start), ("week", day_start - 6 * 86400), ("total", None)):
+                usage = summarize_token_usage(db_path, start)
+                usage["cost"] = usage_cost(usage, prices)
+                result[label] = usage
+            return result
+
+        data = await asyncio.to_thread(build)
+        if self.cfg_bool("deepseek_balance_enabled", True):
+            data["balance"] = await self._balance_cached()
+        else:
+            data["balance"] = {"ok": False, "error": "余额查询已关闭"}
+        return {"code": 0, "data": data}
+
+    async def api_balance(self):
+        await self._ensure_ready()
+        data = await self._balance_cached()
+        return {"code": 0, "data": data}
 
     async def api_config_save(self):
         await self._ensure_ready()

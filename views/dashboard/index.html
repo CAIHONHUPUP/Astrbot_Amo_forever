@@ -299,6 +299,7 @@
       <button class="tab" data-tab="settings" data-group="私聊">私聊</button>
       <button class="tab" data-tab="settings" data-group="心流">心流</button>
       <button class="tab" data-tab="settings" data-group="分段">分段</button>
+      <button class="tab" data-tab="usage">用量</button>
     </nav>
 
     <div id="tab-status" class="tab-panel">
@@ -428,6 +429,49 @@
           <button id="btnSaveRelation">添加 / 更新</button>
         </div>
         <div id="relationList" class="profile-list"><div class="sub">加载中…</div></div>
+      </section>
+    </div>
+
+    <div id="tab-usage" class="tab-panel" hidden>
+      <section class="card">
+        <div class="row between">
+          <div>
+            <div class="label">对话用量</div>
+            <div class="sub" id="usageRange">今日 · 最近 7 天 · 累计（只读 AstrBot 统计）</div>
+          </div>
+          <button class="tab" id="usageRefresh" type="button">刷新</button>
+        </div>
+        <div class="status-grid">
+          <div class="status-item">
+            <div class="label">今日输入</div>
+            <div class="value" id="usageIn">—</div>
+            <div class="sub" id="usageInSub">未命中 / 命中缓存</div>
+          </div>
+          <div class="status-item">
+            <div class="label">今日输出</div>
+            <div class="value" id="usageOut">—</div>
+            <div class="sub" id="usageCalls">— 次调用</div>
+          </div>
+          <div class="status-item">
+            <div class="label">缓存命中率</div>
+            <div class="value" id="usageCache">—</div>
+            <div class="track status-track"><span class="fill" id="usageCacheBar"></span></div>
+            <div class="sub" id="usageWeek">近 7 天 —</div>
+          </div>
+          <div class="status-item">
+            <div class="label">今日花费</div>
+            <div class="value" id="usageCost">—</div>
+            <div class="sub" id="usageCostSub">按空闲/高峰单价估算</div>
+          </div>
+        </div>
+        <div class="row between" style="margin-top:14px">
+          <div>
+            <div class="label">DeepSeek 余额</div>
+            <div class="sub" id="balanceSub">—</div>
+          </div>
+          <div class="value" id="balanceValue">—</div>
+        </div>
+        <div class="sub" id="usageModels" style="margin-top:10px"></div>
       </section>
     </div>
 
@@ -1184,6 +1228,68 @@
       return [];
     }
 
+    let usageLoaded = false;
+
+    function usageNum(value) {
+      const number = Number(value || 0);
+      if (number >= 1000000) return (number / 1000000).toFixed(2) + "M";
+      if (number >= 1000) return (number / 1000).toFixed(1) + "k";
+      return String(number);
+    }
+
+    async function loadUsage(force) {
+      const setText = (id, text) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = text;
+      };
+      if (usageLoaded && !force) return;
+      setText("usageIn", "读取中…");
+      try {
+        const data = objectFrom(await call("usage")) || {};
+        if (data.enabled === false) {
+          setText("usageIn", "已关闭");
+          setText("usageInSub", "在设置里打开 usage_stats_enabled");
+          return;
+        }
+        usageLoaded = true;
+        const today = data.today || {};
+        if (today.error) {
+          setText("usageInSub", String(today.error));
+        }
+        const week = data.week || {};
+        const total = data.total || {};
+        const money = (value) => "¥" + Number(value || 0).toFixed(3);
+        setText("usageIn", usageNum(today.input_miss) + " / " + usageNum(today.input_cached));
+        setText("usageInSub", "未命中 / 命中缓存");
+        setText("usageOut", usageNum(today.output));
+        setText("usageCalls", (today.calls || 0) + " 次调用");
+        const rate = Number(today.cache_rate || 0);
+        setText("usageCache", (rate * 100).toFixed(1) + "%");
+        const bar = document.getElementById("usageCacheBar");
+        if (bar) bar.style.width = Math.max(2, Math.min(100, rate * 100)) + "%";
+        setText("usageWeek", "近 7 天 " + ((Number(week.cache_rate || 0)) * 100).toFixed(1) + "%");
+        setText("usageCost", money(today.cost));
+        setText("usageCostSub", "近 7 天 " + money(week.cost) + " · 累计 " + money(total.cost));
+        const balance = data.balance || {};
+        if (balance.ok) {
+          setText("balanceValue", (balance.currency === "USD" ? "$" : "¥") + Number(balance.amount || 0).toFixed(2));
+          setText("balanceSub", (balance.available === false ? "余额不足 · " : "") +
+            "充值 " + Number(balance.topped_up || 0).toFixed(2) + " · 赠金 " + Number(balance.granted || 0).toFixed(2));
+        } else {
+          setText("balanceValue", "—");
+          setText("balanceSub", balance.error || "查询失败");
+        }
+        const models = Array.isArray(today.by_model) ? today.by_model : [];
+        setText("usageModels", models.length
+          ? "今日按模型：" + models.map((item) => (item.model || "?") + " " +
+              usageNum((item.input_miss || 0) + (item.input_cached || 0) + (item.output || 0))).join(" · ")
+          : "");
+      } catch (error) {
+        setText("usageIn", "读取失败");
+        setText("usageInSub", error && error.message ? error.message : "接口未就绪");
+      }
+    }
+
     function objectFrom(res) {
       if (res && res.data && typeof res.data === "object" && !Array.isArray(res.data)) return res.data;
       return res && typeof res === "object" ? res : {};
@@ -1203,6 +1309,7 @@
       if (name === "schedule") loadSchedule();
       if (name === "profiles") loadProfiles();
       if (name === "relations") loadRelations();
+      if (name === "usage") loadUsage();
       if (name === "settings") {
         if (group) settingsGroupFilter = group;
         if (!configItems.length) loadSettings();
@@ -1210,6 +1317,8 @@
       }
     }
     tabButtons.forEach((button) => button.addEventListener("click", () => showTab(button.dataset.tab, button.dataset.group, button)));
+    const usageRefreshButton = document.getElementById("usageRefresh");
+    if (usageRefreshButton) usageRefreshButton.addEventListener("click", () => loadUsage(true));
 
     let memoryCandidates = [];
     let profilesCache = [];
