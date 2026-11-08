@@ -4656,7 +4656,6 @@ class HumanCorePlugin(Star):
             names = set()
         cache[umo] = (now, names)
         return uid in names
-        return False
 
     # ---------- 消息学习 ----------
     async def _learn(self, event, text):
