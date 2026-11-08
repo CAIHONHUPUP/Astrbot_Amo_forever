@@ -203,9 +203,6 @@
   "companion_memory_plugin_name": {
     "type": "string",
     "description": "挂载的记忆插件",
-    "options": [
-      "auto"
-    ],
     "default": "auto",
     "hint": "auto=自动检测已安装的插件；面板会列出你装的所有插件，选哪个就用哪个的记忆和画像。",
     "_special": "select_memory_plugin"
