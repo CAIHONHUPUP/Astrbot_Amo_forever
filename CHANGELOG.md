@@ -1,5 +1,22 @@
 # Changelog
 
+## 5.6.2
+
+### 安全与稳定性
+
+- **P0-1** `/config` 不再明文下发密钥：`hefeng_key` / `deepseek_api_key` 打码成 `abcd****wxyz`，
+  面板回传打码值或留空时不会被写回，避免把真 key 覆盖成星号；
+- **P0-2** 所有写操作路由只接受 POST（删档案、存配置、改心情、发消息、重建日程/世界观/知识库），
+  并加同源校验：跨站 Origin/Referer 直接 403，`<img src>`、聊天预览、外链都触发不了；
+- **P0-3** `/say` 只允许发到已知会话（画像里的私聊/群），不再能指定任意 umo；
+- **P1-4** 消息主链路、后台循环改用 `logger.exception`，异常不再只留一行字符串、堆栈不丢；
+- **P1-5** 数据库连接重开加锁（双重检查），避免并发各自 connect、连接泄漏和 `database is locked`；
+- **P1-6** `_is_admin` 的 `get_config` 结果按会话缓存 60 秒，不再每条消息都读一次；
+- **P1-7** 清理旧 Web API 路由失败时改为 warning，并提示“重载后如遇 closed database 请完整重启”；
+- **P2-9** 面板礼物页错误提示改用 `textContent`，不再用 `innerHTML` 拼外部字符串；
+- **P2-10** 新增 `tools/check_version.py`：四处版本号必须一致、尾号偶数、避开 1 和 7；
+- **P2-11** 新增 `requirements-dev.txt` 和 `.github/workflows/test.yml`，跑 `pytest tests`。
+
 ## 5.6.1
 
 ### 群聊先认人，再判断这句话是不是在跟她说

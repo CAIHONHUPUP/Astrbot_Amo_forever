@@ -802,13 +802,24 @@
       throw new Error(errors[0] || "无法连接插件接口");
     }
 
+    // 写操作在后端只接受 POST：这里强制带上 body，避免面板按钮变成 GET 被拒
+    const WRITE_ACTIONS = new Set([
+      "schedule_regen", "kb_regen", "scenic_kb_regen", "worldview_regen",
+      "mood_update", "config_save", "profile_save", "profile_delete",
+      "relation_save", "relation_delete", "memory_add", "memory_delete",
+      "say", "city_set", "profiles_sync",
+    ]);
+
     async function call(action, payload) {
-      const bridgeResult = await bridgeCall(action, payload);
+      const body = (payload === undefined || payload === null)
+        ? (WRITE_ACTIONS.has(action) ? {} : payload)
+        : payload;
+      const bridgeResult = await bridgeCall(action, body);
       if (bridgeResult && !bridgeResult.__error) return bridgeResult;
       if (window.parent && window.parent !== window) {
         throw new Error((bridgeResult && bridgeResult.__error) || "页面桥接未就绪，请从插件详情→查看页面重新打开");
       }
-      return await httpCall(action, payload);
+      return await httpCall(action, body);
     }
 
 
@@ -1553,7 +1564,11 @@
         const sub = document.getElementById("giftSub");
         if (sub) sub.textContent = "心愿 " + wishes.length + " 件 · 礼物 " + gifts.length + " 件";
       } catch (error) {
-        wishesBox.innerHTML = '<div class="sub">读取失败：' + (error && error.message ? error.message : "接口未就绪") + "</div>";
+        wishesBox.textContent = "";
+        const sub = document.createElement("div");
+        sub.className = "sub";
+        sub.textContent = "读取失败：" + (error && error.message ? error.message : "接口未就绪");
+        wishesBox.appendChild(sub);
       }
     }
 

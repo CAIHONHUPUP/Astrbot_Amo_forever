@@ -133,7 +133,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.6.1"
+PLUGIN_VERSION = "5.6.2"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -1308,6 +1308,10 @@ class AmoDB:
         self._open()
 
     def _open(self):
+        with self.lock:
+            self._open_unlocked()
+
+    def _open_unlocked(self):
         """打开（或重新打开）连接。
 
         插件重载时 AstrBot 可能先调用旧实例的 terminate()，而旧实例注册的
@@ -1323,8 +1327,12 @@ class AmoDB:
 
     @property
     def conn(self):
+        # Web 协程 + 后台 _tick + _ensure_ready 可能同时进来；不加锁会各自 connect，
+        # 后一个覆盖前一个，先前的连接泄漏，PRAGMA journal_mode=WAL 还可能出现 database is locked。
         if self._conn is None:
-            self._open()
+            with self.lock:
+                if self._conn is None:
+                    self._open()
         return self._conn
 
     def init(self):
@@ -4626,14 +4634,28 @@ class HumanCorePlugin(Star):
         if uid in self.admin_uids:
             return True
         try:
-            cfg = self.context.get_config(event.unified_msg_origin)
+            umo = str(event.unified_msg_origin or "")
+        except Exception:
+            umo = ""
+        # 每条消息都会走这里，get_config 没必要每次读：按会话缓存 60 秒
+        cache = getattr(self, "_admin_cache", None)
+        if cache is None:
+            cache = {}
+            self._admin_cache = cache
+        now = time.time()
+        hit = cache.get(umo)
+        if hit and now - hit[0] < 60:
+            return uid in hit[1]
+        try:
+            cfg = self.context.get_config(umo)
             admins = cfg.get("admins_id", []) if cfg else []
             if isinstance(admins, str):
                 admins = [item.strip() for item in admins.split(",") if item.strip()]
-            if uid in [str(item) for item in (admins or [])]:
-                return True
+            names = {str(item) for item in (admins or [])}
         except Exception:
-            pass
+            names = set()
+        cache[umo] = (now, names)
+        return uid in names
         return False
 
     # ---------- 消息学习 ----------
@@ -6383,8 +6405,8 @@ class HumanCorePlugin(Star):
         try:
             await self._ensure_ready()
             await self._handle_message(event)
-        except Exception as exc:
-            logger.error("[amo] 消息处理异常: %s" % exc)
+        except Exception:
+            logger.exception("[amo] 消息处理异常")
 
     def _relation_network_text(self, uid):
         """给当前用户生成两跳内的关系网摘要；只读。"""
@@ -7639,8 +7661,8 @@ class HumanCorePlugin(Star):
                 await self._tick()
             except asyncio.CancelledError:
                 return
-            except Exception as exc:
-                logger.error("[amo] 后台任务异常: %s" % exc)
+            except Exception:
+                logger.exception("[amo] 后台任务异常")
             try:
                 await asyncio.sleep(self.cfg_int("loop_interval_seconds", 30))
             except asyncio.CancelledError:
@@ -8962,59 +8984,59 @@ class HumanCorePlugin(Star):
                     )
                 ]
         except Exception as exc:
-            logger.debug("[amo] 清理旧 Web API 路由失败: %s" % exc)
+            logger.warning("[amo] 清理旧 Web API 路由失败（插件重载后如遇 closed database，请完整重启）: %s" % exc)
         routes = [
             ("/status", self.api_status, ["GET"]),
             ("/get_status", self.api_get_status, ["GET"]),
             ("/profiles", self.api_profiles, ["GET", "POST"]),
             ("/get_profile", self.api_get_profile, ["GET", "POST"]),
-            ("/profiles/sync", self.api_profiles_sync, ["GET", "POST"]),
+            ("/profiles/sync", self.api_profiles_sync, ["POST"]),
             ("/relations", self.api_relations, ["GET", "POST"]),
-            ("/relation/save", self.api_relation_save, ["GET", "POST"]),
-            ("/relation_save", self.api_relation_save, ["GET", "POST"]),
-            ("/relation/delete", self.api_relation_delete, ["GET", "POST"]),
-            ("/relation_delete", self.api_relation_delete, ["GET", "POST"]),
+            ("/relation/save", self.api_relation_save, ["POST"]),
+            ("/relation_save", self.api_relation_save, ["POST"]),
+            ("/relation/delete", self.api_relation_delete, ["POST"]),
+            ("/relation_delete", self.api_relation_delete, ["POST"]),
             ("/memory/candidates", self.api_memory_candidates, ["GET"]),
             ("/memory_candidates", self.api_memory_candidates, ["GET"]),
-            ("/profiles_sync", self.api_profiles_sync, ["GET", "POST"]),
+            ("/profiles_sync", self.api_profiles_sync, ["POST"]),
             ("/config", self.api_config, ["GET"]),
             ("/city/search", self.api_city_search, ["GET", "POST"]),
-            ("/city/set", self.api_city_set, ["GET", "POST"]),
+            ("/city/set", self.api_city_set, ["POST"]),
             ("/usage", self.api_usage, ["GET"]),
             ("/providers", self.api_providers, ["GET"]),
             ("/providers_list", self.api_providers, ["GET"]),
             ("/balance", self.api_balance, ["GET"]),
-            ("/config/save", self.api_config_save, ["GET", "POST"]),
-            ("/config_save", self.api_config_save, ["GET", "POST"]),
-            ("/profile/save", self.api_profile_save, ["GET", "POST"]),
-            ("/profile_save", self.api_profile_save, ["GET", "POST"]),
-            ("/profile/delete", self.api_profile_delete, ["GET", "POST"]),
-            ("/profile_delete", self.api_profile_delete, ["GET", "POST"]),
+            ("/config/save", self.api_config_save, ["POST"]),
+            ("/config_save", self.api_config_save, ["POST"]),
+            ("/profile/save", self.api_profile_save, ["POST"]),
+            ("/profile_save", self.api_profile_save, ["POST"]),
+            ("/profile/delete", self.api_profile_delete, ["POST"]),
+            ("/profile_delete", self.api_profile_delete, ["POST"]),
             ("/memories", self.api_memories, ["GET", "POST"]),
             ("/chat/history", self.api_chat_history, ["GET", "POST"]),
             ("/chat_history", self.api_chat_history, ["GET", "POST"]),
-            ("/memory/add", self.api_memory_add, ["GET", "POST"]),
-            ("/memory_add", self.api_memory_add, ["GET", "POST"]),
-            ("/memory/delete", self.api_memory_delete, ["GET", "POST"]),
-            ("/memory_delete", self.api_memory_delete, ["GET", "POST"]),
+            ("/memory/add", self.api_memory_add, ["POST"]),
+            ("/memory_add", self.api_memory_add, ["POST"]),
+            ("/memory/delete", self.api_memory_delete, ["POST"]),
+            ("/memory_delete", self.api_memory_delete, ["POST"]),
             ("/schedule", self.api_schedule, ["GET", "POST"]),
             ("/schedule/detail", self.api_schedule_detail, ["GET", "POST"]),
             ("/schedule_detail", self.api_schedule_detail, ["GET", "POST"]),
-            ("/mood/update", self.api_mood_update, ["GET", "POST"]),
-            ("/mood_update", self.api_mood_update, ["GET", "POST"]),
-            ("/schedule/regen", self.api_schedule_regen, ["GET", "POST"]),
-            ("/kb/regen", self.api_kb_regen, ["GET", "POST"]),
-            ("/scenic_kb/regen", self.api_scenic_kb_regen, ["GET", "POST"]),
-            ("/scenic_kb_regen", self.api_scenic_kb_regen, ["GET", "POST"]),
-            ("/kb_regen", self.api_kb_regen, ["GET", "POST"]),
-            ("/schedule_regen", self.api_schedule_regen, ["GET", "POST"]),
+            ("/mood/update", self.api_mood_update, ["POST"]),
+            ("/mood_update", self.api_mood_update, ["POST"]),
+            ("/schedule/regen", self.api_schedule_regen, ["POST"]),
+            ("/kb/regen", self.api_kb_regen, ["POST"]),
+            ("/scenic_kb/regen", self.api_scenic_kb_regen, ["POST"]),
+            ("/scenic_kb_regen", self.api_scenic_kb_regen, ["POST"]),
+            ("/kb_regen", self.api_kb_regen, ["POST"]),
+            ("/schedule_regen", self.api_schedule_regen, ["POST"]),
             ("/weather", self.api_weather, ["GET"]),
             ("/gift", self.api_gift, ["GET"]),
             ("/gift/list", self.api_gift, ["GET"]),
             ("/worldview", self.api_worldview, ["GET"]),
-            ("/worldview/regen", self.api_worldview_regen, ["GET", "POST"]),
-            ("/worldview_regen", self.api_worldview_regen, ["GET", "POST"]),
-            ("/say", self.api_say, ["GET", "POST"]),
+            ("/worldview/regen", self.api_worldview_regen, ["POST"]),
+            ("/worldview_regen", self.api_worldview_regen, ["POST"]),
+            ("/say", self.api_say, ["POST"]),
             ("/refresh_status", self.api_refresh_status, ["GET"]),
         ]
         for prefix in prefixes:
@@ -9025,7 +9047,38 @@ class HumanCorePlugin(Star):
                 self._safe_register("/" + clean + path, handler, methods, path)
         # 不注册无前缀的旧路由，避免和其他插件或 AstrBot 自带路由冲突。
 
+    def _web_guard(self, handler):
+        """写操作的前置检查：拒绝跨站 Origin/Referer，拒绝 GET 触发写。
+
+        这不是完整的鉴权（AstrBot 侧有它自己的登录态），但能挡住
+        <img src>/聊天预览/外链这类最容易被利用的触发方式。
+        """
+        async def wrapper(*args, **kwargs):
+            try:
+                method = ""
+                origin = ""
+                host = ""
+                if web_request is not None:
+                    method = str(getattr(web_request, "method", "") or "").upper()
+                    headers = getattr(web_request, "headers", None)
+                    if headers is not None:
+                        origin = str(headers.get("origin") or headers.get("referer") or "")
+                        host = str(headers.get("host") or "")
+                if method and method != "POST":
+                    return {"code": 403, "msg": "该操作只接受 POST"}
+                if origin and host:
+                    from urllib.parse import urlparse
+                    if urlparse(origin).netloc and urlparse(origin).netloc != host:
+                        logger.warning("[amo] 拒绝跨站 Web 写操作: %s -> %s" % (origin, host))
+                        return {"code": 403, "msg": "forbidden"}
+            except Exception as exc:
+                logger.debug("[amo] Web 守卫检查失败（放行）: %s" % exc)
+            return await handler(*args, **kwargs)
+        return wrapper
+
     def _safe_register(self, route, handler, methods, desc):
+        if "GET" not in [str(item).upper() for item in (methods or [])]:
+            handler = self._web_guard(handler)
         try:
             self.context.register_web_api(route, handler, methods, desc)
             return True
@@ -9099,6 +9152,18 @@ class HumanCorePlugin(Star):
             logger.warning("[amo] 读取配置 schema 失败: %s" % exc)
             return {}
 
+    # 这些值绝不能随 /config 明文下发（GET 无 body、无 CSRF 校验）
+    SENSITIVE_KEYS = {"hefeng_key", "deepseek_api_key"}
+
+    @staticmethod
+    def _mask_secret(value):
+        text = str(value or "")
+        if not text:
+            return ""
+        if len(text) <= 8:
+            return "*" * len(text)
+        return text[:4] + "*" * (len(text) - 8) + text[-4:]
+
     def _config_schema_items(self):
         schema = self._schema_map()
         items = []
@@ -9126,11 +9191,22 @@ class HumanCorePlugin(Star):
                 "options": meta.get("options") or [],
                 "special": meta.get("_special", ""),
                 "group": group,
-                "value": self.cfg(key, meta.get("default")),
+                "value": (
+                    self._mask_secret(self.cfg(key, meta.get("default")))
+                    if key in self.SENSITIVE_KEYS
+                    else self.cfg(key, meta.get("default"))
+                ),
+                "configured": (
+                    bool(str(self.cfg(key, "") or "").strip())
+                    if key in self.SENSITIVE_KEYS
+                    else True
+                ),
+                "sensitive": key in self.SENSITIVE_KEYS,
             })
         return items
 
     async def _apply_runtime_config(self):
+        self._admin_cache = {}
         self.bot_name = self.cfg_str("bot_name", self.bot_name) or "陪伴"
         self._persona_name_cache.clear()
         self.bot_aliases = [
@@ -9269,8 +9345,6 @@ class HumanCorePlugin(Star):
         data = await self._body()
         data = data if isinstance(data, dict) else {}
         text = str(data.get("city") or data.get("q") or "").strip()
-        if not text:
-            text = str(self._q("city", "") or "").strip()
         if not text:
             return {"code": 1, "msg": "请填写城市名"}
         hit = self._city_lookup(text)
@@ -9554,6 +9628,12 @@ class HumanCorePlugin(Star):
             except Exception as exc:
                 logger.warning("[amo] 配置 %s 值无效: %s" % (key, exc))
                 continue
+            if key in self.SENSITIVE_KEYS:
+                current = str(self.cfg(key, "") or "")
+                incoming = str(coerced or "")
+                # 面板回传的是打码串、或者干脆留空 → 当作"不修改"，别把真 key 覆盖掉
+                if not incoming or incoming == self._mask_secret(current):
+                    continue
             self.config[key] = coerced
             saved[key] = coerced
         if saved:
@@ -9614,8 +9694,8 @@ class HumanCorePlugin(Star):
         await self._ensure_ready()
         data = await self._body()
         data = data if isinstance(data, dict) else {}
-        uid = str(data.get("uid") or self._q("uid", "") or "").strip()
-        confirm = str(data.get("confirm") or self._q("confirm", "") or "").strip().lower()
+        uid = str(data.get("uid") or "").strip()
+        confirm = str(data.get("confirm") or "").strip().lower()
         if not uid:
             return {"code": 1, "msg": "缺少 uid"}
         if confirm not in ("1", "true", "yes", "on"):
@@ -9838,12 +9918,12 @@ class HumanCorePlugin(Star):
     async def api_profile_save(self):
         await self._ensure_ready()
         data = await self._body()
-        uid = str(data.get("uid") or self._q("uid", "") or "").strip()
+        uid = str(data.get("uid") or "").strip()
         if not uid:
             return {"code": 1, "msg": "uid 不能为空"}
         fields = {}
         for key in ("name", "alias", "birthday", "relation", "notes"):
-            value = data.get(key, self._q(key, None))
+            value = data.get(key, None)
             if value is not None:
                 fields[key] = str(value)[:100]
         if "relation" in fields and fields["relation"] not in RELATIONS:
@@ -9853,7 +9933,7 @@ class HumanCorePlugin(Star):
             if not match:
                 return {"code": 1, "msg": "生日格式应为 MM-DD 或 YYYY-MM-DD"}
             fields["birthday"] = "%02d-%02d" % (to_int(match.group(2)), to_int(match.group(3)))
-        affection = data.get("affection", self._q("affection", None))
+        affection = data.get("affection", None)
         if affection is not None:
             fields["affection"] = int(clamp(to_int(affection, 10), 0, 100))
         if not self.db.get_profile(uid):
@@ -9898,11 +9978,11 @@ class HumanCorePlugin(Star):
         """面板“添加记忆”改为写进外挂记忆插件。"""
         await self._ensure_ready()
         data = await self._body()
-        uid = str(data.get("uid") or self._q("uid", "") or "").strip()
-        content = str(data.get("content") or self._q("content", "") or "").strip()
+        uid = str(data.get("uid") or "").strip()
+        content = str(data.get("content") or "").strip()
         if not uid or not content:
             return {"code": 1, "msg": "uid 和 content 不能为空"}
-        tier = to_int(data.get("tier", self._q("tier", 1)), 1)
+        tier = to_int(data.get("tier", 1), 1)
         if self._external_memory_write(uid, content, str(data.get("kind", "manual")), tier):
             return {"code": 0, "msg": "已写入记忆插件"}
         return {"code": 1, "msg": "没有可写入的记忆插件，请先在设置里选择记忆来源"}
@@ -9941,8 +10021,8 @@ class HumanCorePlugin(Star):
     async def api_schedule_detail(self):
         await self._ensure_ready()
         data = await self._body()
-        day = str(data.get("date") or self._q("date", "") or today_str())
-        start_raw = str(data.get("start") or self._q("start", "") or "").strip()
+        day = str(data.get("date") or "").strip() or today_str()
+        start_raw = str(data.get("start") or "").strip()
         matched = re.match(r"^(\d{1,2})(?::(\d{2}))?$", start_raw)
         if not matched:
             return {"code": 1, "msg": "start 需要 HH:MM，例如 10:00"}
@@ -9959,7 +10039,7 @@ class HumanCorePlugin(Star):
                 break
         if item is None:
             return {"code": 1, "msg": "没有找到这一小时的日程：" + start}
-        force_raw = data.get("force", self._q("force", ""))
+        force_raw = data.get("force", "")
         force = str(force_raw).lower() in ("1", "true", "yes", "on")
         result = await self.state.expand_hour(day, item, items, force=force)
         payload = {"day": day, "start": item.get("start", start), "end": item.get("end", "")}
@@ -9982,7 +10062,7 @@ class HumanCorePlugin(Star):
             data = await self._body()
         except Exception:
             data = {}
-        style = str(data.get("dialect_style") or self._q("dialect_style", "") or "").strip()
+        style = str(data.get("dialect_style") or "").strip()
         if style in DIALECT_REGIONS:
             self.config["dialect_style"] = style
             try:
@@ -10033,11 +10113,26 @@ class HumanCorePlugin(Star):
         return {"code": 0, "data": worldview}
 
     async def api_say(self):
+        """面板「代她说一句」。只允许发到已知会话，参数只认 body。"""
         await self._ensure_ready()
         data = await self._body()
-        text = str(data.get("text") or self._q("text", "") or "").strip()
-        umo = str(data.get("umo") or self._q("umo", "") or self._last_umo)
+        text = str(data.get("text") or "").strip()
+        umo = str(data.get("umo") or "").strip() or str(self._last_umo or "")
         if not text:
             return {"code": 1, "msg": "text 不能为空"}
+        if not umo:
+            return {"code": 1, "msg": "没有可发送的会话"}
+        known = set()
+        try:
+            for profile in self.db.list_profiles(limit=500):
+                for key in ("private_umo", "last_group"):
+                    value = str(profile.get(key) or "").strip()
+                    if value:
+                        known.add(value)
+        except Exception as exc:
+            logger.debug("[amo] 读取已知会话失败: %s" % exc)
+        if umo not in known:
+            logger.warning("[amo] 拒绝向未知会话发送: %s" % umo)
+            return {"code": 1, "msg": "umo 不在已知会话内"}
         ok = await self._send_to_umo(umo, text)
         return {"code": 0 if ok else 1, "msg": "已发送" if ok else "发送失败"}
