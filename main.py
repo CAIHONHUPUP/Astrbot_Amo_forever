@@ -133,7 +133,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.9.0"
+PLUGIN_VERSION = "5.9.2"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -5620,8 +5620,113 @@ class HumanCorePlugin(Star):
             str(relation or "朋友"), str(note or ""),
         )
 
+    async def _data_mem_list(self, uid, keyword="", limit=50):
+        """面板记忆页：直接列出记忆终端里的条目。"""
+        mem = self._data_mem()
+        if mem is None or not uid:
+            return []
+        size = max(1, min(200, to_int(limit, 50)))
+        try:
+            if keyword:
+                recall = getattr(mem, "recall", None)
+                rows = await recall(self._data_bot_id(), str(uid), str(keyword), size, "", "") if callable(recall) else []
+            else:
+                lister = getattr(mem, "list_memories", None)
+                rows = await lister(self._data_bot_id(), str(uid), size) if callable(lister) else []
+        except Exception as exc:
+            logger.debug("[amo] 读取记忆终端失败: %s" % exc)
+            return []
+        return [dict(row) for row in (rows or []) if isinstance(row, dict)]
+
     async def _push_cache_to_data(self, key, value):
         await self._data_call("cache_set", self._data_bot_id(), str(key), value)
+
+    async def _data_memory_recall(self, uid, text, limit=6, event=None):
+        """从「记忆终端」（Astr_Amo_data）取回这个人的记忆。
+
+        陪伴自己不存记忆：装了就只问它要，没装才退回外挂记忆插件。
+        """
+        mem = self._data_mem()
+        if mem is None or not uid:
+            return []
+        recall = getattr(mem, "recall", None)
+        if not callable(recall):
+            return []
+        scope = "private"
+        group_id = ""
+        try:
+            if event is not None and not event.is_private_chat():
+                scope = "group"
+                group_id = str(event.get_group_id() or "")
+        except Exception:
+            pass
+        try:
+            rows = await recall(
+                self._data_bot_id(), str(uid), str(text or ""),
+                max(1, to_int(limit, 6)), scope, group_id,
+            )
+        except TypeError:
+            # 旧版没有 scope / group_id 参数
+            try:
+                rows = await recall(
+                    self._data_bot_id(), str(uid), str(text or ""), max(1, to_int(limit, 6))
+                )
+            except Exception as exc:
+                logger.debug("[amo] 记忆终端召回失败: %s" % exc)
+                return []
+        except Exception as exc:
+            logger.debug("[amo] 记忆终端召回失败: %s" % exc)
+            return []
+        items = []
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            content = re.sub(r"\s+", " ", str(row.get("content") or "")).strip()
+            if len(content) < 2:
+                continue
+            importance = to_float(row.get("importance"), 0.5)
+            items.append({
+                "content": content[:500],
+                "tier": 2 if importance >= 0.72 else (1 if importance >= 0.42 else 0),
+                "kind": str(row.get("kind") or "fact"),
+                "source": "amo_data",
+                "memory_type": str(row.get("kind") or ""),
+                "created_at": row.get("created_at", 0),
+                "hits": 0,
+                "expires_at": None,
+            })
+        return items
+
+    async def _data_memory_write(self, uid, content, kind="fact", tier=1):
+        """把一条记忆交给「记忆终端」写入；它只负责存，陪伴不落本地库。"""
+        mem = self._data_mem()
+        if mem is None or not uid:
+            return False
+        content = re.sub(r"\s+", " ", str(content or "")).strip()
+        if not content:
+            return False
+        remember = getattr(mem, "remember", None)
+        if not callable(remember):
+            return False
+        level = to_int(tier, 1)
+        importance = 0.75 if level >= 2 else (0.55 if level == 1 else 0.35)
+        try:
+            result = await remember(
+                self._data_bot_id(), str(uid), content,
+                kind=str(kind or "fact"), importance=importance,
+            )
+        except TypeError:
+            try:
+                result = await remember(self._data_bot_id(), str(uid), content)
+            except Exception as exc:
+                logger.debug("[amo] 记忆终端写入失败: %s" % exc)
+                return False
+        except Exception as exc:
+            logger.debug("[amo] 记忆终端写入失败: %s" % exc)
+            return False
+        if isinstance(result, dict):
+            return bool(result.get("ok", True))
+        return bool(result)
 
     async def _sync_with_data_plugin(self):
         """启动时双向同步：首次把本地画像/关系/日程缓存推过去，之后以插件为准补齐本地。"""
@@ -5733,10 +5838,28 @@ class HumanCorePlugin(Star):
     )
 
     def _external_memory_write(self, uid, content, kind="fact", tier=1):
-        """把一条记忆写进外挂记忆插件；写不进去就安静跳过（本插件不再存记忆）。"""
+        """把一条记忆交给「记忆终端」：装了 Astr_Amo_data 就写它，没装才写外挂记忆插件。
+
+        陪伴自己不存记忆，只负责把要记的东西丢过去。
+        """
         content = re.sub(r"\s+", " ", str(content or "")).strip()
         if not content:
             return False
+        if self._data_mem() is not None and callable(getattr(self._data_mem(), "remember", None)):
+            coro = None
+            try:
+                coro = self._data_memory_write(uid, content, kind, tier)
+                asyncio.get_running_loop().create_task(coro)
+                logger.debug("[amo] 记忆已交给记忆终端: %s" % content[:40])
+                return True
+            except RuntimeError:
+                # 没有事件循环：交给后面的外挂插件路径，别把这条记忆吞掉
+                if coro is not None:
+                    coro.close()
+            except Exception as exc:
+                if coro is not None:
+                    coro.close()
+                logger.debug("[amo] 记忆终端写入失败，退回外挂插件: %s" % exc)
         target = self._memory_plugin_target()
         if target is None:
             return False
@@ -6795,12 +6918,18 @@ class HumanCorePlugin(Star):
             self.db.update_profile(uid, **fields)
 
     async def _recall(self, uid, text, event=None):
-        """记忆只来自外挂记忆插件（我会牢牢记住你 / 天使之魂 / livingmemory）。
+        """记忆只来自「记忆终端」（Astr_Amo_data）；没装才退回外挂记忆插件。
 
-        本插件不再自带记忆库：先走插件的检索接口，再退回直读它的库。
+        陪伴自己不存记忆：读也只读记忆终端，读不到再退旧的插件库。
         """
         limit = self.cfg_int("memory_recall_limit", 6)
-        memories = await self._external_memory_recall(event, text, limit)
+        memories = []
+        try:
+            memories = await self._data_memory_recall(uid, text, limit, event)
+        except Exception as exc:
+            logger.debug("[amo] 记忆终端召回异常: %s" % exc)
+        if not memories:
+            memories = await self._external_memory_recall(event, text, limit)
         if not memories:
             memories = self._external_memory_fallback(uid, text, limit)
 
@@ -6818,7 +6947,10 @@ class HumanCorePlugin(Star):
             return [], ""
         lines = []
         for item in memories:
-            if item.get("source") == "companion":
+            source = str(item.get("source") or "")
+            if source == "amo_data":
+                label = "记忆"
+            elif source == "companion":
                 label = "陪伴记忆"
             else:
                 tier = to_int(item.get("tier"))
@@ -10457,7 +10589,9 @@ class HumanCorePlugin(Star):
             return {"code": 1, "msg": "uid 不能为空"}
         keyword = str(data.get("q") or self._q("q", "") or "")
         limit = self._q_int("limit", 50)
-        items = self._external_all_memories(uid, keyword, limit)
+        items = await self._data_mem_list(uid, keyword, limit)
+        if not items:
+            items = self._external_all_memories(uid, keyword, limit)
         return {"code": 0, "data": items[:max(1, min(100, limit))]}
 
     async def api_memory_add(self):
@@ -10470,15 +10604,21 @@ class HumanCorePlugin(Star):
             return {"code": 1, "msg": "uid 和 content 不能为空"}
         tier = to_int(data.get("tier", 1), 1)
         if self._external_memory_write(uid, content, str(data.get("kind", "manual")), tier):
-            return {"code": 0, "msg": "已写入记忆插件"}
-        return {"code": 1, "msg": "没有可写入的记忆插件，请先在设置里选择记忆来源"}
+            return {"code": 0, "msg": "已写入记忆终端"}
+        return {"code": 1, "msg": "没有可写入的记忆终端，请先安装并启用「我想永远记住你」"}
 
     async def api_memory_delete(self):
-        """删除交给记忆插件自己管理；本插件只做只读展示。"""
+        """有记忆终端就删终端里的那条；没有就还按老规矩让对方插件自己管。"""
         await self._ensure_ready()
+        data = await self._body()
+        memory_id = to_int(data.get("id") or 0)
+        if memory_id and self._data_mem() is not None:
+            ok = await self._data_call("delete_memory", self._data_bot_id(), memory_id)
+            if ok:
+                return {"code": 0, "msg": "已删除"}
         return {
             "code": 1,
-            "msg": "记忆由外挂插件保存，请到该插件里删除；本插件不再单独存记忆",
+            "msg": "记忆由记忆终端保存，请到「我想永远记住你」面板里删除",
         }
 
     async def api_mood_update(self):
