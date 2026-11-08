@@ -133,7 +133,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.8.8"
+PLUGIN_VERSION = "5.9.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -5336,6 +5336,11 @@ class HumanCorePlugin(Star):
         plugin = self._data_plugin()
         return getattr(plugin, "mem", None) if plugin is not None else None
 
+    def _data_store(self):
+        """兜底：直接拿数据插件的 DataStore（mem 门面缺失/旧版时用）。"""
+        plugin = self._data_plugin()
+        return getattr(plugin, "store", None) if plugin is not None else None
+
     def _data_bot_id(self):
         return str(self.cfg_str("data_bot_id", "") or self.bot_name or "default")
 
@@ -5400,30 +5405,76 @@ class HumanCorePlugin(Star):
             return None
 
     async def _push_profile_to_data(self, uid, profile=None, platform=""):
-        """把本地画像推给数据插件（名字/称呼/关系/备注），顺带记下平台身份。"""
-        mem = self._data_mem()
-        if mem is None or not uid:
-            return
+        """把本地画像推给数据插件（名字/称呼/关系/备注），顺带记下平台身份。
+
+        返回“是否真的写进去了”：数据插件没装、旧版没有 platform 参数、或者内部报错，
+        都会返回 False，调用方好统计失败条数，不再假装成功。
+        """
+        if not uid:
+            return False
         profile = profile or self.db.get_profile(uid) or {}
         name = str(profile.get("name") or "")
         # 本地画像自己记着这个人是哪个平台的，补推时别把飞书用户错标成 QQ
         platform = str(platform or profile.get("platform") or "").strip().lower()
-        await self._data_call(
-            "save_profile", self._data_bot_id(), str(uid),
-            name=name,
-            alias=str(profile.get("alias") or ""),
-            relation=str(profile.get("relation") or ""),
-            remark=str(profile.get("notes") or ""),
-            platform=platform,
-        )
+        fields = {
+            "name": name,
+            "alias": str(profile.get("alias") or ""),
+            "relation": str(profile.get("relation") or ""),
+            "remark": str(profile.get("notes") or ""),
+        }
+        mem = self._data_mem()
+        save = getattr(mem, "save_profile", None) if mem is not None else None
+        result = None
+        if callable(save):
+            # 直接调一次，异常不再被 _data_call 吞掉，好定位到底哪一步失败
+            try:
+                result = await save(self._data_bot_id(), str(uid), platform=platform, **fields)
+            except TypeError:
+                # 旧版数据插件没有 platform 参数
+                try:
+                    result = await save(self._data_bot_id(), str(uid), **fields)
+                except Exception as exc:
+                    self._log_push_failure(uid, exc)
+                    result = None
+            except Exception as exc:
+                self._log_push_failure(uid, exc)
+                result = None
+        if isinstance(result, dict) and result.get("uid"):
+            return True
+        if result:
+            return True
+        # 兜底：mem 门面不可用时，直接写数据插件的 DataStore（老版本只有 store）
+        store = self._data_store()
+        saver = getattr(store, "save_profile", None)
+        if not callable(saver):
+            return False
+        try:
+            raw = await asyncio.to_thread(
+                lambda: saver(self._data_bot_id(), str(uid), **fields)
+            )
+        except Exception as exc:
+            self._log_push_failure(uid, exc)
+            return False
+        return bool(raw and (not isinstance(raw, dict) or raw.get("uid")))
+
+    def _log_push_failure(self, uid, exc):
+        """同一次同步里最多打 3 条 warning，避免刷屏。"""
+        count = to_int(getattr(self, "_push_fail_count", 0))
+        self._push_fail_count = count + 1
+        if count < 3:
+            logger.warning(
+                "[amo] 推送画像 %s 失败: %s: %s" % (uid, type(exc).__name__, exc)
+            )
 
     async def _sync_profiles_to_data(self):
         """把本地画像补齐到数据插件：缺的补、改过的重推。不依赖一次性迁移标记。
 
-        之前迁移是一次性的，标记写早了就永远是 0；这里改成每次都对一遍。
+        之前迁移是一次性的，标记写早了就永远是 0；这里改成每次都对一遍，
+        而且推完再查一次条数，日志里能直接看到到底写进去没有。
         """
         mem = self._data_mem()
-        if mem is None:
+        store = self._data_store()
+        if mem is None and store is None:
             return 0
         bot_id = self._data_bot_id()
         try:
@@ -5435,13 +5486,27 @@ class HumanCorePlugin(Star):
             remote_rows = await self._data_call("list_profiles", bot_id, "", 500) or []
         except Exception:
             remote_rows = []
+        if not remote_rows:
+            # mem 门面不可用的旧版：直接读 DataStore
+            lister = getattr(self._data_store(), "list_profiles", None)
+            if callable(lister):
+                try:
+                    remote_rows = await asyncio.to_thread(lambda: lister(bot_id, "", 500)) or []
+                except Exception:
+                    remote_rows = []
+        self._push_fail_count = 0
         remote = {}
         for row in remote_rows:
+            if not isinstance(row, dict):
+                continue
             uid = str(row.get("uid") or "")
             if uid:
                 remote[uid] = row
         pushed = 0
+        failed = 0
         for profile in local:
+            if not isinstance(profile, dict):
+                continue
             uid = str(profile.get("uid") or "")
             if not uid:
                 continue
@@ -5450,9 +5515,7 @@ class HumanCorePlugin(Star):
             relation = str(profile.get("relation") or "")
             remark = str(profile.get("notes") or "")
             old = remote.get(uid)
-            if old is None:
-                pass
-            else:
+            if old is not None:
                 if (
                     str(old.get("name") or "") == name
                     and str(old.get("alias") or "") == alias
@@ -5462,24 +5525,44 @@ class HumanCorePlugin(Star):
                     continue
                 # 面板刚改过（数据插件里更新时间比本地最后活跃还新）就别用本地覆盖它，
                 # 稍后拉取那一步会把面板的改动写回本地。
-                try:
-                    remote_at = to_float(old.get("updated_at"), 0)
-                    local_at = to_float(profile.get("last_seen"), 0)
-                except Exception:
-                    remote_at = local_at = 0
+                remote_at = to_float(old.get("updated_at"), 0)
+                local_at = to_float(profile.get("last_seen"), 0)
                 if remote_at and remote_at > local_at:
                     continue
             try:
-                await self._push_profile_to_data(uid, profile)
-                pushed += 1
+                ok = await self._push_profile_to_data(uid, profile)
             except Exception as exc:
-                logger.debug("[amo] 推送画像 %s 失败: %s" % (uid, exc))
-        total = max(len(remote), len(local)) if pushed else len(remote)
+                logger.warning("[amo] 推送画像 %s 异常: %s: %s" % (uid, type(exc).__name__, exc))
+                ok = False
+            if ok:
+                pushed += 1
+            else:
+                failed += 1
+        # 推完再查一次，拿到“真的写进去了多少条”
+        after = []
+        try:
+            after = await self._data_call("list_profiles", bot_id, "", 500) or []
+        except Exception:
+            after = []
+        if not after:
+            lister = getattr(self._data_store(), "list_profiles", None)
+            if callable(lister):
+                try:
+                    after = await asyncio.to_thread(lambda: lister(bot_id, "", 500)) or []
+                except Exception:
+                    after = []
+        total = max(len(after), len(remote))
         message = (
-            "[amo] 画像同步：本地 %d 条 / 数据插件 %d 条，本次补推 %d 条"
-            % (len(local), total, pushed)
+            "[amo] 画像同步：本地 %d 条 / 数据插件 %d 条，本次补推 %d 条，失败 %d 条"
+            % (len(local), total, pushed, failed)
         )
-        if pushed or not getattr(self, "_profile_sync_logged", False):
+        if failed:
+            logger.warning(message)
+            if failed >= len(local) and local:
+                logger.warning(
+                    "[amo] 画像一条都没写进去：先确认 Astr_Amo_data 已启用且版本 >= 2.0.4"
+                )
+        elif pushed or not getattr(self, "_profile_sync_logged", False):
             self._profile_sync_logged = True
             logger.info(message)
         else:
@@ -5543,7 +5626,7 @@ class HumanCorePlugin(Star):
     async def _sync_with_data_plugin(self):
         """启动时双向同步：首次把本地画像/关系/日程缓存推过去，之后以插件为准补齐本地。"""
         mem = self._data_mem()
-        if mem is None:
+        if mem is None and self._data_store() is None:
             if not getattr(self, "_data_missing_logged", False):
                 self._data_missing_logged = True
                 logger.info("[amo] 未检测到数据插件 Astr_Amo_data，继续用本地库（装好后面板数据为空是正常的）")
@@ -8044,7 +8127,8 @@ class HumanCorePlugin(Star):
         if not self._ready or self.state is None:
             return
         # 数据插件可能在陪伴之后才装：每 5 分钟重新探测一次，装上就自动接管/迁移
-        if self._data_mem() is None and now_ts() - to_float(getattr(self, "_last_data_probe", 0), 0) > 300:
+        if (self._data_mem() is None and self._data_store() is None
+                and now_ts() - to_float(getattr(self, "_last_data_probe", 0), 0) > 300):
             self._last_data_probe = now_ts()
             self._spawn(self._sync_with_data_plugin())
         elif now_ts() - to_float(getattr(self, "_last_profile_sync", 0), 0) > 600:
