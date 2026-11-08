@@ -53,10 +53,12 @@ except Exception:
 
 try:
     from .heartflow_engine import HeartflowEngine
+    from .weather_alert import evaluate as evaluate_weather_alert, parse_daily as parse_weather_daily
     from .segment_engine import SegmentEngine
 except Exception:
     try:
         from heartflow_engine import HeartflowEngine
+        from weather_alert import evaluate as evaluate_weather_alert, parse_daily as parse_weather_daily
         from segment_engine import SegmentEngine
     except Exception:
         HeartflowEngine = None
@@ -2375,6 +2377,65 @@ class HumanState:
         except Exception as exc:
             logger.warning("[amo] 和风天气接口失败: %s" % exc)
             return None
+
+    async def _fetch_qweather_daily(self, key, city, days=3):
+        """明天/后天的预报；缓存 3 小时，避免后台循环反复打接口。"""
+        cache = self.db.kv_get("weather_daily", {}) or {}
+        city = str(city or "").strip()
+        if (
+            isinstance(cache, dict)
+            and cache.get("ts")
+            and now_ts() - to_float(cache.get("ts"), 0) < 3 * 3600
+            and str(cache.get("city") or "") == city
+            and to_int(cache.get("days")) == int(days)
+        ):
+            items = cache.get("items")
+            return items if isinstance(items, list) else []
+        host = (self.p.cfg_str("weather_host", "") or "").strip().rstrip("/")
+        if not host:
+            return []
+        geo_raw = (self.p.cfg_str("weather_geo_host", "") or "").strip().rstrip("/")
+        if geo_raw and not geo_raw.startswith(("http://", "https://")):
+            geo_raw = "https://" + geo_raw
+        if geo_raw:
+            geo_base = geo_raw
+            if geo_base.endswith("/city/lookup"):
+                geo_base = geo_base[: -len("/city/lookup")]
+            if not geo_base.endswith(("/geo/v2", "/v2")):
+                geo_base += "/geo/v2"
+        else:
+            geo_base = host + "/geo/v2"
+        headers = {"X-QW-Api-Key": key}
+        timeout = aiohttp.ClientTimeout(total=8)
+        location = str(city)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                if not location.isdigit():
+                    async with session.get(
+                        geo_base + "/city/lookup",
+                        params={"location": location, "key": key, "number": 1},
+                    ) as response:
+                        geo = await self._qweather_payload(response, "geo")
+                    if str(geo.get("code") or "") != "200" or not isinstance(geo.get("location"), list):
+                        return []
+                    first = geo["location"][0] if geo["location"] else None
+                    if not isinstance(first, dict) or not first.get("id"):
+                        return []
+                    location = str(first["id"])
+                async with session.get(
+                    host + "/v7/weather/%dd" % int(days),
+                    params={"location": location, "key": key},
+                ) as response:
+                    data = await self._qweather_payload(response, "daily")
+                if str(data.get("code") or "") != "200":
+                    logger.warning("[amo] 和风天气预报返回异常: %s" % data.get("code"))
+                    return []
+                items = parse_weather_daily(data)
+        except Exception as exc:
+            logger.warning("[amo] 和风天气预报接口失败: %s" % exc)
+            return []
+        self.db.kv_set("weather_daily", {"ts": now_ts(), "city": city, "days": int(days), "items": items})
+        return items
 
     async def refresh_weather(self, force=False):
         try:
@@ -6755,6 +6816,10 @@ class HumanCorePlugin(Star):
             self.state.daily_tick()
         self.state.roll_health()
         await self.state.refresh_weather()
+        try:
+            await self._maybe_weather_alert()
+        except Exception as exc:
+            logger.debug("[amo] 天气提醒失败: %s" % exc)
 
         umo = self._last_umo or self._first_private_umo()
         if (
@@ -7179,6 +7244,62 @@ class HumanCorePlugin(Star):
                 return umo
         return items[0][1]
 
+
+    async def _maybe_weather_alert(self):
+        """明天天气变坏时，到点提醒一次（每天最多一条）。"""
+        if not self.cfg_bool("weather_alert_enabled", False):
+            return
+        key = self.cfg_str("hefeng_key", "")
+        if not key:
+            return
+        target = self.cfg_str("weather_alert_time", "20:00")
+        try:
+            hour, minute = [int(x) for x in str(target).split(":")[:2]]
+        except Exception:
+            hour, minute = 20, 0
+        now = datetime.now()
+        if now.hour * 60 + now.minute < hour * 60 + minute:
+            return
+        today = today_str()
+        if str(self.db.kv_get("weather_alert_sent", "") or "") == today:
+            return
+        city = (
+            self.cfg_str("weather_city", "").strip()
+            or str((getattr(self.state, "schedule_profile", {}) or {}).get("city") or "").strip()
+            or "贵阳"
+        )
+        items = await self.state._fetch_qweather_daily(key, city, 3)
+        if len(items) < 2:
+            return
+        text = evaluate_weather_alert(
+            items[0], items[1], self.cfg_int("weather_alert_temp_drop", 8)
+        )
+        self.db.kv_set("weather_alert_checked", today)
+        if not text:
+            logger.info("[amo] 天气提醒：明天天气正常，不提醒")
+            return
+        if self.cfg_bool("weather_alert_dry_run", False):
+            logger.info("[amo] 天气提醒（试跑，不发送）: %s" % text)
+            self.db.kv_set("weather_alert_sent", today)
+            return
+        umo = ""
+        try:
+            for profile in self.db.proactive_profiles(limit=5):
+                umo = self._pick_proactive_umo(profile)
+                if umo:
+                    break
+        except Exception as exc:
+            logger.debug("[amo] 天气提醒选平台失败: %s" % exc)
+        umo = umo or self._last_umo or self._first_private_umo()
+        if not umo:
+            logger.info("[amo] 天气提醒：没有可发送的会话")
+            return
+        sent = await self._send_to_umo(umo, text)
+        if sent:
+            self.db.kv_set("weather_alert_sent", today)
+            logger.info("[amo] 天气提醒已发送: %s -> %s" % (text, umo))
+        else:
+            logger.warning("[amo] 天气提醒发送失败: %s" % umo)
 
     async def _maybe_proactive(self):
         quiet = quiet_now(self.cfg_str("quiet_hours", "23:30-07:30"))
