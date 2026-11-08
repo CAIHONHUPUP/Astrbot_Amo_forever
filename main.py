@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 5.2.0
+我想永远陪着你 / 我想永远陪伴你 5.2.1
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -107,7 +107,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.2.0"
+PLUGIN_VERSION = "5.2.1"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -2981,12 +2981,19 @@ class HumanState:
                 break
         prev_item = items[index - 1] if index > 0 else None
         next_item = items[index + 1] if index + 1 < len(items) else None
+        prev_diary = ""
+        if prev_item is not None:
+            try:
+                prev_diary = self.db.get_diary(day, str(prev_item.get("start") or ""))
+            except Exception:
+                prev_diary = ""
         result = {"diary": "", "mood": item.get("mood") or "平静",
                   "place": item.get("place") or "", "activity": item.get("activity") or ""}
         if self.engine is not None:
             try:
                 result.update(await self.engine.generate_diary(
                     self.p._last_umo, context, item, prev_item, next_item, self.p.llm,
+                    prev_diary=prev_diary,
                 ))
             except Exception as exc:
                 logger.warning("[amo] 动态日记生成失败: %s" % exc)
@@ -4382,6 +4389,7 @@ class HumanCorePlugin(Star):
             self._migrate_legacy_admin_default()
             self._migrate_scenic_kb_name()
             self._migrate_schedule_defaults()
+            self._migrate_diary_continuity()
             self._cleanup_legacy_memory_profiles()
             await asyncio.to_thread(self._merge_alias_profiles)
             self.state = HumanState(self)
@@ -4418,6 +4426,18 @@ class HumanCorePlugin(Star):
             self.db.kv_set("schedule_defaults_511", True)
         except Exception as exc:
             logger.debug("[amo] 日程默认配置迁移失败: %s" % exc)
+
+    def _migrate_diary_continuity(self):
+        """5.2.1：旧版动态日记是逐小时独立生成的，可能互相矛盾；升级时清一次缓存。"""
+        try:
+            if self.db.kv_get("diary_continuity_521", False):
+                return
+            self.db.conn.execute("DELETE FROM schedule_diary")
+            self.db.conn.commit()
+            self.db.kv_set("diary_continuity_521", True)
+            logger.info("[amo] 已清理旧版日程日记缓存（5.2.1 连续性修复）")
+        except Exception as exc:
+            logger.debug("[amo] 清理日记缓存失败: %s" % exc)
 
     def _migrate_scenic_kb_name(self):
         try:

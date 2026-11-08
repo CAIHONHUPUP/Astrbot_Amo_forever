@@ -1168,7 +1168,21 @@ class ScheduleEngine:
     # ------------------------------------------------------------------
     # 8. 动态日记
     # ------------------------------------------------------------------
-    async def generate_diary(self, umo, ctx, item, prev_item, next_item, llm):
+    @staticmethod
+    def _diary_contradicts(prev_diary, diary):
+        """粗校验：上一小时已经写他进门/在家，这一小时不能又写他还没回来。"""
+        prev = str(prev_diary or "")
+        cur = str(diary or "")
+        if not prev or not cur:
+            return False
+        at_home = (
+            ("阿墨" in prev or "他" in prev)
+            and any(word in prev for word in ("进门", "在家", "回来", "到家", "身边", "陪你", "坐在"))
+        )
+        alone = any(word in cur for word in ("还没回来", "不在家", "没回来", "一个人", "等他回来"))
+        return bool(at_home and alone)
+
+    async def generate_diary(self, umo, ctx, item, prev_item, next_item, llm, prev_diary=""):
         if llm is None:
             return {
                 "diary": self.fallback_diary(ctx, item, prev_item),
@@ -1176,24 +1190,43 @@ class ScheduleEngine:
                 "place": item.get("place") or "",
                 "activity": item.get("activity") or "",
             }
+
+        def _parse(raw):
+            text = ""
+            data = json_extract(raw)
+            if isinstance(data, dict):
+                text = str(data.get("diary") or data.get("text") or "").strip()
+            elif isinstance(data, str):
+                text = data.strip()
+            if not text:
+                text = str(raw or "").strip()
+            return self._clean_diary(text)
+
         system = "你就是这个角色本人。你在写只给自己看的第一人称小日记，只输出 JSON。"
-        prompt = self._diary_prompt(ctx, item, prev_item, next_item)
+        prompt = self._diary_prompt(ctx, item, prev_item, next_item, prev_diary)
         raw = ""
         try:
             raw = await asyncio.wait_for(llm.chat_raw(umo, system, prompt), timeout=60)
         except Exception:
             raw = ""
-        diary = ""
-        data = json_extract(raw)
-        if isinstance(data, dict):
-            diary = str(data.get("diary") or data.get("text") or "").strip()
-        elif isinstance(data, str):
-            diary = data.strip()
-        if not diary:
-            diary = str(raw or "").strip()
-        diary = self._clean_diary(diary)
+        diary = _parse(raw)
         if len(diary) < 20:
             diary = self.fallback_diary(ctx, item, prev_item)
+        if prev_diary and self._diary_contradicts(prev_diary, diary):
+            strict = (
+                prompt
+                + "\n【硬性续写】上一小时日记里他已经进门/在家/在陪你。"
+                + "这一小时必须承接这个事实，不能写他还没回来、不在家、你一个人。"
+            )
+            try:
+                raw = await asyncio.wait_for(llm.chat_raw(umo, system, strict), timeout=60)
+            except Exception:
+                raw = ""
+            retried = _parse(raw)
+            if retried and len(retried) >= 20 and not self._diary_contradicts(prev_diary, retried):
+                diary = retried
+            else:
+                diary = self.fallback_diary(ctx, item, prev_item)
         return {
             "diary": diary,
             "mood": item.get("mood") or "平静",
@@ -1201,7 +1234,7 @@ class ScheduleEngine:
             "activity": item.get("activity") or "",
         }
 
-    def _diary_prompt(self, ctx, item, prev_item, next_item):
+    def _diary_prompt(self, ctx, item, prev_item, next_item, prev_diary=""):
         event = ctx.get("event") or {}
         scenic = ctx.get("scenic") or {}
         prev_text = "无"
@@ -1216,6 +1249,7 @@ class ScheduleEngine:
                 next_item.get("start"), next_item.get("end"), next_item.get("place"),
                 next_item.get("activity"),
             )
+        prev_diary_text = str(prev_diary or "").strip()[:500] or "（还没有生成上一小时日记）"
         car_line = ""
         if item.get("vehicle"):
             car_line = "这一小时是开%s；必须写清堵车、找停车位或路上的细节。" % item.get("vehicle")
@@ -1227,6 +1261,7 @@ class ScheduleEngine:
             "身体：%s；生理期：%s；昨日：%s。\n"
             "此刻十维情绪：%s。\n"
             "上一小时：%s\n"
+            "上一小时已经写下的小日记（必须承接，不能矛盾）：\n%s\n"
             "这一小时：%s-%s，%s，在%s（%s），心情%s。\n"
             "下一小时：%s\n"
             "突发事件：%s\n"
@@ -1238,7 +1273,11 @@ class ScheduleEngine:
             "3. 情绪必须从上一小时自然延续，不能无缘无故从郁闷/生气变成开心/兴奋；\n"
             "4. 如果是周末开车出去玩，要提到车、堵车、停车位；\n"
             "5. 口语化、生动，像真人发朋友圈，不要旁白，不要提日程/AI/模型；\n"
-            "6. 只输出 JSON：{\"diary\":\"...\"}。"
+            "6. 必须承接上一小时日记：上一小时已经出现的人、地点、动作不能矛盾；\n"
+            "7. 如果上一小时写了他已经进门/在家/在陪你，这一小时绝对不能写他还没回来、不在家、你一个人；\n"
+            "8. 如果上一小时没写他出现，这一小时也不要凭空让他出现；要出现必须写清开门/回来/打电话；\n"
+            "9. 不要重复上一小时已经说过的整段，只写这一小时的新细节；\n"
+            "10. 只输出 JSON：{\"diary\":\"...\"}。"
         ) % (
             ctx.get("day"), (ctx.get("meta") or {}).get("label") or "普通一天",
             _weather_text(ctx.get("weather") or {}), ctx.get("location") or ctx.get("city") or "贵阳",
@@ -1247,6 +1286,7 @@ class ScheduleEngine:
             (ctx.get("yesterday") or {}).get("note") or "正常",
             _mood_text(ctx.get("mood") or {}),
             prev_text,
+            prev_diary_text,
             item.get("start"), item.get("end"), item.get("activity"),
             item.get("place"), item.get("zone"), item.get("mood") or "平静",
             next_text,

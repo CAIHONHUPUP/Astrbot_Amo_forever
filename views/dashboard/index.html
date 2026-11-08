@@ -541,7 +541,7 @@
         <div class="stack-actions">
           <button id="btnRefresh">刷新状态</button>
           <button id="btnWeather">刷新天气</button>
-          <button id="btnSchedule">刷新日程</button>
+          <button id="btnSchedule">重建日程</button>
           <button id="btnWorld">重建世界</button>
           <button id="btnKb">重建语种</button>
           <button id="btnScenicKb">重建景区</button>
@@ -1182,8 +1182,19 @@
       finally { btn.disabled = false; }
     });
     document.getElementById("btnWeather").addEventListener("click", (e) => action("weather", e.currentTarget));
-    document.getElementById("btnSchedule").addEventListener("click", async () => {
-      try { await loadSchedule(); showTab("schedule"); toast("日程已刷新"); } catch (error) { toast("刷新失败", true); }
+    document.getElementById("btnSchedule").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        await call("schedule_regen");
+        await loadSchedule();
+        showTab("schedule");
+        toast("日程已重建");
+      } catch (error) {
+        toast("重建失败：" + (error && error.message ? error.message : error), true);
+      } finally {
+        btn.disabled = false;
+      }
     });
     document.getElementById("btnWorld").addEventListener("click", async (e) => {
       await action("worldview_regen", e.currentTarget);
