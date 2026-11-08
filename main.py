@@ -7347,30 +7347,41 @@ class HumanCorePlugin(Star):
         return items[0][1]
 
 
-    def _pick_weather_alert_umo(self):
-        """QQ / 飞书里随机挑一个她收到过消息的平台。"""
-        candidates = []
+    def _weather_alert_umos(self):
+        """天气提醒的候选会话，按最近活跃排序。
+
+        只用她**真的收到过消息**的会话（channels:<uid> + private_umo），
+        没配飞书的人候选里就只有 QQ，不会随机到一个不存在的平台。
+        """
+        pairs = []
         try:
-            for profile in self.db.proactive_profiles(limit=5):
-                item = str(profile.get("private_umo") or "")
-                if item:
-                    candidates.append(item)
+            for profile in self.db.proactive_profiles(limit=20):
                 uid = str(profile.get("uid") or "")
                 data = self.db.kv_get("channels:%s" % uid, {}) or {}
                 if isinstance(data, dict):
                     for value in data.values():
                         if isinstance(value, dict) and value.get("umo"):
-                            candidates.append(str(value["umo"]))
+                            pairs.append((float(value.get("ts") or 0), str(value["umo"])))
+                item = str(profile.get("private_umo") or "")
+                if item:
+                    pairs.append((0.0, item))
         except Exception as exc:
             logger.debug("[amo] 天气提醒选平台失败: %s" % exc)
+        pairs.sort(key=lambda pair: -pair[0])
         seen = []
-        for item in candidates:
-            if item and item not in seen:
-                seen.append(item)
+        for _, umo in pairs:
+            if umo and umo not in seen:
+                seen.append(umo)
         if not seen:
             fallback = self._last_umo or self._first_private_umo()
-            return fallback or ""
-        return random.choice(seen)
+            if fallback:
+                seen.append(fallback)
+        return seen
+
+    def _pick_weather_alert_umo(self):
+        """兼容旧调用：返回最该优先尝试的那个会话。"""
+        items = self._weather_alert_umos()
+        return items[0] if items else ""
 
     async def _weather_alert_text(self, umo, tomorrow, fallback):
         """用她自己的语气说这句提醒；模型失败就退回模板。"""
@@ -7430,22 +7441,28 @@ class HumanCorePlugin(Star):
         if not text:
             logger.info("[amo] 天气提醒：明天天气正常，不提醒")
             return
-        umo = self._pick_weather_alert_umo()
-        if not umo:
+        umos = self._weather_alert_umos()
+        if not umos:
             logger.info("[amo] 天气提醒：没有可发送的会话")
             return
-        text = await self._weather_alert_text(umo, items[1], text)
+        text = await self._weather_alert_text(umos[0], items[1], text)
         if self.cfg_bool("weather_alert_dry_run", False):
-            logger.info("[amo] 天气提醒（试跑，不发送）: %s -> %s" % (text, umo))
+            logger.info("[amo] 天气提醒（试跑，不发送）: %s -> %s" % (text, umos[0]))
             self.db.kv_set("weather_alert_sent", today)
             return
-        sent = await self._send_to_umo(umo, text)
-        if sent:
+        # 一个一个平台试：某个平台的会话失效时换下一个，而不是整天发不出去
+        sent_umo = ""
+        for umo in umos:
+            if await self._send_to_umo(umo, text):
+                sent_umo = umo
+                break
+            logger.warning("[amo] 天气提醒这个平台发送失败，换下一个: %s" % umo)
+        if sent_umo:
             self.db.kv_set("weather_alert_sent", today)
             self.db.kv_set("weather_alert_open", today)
-            logger.info("[amo] 天气提醒已发送: %s -> %s" % (text, umo))
+            logger.info("[amo] 天气提醒已发送: %s -> %s" % (text, sent_umo))
         else:
-            logger.warning("[amo] 天气提醒发送失败: %s" % umo)
+            logger.warning("[amo] 天气提醒所有平台都失败: %s" % umos)
 
     async def _maybe_proactive(self):
         quiet = quiet_now(self.cfg_str("quiet_hours", "23:30-07:30"))
