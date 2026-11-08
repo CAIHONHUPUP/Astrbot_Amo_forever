@@ -5455,24 +5455,45 @@ class HumanCorePlugin(Star):
             return True
         return bool(ids & owners)
 
+    @staticmethod
+    def _livingmem_like_escape(text):
+        """LIKE 里的 % 和 _ 要转义，否则用户搜个下划线就变成通配符。"""
+        return str(text or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
     def _livingmem_all_memories(self, uid, keyword="", limit=50):
-        """livingmemory 的 documents：每条是一段对话摘要。"""
+        """livingmemory 的 documents：每条是一段对话摘要。
+
+        排序规则：
+          - 有关键词：命中次数多的优先，其次重要度高、其次新；
+          - 没关键词：按重要度、再按时间倒序。
+        和 memory_companion 那条“importance DESC, updated_at DESC”的风格保持一致。
+        """
         if not self._livingmem_db_path():
             return []
-        rows = self._livingmem_rows(
-            "SELECT text, created_at, metadata FROM documents ORDER BY id DESC LIMIT ?",
-            (max(1, min(200, int(limit or 50) * 3)),),
+        cap = max(1, min(100, int(limit or 50)))
+        keyword = str(keyword or "").strip()[:100]
+        sql = (
+            "SELECT text, created_at, metadata, "
+            "COALESCE(json_extract(metadata, '$.importance'), 0) AS imp, id "
+            "FROM documents WHERE text != ''"
         )
-        items = []
+        params = []
+        if keyword:
+            sql += " AND text LIKE ? ESCAPE '\\'"
+            params.append("%" + self._livingmem_like_escape(keyword) + "%")
+        sql += " ORDER BY imp DESC, id DESC LIMIT ?"
+        params.append(max(cap * 5, 50) if keyword else cap)
+        rows = self._livingmem_rows(sql, tuple(params))
+
         uid_s = str(uid or "")
+        items = []
         for row in rows:
-            content = re.sub(r"\s+", " ", str(row.get("text") or "")).strip()
+            content = re.sub(r"\\s+", " ", str(row.get("text") or "")).strip()
             if len(content) < 2:
                 continue
             if not self._livingmem_owned(row.get("metadata"), uid_s):
                 continue
-            if keyword and str(keyword).lower() not in content.lower():
-                continue
+            hits = content.lower().count(keyword.lower()) if keyword else 0
             items.append({
                 "content": content[:500],
                 "tier": 1,
@@ -5480,12 +5501,13 @@ class HumanCorePlugin(Star):
                 "source": "livingmemory",
                 "memory_type": "episodic",
                 "created_at": row.get("created_at") or "",
-                "hits": 0,
+                "hits": hits,
                 "expires_at": None,
             })
-            if len(items) >= max(1, min(100, int(limit or 50))):
-                break
-        return items
+
+        if keyword:
+            items.sort(key=lambda x: (x["hits"], x["created_at"] or ""), reverse=True)
+        return items[:cap]
 
     def _external_all_memories_legacy(self, uid, query="", limit=50):
         """给 prompt 注入用的版本：故意不读 livingmemory。
