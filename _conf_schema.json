@@ -971,5 +971,53 @@
     "description": "「日常关心」两条之间的最小间隔（分钟）",
     "hint": "重启不会重置这个间隔（按数据库里的上次主动时间算），避免重启后立刻又发一条。",
     "default": 30
+  },
+  "usage_stats_enabled": {
+    "type": "bool",
+    "description": "面板显示对话用量（token / 缓存命中 / 花费）",
+    "hint": "数据来自 AstrBot 的 provider_stats，只读，不额外调用模型。",
+    "default": true
+  },
+  "deepseek_balance_enabled": {
+    "type": "bool",
+    "description": "面板显示 DeepSeek 余额",
+    "hint": "开启后用量页会调用一次 DeepSeek 余额接口（/user/balance）。",
+    "default": true
+  },
+  "deepseek_api_key": {
+    "type": "string",
+    "description": "DeepSeek API Key（查余额用）",
+    "hint": "留空则读环境变量 DEEPSEEK_API_KEY / COMPANION_V2_BALANCE_API_KEY。只用于查余额，不会写日志。",
+    "default": ""
+  },
+  "usage_price_hit_peak": {
+    "type": "float",
+    "description": "缓存命中输入单价（高峰，元/百万 token）",
+    "default": 0.04
+  },
+  "usage_price_hit_idle": {
+    "type": "float",
+    "description": "缓存命中输入单价（空闲，元/百万 token）",
+    "default": 0.02
+  },
+  "usage_price_miss_peak": {
+    "type": "float",
+    "description": "缓存未命中输入单价（高峰）",
+    "default": 2
+  },
+  "usage_price_miss_idle": {
+    "type": "float",
+    "description": "缓存未命中输入单价（空闲）",
+    "default": 1
+  },
+  "usage_price_out_peak": {
+    "type": "float",
+    "description": "输出单价（高峰）",
+    "default": 8
+  },
+  "usage_price_out_idle": {
+    "type": "float",
+    "description": "输出单价（空闲）",
+    "default": 4
   }
 }
