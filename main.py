@@ -133,7 +133,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.6.2"
+PLUGIN_VERSION = "5.8.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -4333,6 +4333,10 @@ class HumanCorePlugin(Star):
             self._cleanup_legacy_memory_profiles()
             await asyncio.to_thread(self._merge_alias_profiles)
             self.state = HumanState(self)
+            try:
+                await self._sync_with_data_plugin()
+            except Exception as exc:
+                logger.debug("[amo] 与数据插件同步失败: %s" % exc)
             self._ready = True
             self._loop_task = self._spawn(self._background_loop())
             self._spawn(self._warm_up())
@@ -4675,6 +4679,10 @@ class HumanCorePlugin(Star):
 
         self.state.observe(text)
         self.db.add_message(umo, uid, name, "user", text)
+        try:
+            await self._data_call("add_message", self._data_bot_id(), umo, uid, name, "user", text)
+        except Exception as exc:
+            logger.debug("[amo] 聊天记录同步失败: %s" % exc)
 
         senti = sentiment(text)
         affection = to_int(profile.get("affection"), 10)
@@ -5290,6 +5298,158 @@ class HumanCorePlugin(Star):
         "search_memory", "recall_memory",
         "query_memory", "retrieve_memory", "retrieve",
     )
+
+    # ---------- 配套数据插件（Astr_Amo_data / 我想永远记住你） ----------
+    DATA_PLUGIN_NAMES = ("Astr_Amo_data", "astrbot_plugin_amo_data", "AstrAmoData")
+
+    def _data_plugin(self):
+        """找「我想永远记住你」插件实例；没装就返回 None。"""
+        try:
+            for name in self.DATA_PLUGIN_NAMES:
+                meta = self.context.get_registered_star(name)
+                star = getattr(meta, "star_cls", None) if meta is not None else None
+                if star is not None and getattr(star, "mem", None) is not None:
+                    return star
+        except Exception:
+            pass
+        try:
+            for meta in self.context.get_all_stars():
+                star = getattr(meta, "star_cls", None)
+                if star is not None and getattr(star, "mem", None) is not None:
+                    marker = (getattr(meta, "name", "") or "") + " " + (getattr(meta, "module_path", "") or "")
+                    if "amo_data" in marker.lower():
+                        return star
+        except Exception:
+            pass
+        return None
+
+    def _data_mem(self):
+        plugin = self._data_plugin()
+        return getattr(plugin, "mem", None) if plugin is not None else None
+
+    def _data_bot_id(self):
+        return str(self.cfg_str("data_bot_id", "") or self.bot_name or "default")
+
+    async def _data_call(self, name, *args, **kwargs):
+        mem = self._data_mem()
+        if mem is None:
+            return None
+        func = getattr(mem, name, None)
+        if not callable(func):
+            return None
+        try:
+            return await func(*args, **kwargs)
+        except Exception as exc:
+            logger.debug("[amo] 数据插件 %s 调用失败: %s" % (name, exc))
+            return None
+
+    async def _push_profile_to_data(self, uid, profile=None):
+        """把本地画像推给数据插件（名字/称呼/关系/备注）。"""
+        mem = self._data_mem()
+        if mem is None or not uid:
+            return
+        profile = profile or self.db.get_profile(uid) or {}
+        await self._data_call(
+            "save_profile", self._data_bot_id(), str(uid),
+            name=str(profile.get("name") or ""),
+            alias=str(profile.get("alias") or ""),
+            relation=str(profile.get("relation") or ""),
+            remark=str(profile.get("notes") or ""),
+        )
+
+    async def _push_relation_to_data(self, a_uid, b_uid, relation, note=""):
+        await self._data_call(
+            "save_relation", self._data_bot_id(), str(a_uid), str(b_uid),
+            str(relation or "朋友"), str(note or ""),
+        )
+
+    async def _push_cache_to_data(self, key, value):
+        await self._data_call("cache_set", self._data_bot_id(), str(key), value)
+
+    async def _sync_with_data_plugin(self):
+        """启动时双向同步：首次把本地画像/关系/日程缓存推过去，之后以插件为准补齐本地。"""
+        mem = self._data_mem()
+        if mem is None:
+            return
+        bot_id = self._data_bot_id()
+        marker = "data_plugin_migrated_" + bot_id
+        migrated = bool(self.db.kv_get(marker, False))
+        if not migrated:
+            pushed = {"profiles": 0, "relations": 0, "cache": 0}
+            try:
+                for profile in self.db.list_profiles(limit=500):
+                    uid = str(profile.get("uid") or "")
+                    if not uid:
+                        continue
+                    await self._push_profile_to_data(uid, profile)
+                    pushed["profiles"] += 1
+            except Exception as exc:
+                logger.debug("[amo] 画像迁移失败: %s" % exc)
+            try:
+                for edge in self.db.list_relations():
+                    await self._push_relation_to_data(
+                        edge.get("a_uid"), edge.get("b_uid"),
+                        edge.get("relation"), edge.get("note"),
+                    )
+                    pushed["relations"] += 1
+            except Exception as exc:
+                logger.debug("[amo] 关系网迁移失败: %s" % exc)
+            for key in ("schedule", "schedule_ctx", "schedule_profile", "worldview"):
+                try:
+                    value = self.db.kv_get(key, None)
+                    if value:
+                        await self._push_cache_to_data(key, value)
+                        pushed["cache"] += 1
+                except Exception:
+                    pass
+            self.db.kv_set(marker, True)
+            logger.info("[amo] 已把本地数据迁移到「我想永远记住你」：%s" % pushed)
+        # 插件里有、本地没有的，补回本地
+        try:
+            rows = await self._data_call("list_relations", bot_id) or []
+            for edge in rows:
+                try:
+                    self.db.upsert_relation(
+                        edge.get("a_uid"), edge.get("b_uid"),
+                        edge.get("relation") or "朋友", edge.get("note") or "",
+                    )
+                except Exception:
+                    continue
+        except Exception as exc:
+            logger.debug("[amo] 拉取关系网失败: %s" % exc)
+        try:
+            rows = await self._data_call("list_profiles", bot_id) or []
+            for row in rows:
+                uid = str(row.get("uid") or "")
+                if not uid:
+                    continue
+                local = self.db.get_profile(uid) or {}
+                fields = {}
+                if not local:
+                    self.db.touch_profile(uid, str(row.get("name") or ""), "amo_data", "", "", True)
+                    local = self.db.get_profile(uid) or {}
+                for src, dst in (("name", "name"), ("alias", "alias"), ("relation", "relation"), ("remark", "notes")):
+                    value = str(row.get(src) or "").strip()
+                    if value and value != str(local.get(dst) or "").strip():
+                        fields[dst] = value
+                if fields:
+                    self.db.update_profile(uid, **fields)
+        except Exception as exc:
+            logger.debug("[amo] 拉取画像失败: %s" % exc)
+        # 日程/世界观缓存：本地空的才用插件的
+        for key, attr in (("schedule", "schedule"), ("schedule_ctx", "schedule_ctx"),
+                          ("schedule_profile", "schedule_profile"), ("worldview", "worldview")):
+            try:
+                local = self.db.kv_get(key, None)
+                if local:
+                    continue
+                value = await self._data_call("cache_get", bot_id, key)
+                if value:
+                    self.db.kv_set(key, value)
+                    if self.state is not None:
+                        setattr(self.state, attr, value)
+            except Exception:
+                continue
 
     def _memory_plugin_target(self):
         """能提供检索的对象：优先插件的 service，其次插件本身。"""
@@ -7117,6 +7277,13 @@ class HumanCorePlugin(Star):
             if saved and saved[0] == text and time.time() - saved[1] < 180:
                 return
             self.db.add_message(umo, "bot", self.bot_name, "bot", text)
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._data_call(
+                    "add_message", self._data_bot_id(), umo, "bot", self.bot_name, "bot", text
+                ))
+            except Exception:
+                pass
             self._last_bot_saved[umo] = (text, time.time())
         except Exception as exc:
             logger.debug("[amo] 记录自己的回复失败: %s" % exc)
@@ -9830,6 +9997,10 @@ class HumanCorePlugin(Star):
         if relation not in NETWORK_RELATIONS:
             return {"code": 1, "msg": "关系类型无效"}
         self.db.upsert_relation(a_uid, b_uid, relation, note)
+        try:
+            await self._push_relation_to_data(a_uid, b_uid, relation, note)
+        except Exception as exc:
+            logger.debug("[amo] 关系同步失败: %s" % exc)
         logger.debug("[amo] 关系网更新: %s <-> %s = %s" % (a_uid, b_uid, relation))
         return await self.api_relations()
 
@@ -9841,6 +10012,7 @@ class HumanCorePlugin(Star):
         if not a_uid or not b_uid:
             return {"code": 1, "msg": "缺少用户"}
         self.db.delete_relation(a_uid, b_uid)
+        await self._data_call("delete_relation", self._data_bot_id(), a_uid, b_uid)
         return await self.api_relations()
 
     async def api_dispatch(self, action: str = ""):
@@ -9966,6 +10138,10 @@ class HumanCorePlugin(Star):
         self.db.update_profile(uid, **fields)
         if fields.get("relation") == "相恋":
             self._register_lover(uid)
+        try:
+            await self._push_profile_to_data(uid, self.db.get_profile(uid))
+        except Exception as exc:
+            logger.debug("[amo] 画像同步失败: %s" % exc)
         return {"code": 0, "data": self.db.get_profile(uid)}
 
     async def api_chat_history(self):
