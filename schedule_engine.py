@@ -108,10 +108,88 @@ CATEGORY_MOOD = {
     "life": {"平静": 0.8, "疲惫": 0.4},
 }
 
-WORK_BANK = [
+TECH_WORK_BANK = [
     "开电脑看邮件", "写代码改需求", "开会对齐方案", "改 Bug",
     "回消息处理需求", "摸鱼喝咖啡", "整理文档", "和同事讨论接口",
 ]
+OFFICE_WORK_BANK = [
+    "开电脑看邮件", "整理文档", "开会过方案", "回消息处理事情",
+    "做表格对数据", "和同事讨论事情", "泡杯咖啡续命", "写周报",
+]
+STUDENT_BANK = [
+    "上课记笔记", "在图书馆自习", "赶作业", "做实验", "准备考试",
+    "在教室听讲座", "小组讨论", "背单词",
+]
+TEACHER_BANK = [
+    "备课", "上课讲题", "批作业", "开教研会", "找学生谈话",
+    "整理课件", "监考",
+]
+MED_BANK = [
+    "查房", "写病历", "上门诊", "交接班", "看检查结果", "处理医嘱",
+]
+SALES_BANK = [
+    "给客户打电话", "整理报价", "跑客户", "开销售会", "回客户消息",
+    "准备方案", "跟进合同",
+]
+CREATIVE_BANK = [
+    "改稿", "画图", "写文案", "对需求", "找参考", "调细节",
+    "和甲方沟通", "导出终稿",
+]
+SERVICE_BANK = [
+    "备餐", "接待客人", "收拾台面", "盘点库存", "交接班",
+    "处理订单", "擦桌子",
+]
+ADMIN_BANK = [
+    "整理文件", "做报表", "开会", "写材料", "对接部门",
+    "核对数据", "回复邮件",
+]
+
+# 职业关键词 -> 工作活动库；匹配不到的走通用办公（不再默认程序员）
+OCCUPATION_BANKS = (
+    (("程序员", "开发", "架构", "运维", "测试", "技术", "科技", "算法", "前端", "后端", "软件"), TECH_WORK_BANK),
+    (("学生", "研究生", "大学生", "高中生", "初中生", "考研"), STUDENT_BANK),
+    (("老师", "教师", "教授", "讲师", "教练", "园长"), TEACHER_BANK),
+    (("医生", "护士", "医师", "药师", "医护", "牙医"), MED_BANK),
+    (("销售", "商务", "市场", "采购", "客户经理", "业务员", "公关"), SALES_BANK),
+    (("设计", "文案", "编辑", "作者", "画师", "摄影师", "剪辑", "自媒体", "编剧"), CREATIVE_BANK),
+    (("厨师", "餐饮", "店长", "服务员", "咖啡师", "店员", "收银"), SERVICE_BANK),
+    (("会计", "财务", "行政", "人事", "公务员", "文员", "法务", "律师", "hr"), ADMIN_BANK),
+)
+
+# 会出差/跑外勤的职业
+TRAVEL_KEYWORDS = ("销售", "商务", "市场", "采购", "项目经理", "顾问", "客户", "出差", "外勤")
+
+
+def work_bank_for(world):
+    """按职业挑工作活动库；认不出来就用通用办公，不再默认「写代码/改 Bug」。"""
+    world = world or {}
+    text = (str(world.get("occupation") or "") + " " + str(world.get("workplace") or "")).lower()
+    for keywords, bank in OCCUPATION_BANKS:
+        for keyword in keywords:
+            if keyword in text:
+                return bank
+    return OFFICE_WORK_BANK
+
+
+def travels_for_work(world):
+    text = (str((world or {}).get("occupation") or "") + " " + str((world or {}).get("workplace") or "")).lower()
+    return any(keyword in text for keyword in TRAVEL_KEYWORDS)
+
+
+def occupation_kind(world):
+    """粗分类，用来决定突发事件文案。"""
+    world = world or {}
+    text = (str(world.get("occupation") or "") + " " + str(world.get("workplace") or "")).lower()
+    for keywords, kind in (
+        (("学生", "研究生", "大学生", "高中生", "初中生", "考研"), "student"),
+        (("老师", "教师", "教授", "讲师", "教练", "园长"), "teacher"),
+        (("医生", "护士", "医师", "药师", "医护", "牙医"), "med"),
+        (("程序员", "开发", "架构", "运维", "测试", "技术", "科技", "算法", "前端", "后端", "软件"), "tech"),
+    ):
+        for keyword in keywords:
+            if keyword in text:
+                return kind
+    return "office"
 COMMUTE_BANK = [
     "挤地铁去公司", "在车上听歌", "等红灯", "换乘", "堵在路上",
     "刷手机看路况", "快步往公司走",
@@ -404,7 +482,7 @@ class ScheduleEngine:
         _, _, cfg_assets = self._split_assets(self.p.cfg_str("schedule_car", "") or "")
         yesterday = self.yesterday_summary(day)
         good_weather = self._good_weather(weather)
-        event = self._pick_event(day, meta, weather, health, period, seed)
+        event = self._pick_event(day, meta, weather, health, period, seed, world)
         scenic = self._pick_scenic(day, meta, weather, health, period, event, good_weather, seed, city)
 
         mood_now = {key: clamp(mood.get(key, MOOD_BASE[key])) for key in MOOD_KEYS}
@@ -573,34 +651,57 @@ class ScheduleEngine:
             temp = 20.0
         return 5.0 <= temp <= 34.0
 
-    def _pick_event(self, day, meta, weather, health, period, seed):
+    # 各职业的「临时加班」文案
+    OVERTIME_NOTES = {
+        "tech": ("临时加班", "线上出问题了，被叫去公司处理"),
+        "student": ("临时加课", "老师临时加了两节课，晚上才回"),
+        "teacher": ("临时代课", "学校临时安排代课/监考，走不开"),
+        "med": ("临时排班", "科室临时排了班，得顶上去"),
+        "office": ("临时加班", "公司临时有事，被叫过去帮忙"),
+    }
+
+    def _pick_event(self, day, meta, weather, health, period, seed, world=None):
         """按日期种子决定突发事件，保证同一天多次读取结果一致。"""
         prob = clamp(self.p.cfg_float("schedule_event_prob", 0.28), 0.0, 0.9)
         rng = random.Random(seed ^ 0x5F3759DF)
         if rng.random() > prob:
             return {"kind": "none"}
         rest = bool((meta or {}).get("rest"))
+        kind = occupation_kind(world)
         if not rest:
-            # 工作日：外派省份随机生成，影响当天所在位置和整段日程。
-            provinces = sorted(PROVINCE_CITIES.keys())
-            province = provinces[rng.randrange(len(provinces))]
-            city = PROVINCE_CITIES[province]
-            return {
-                "kind": "business_trip",
-                "title": "临时外派",
-                "province": province,
-                "city": city,
-                "where": "%s·%s" % (province, city),
-                "note": "早上接到通知，被公司临时外派去%s出差，当天回不来" % city,
-                "effects": {"疲惫": 10, "焦虑": 10, "开心": -6, "生气": 3},
-                "soothe": False,
-            }
-        # 休息日：老板叫去加班 / 朋友叫出去聚餐。
-        if rng.random() < 0.55:
+            # 只有会跑外勤的职业才出差；其他人是加班/加课/排班
+            if travels_for_work(world) and rng.random() < 0.55:
+                provinces = sorted(PROVINCE_CITIES.keys())
+                province = provinces[rng.randrange(len(provinces))]
+                city = PROVINCE_CITIES[province]
+                return {
+                    "kind": "business_trip",
+                    "title": "临时外派",
+                    "province": province,
+                    "city": city,
+                    "where": "%s·%s" % (province, city),
+                    "note": "早上接到通知，被派去%s出差，当天回不来" % city,
+                    "task": "处理外派的事",
+                    "effects": {"疲惫": 10, "焦虑": 10, "开心": -6, "生气": 3},
+                    "soothe": False,
+                }
+            title, note = self.OVERTIME_NOTES.get(kind, self.OVERTIME_NOTES["office"])
             return {
                 "kind": "overtime",
-                "title": "临时加班",
-                "note": "上午老板打电话来，说线上有紧急 Bug，让我临时去公司改一下",
+                "title": title,
+                "note": "早上" + note + "，今天回不去了",
+                "task": "处理临时的事",
+                "effects": {"疲惫": 12, "焦虑": 8, "生气": 10, "开心": -8},
+                "soothe": False,
+            }
+        # 休息日：临时加班 / 朋友聚餐。
+        if rng.random() < 0.55:
+            title, note = self.OVERTIME_NOTES.get(kind, self.OVERTIME_NOTES["office"])
+            return {
+                "kind": "overtime",
+                "title": title,
+                "note": "上午接到电话，" + note + "，休息日也泡汤了",
+                "task": "处理临时的事",
                 "effects": {"生气": 16, "暴躁": 8, "焦虑": 12, "开心": -12, "疲惫": 6},
                 "soothe": False,
             }
@@ -870,12 +971,12 @@ class ScheduleEngine:
             self._seg("00:00", "08:00", "睡觉", home, "home", "sleep"),
             self._seg("08:00", "09:00", "起床吃早餐", home, "home", "meal"),
             self._seg("09:00", "10:00", "本来打算在家躺一天", home, "home", "rest"),
-            self._seg("10:00", "11:00", "接到老板电话，打开电脑改紧急 Bug", home, "home", "work",
+            self._seg("10:00", "11:00", "接到电话，" + str(event.get("task") or "处理点急事"), home, "home", "work",
                       event="overtime", effects=event.get("effects") or {}),
             self._seg("11:00", "12:00", "开车赶去公司", "路上", "road", "commute",
                       transit="drive", vehicle=car, detail="周末也堵，心里更烦了"),
             self._seg("12:00", "13:00", "在公司楼下随便吃一口", office + "附近", "restaurant", "meal"),
-            self._seg("13:00", "18:00", "在公司改 Bug、被拉去开会", office, "office", "work"),
+            self._seg("13:00", "18:00", "在公司" + str(event.get("task") or "处理事情") + "、被拉去开会", office, "office", "work"),
             self._seg("18:00", "19:00", "下班回家", "路上", "road", "commute",
                       transit="drive", vehicle=car),
             self._seg("19:00", "20:00", "到家吃晚饭", home, "home", "meal"),
@@ -1037,7 +1138,7 @@ class ScheduleEngine:
             return self._choose(HOTEL_BANK, rng, prev)
         if zone == "office":
             if hour in (9, 10, 11, 14, 15, 16, 17):
-                return self._choose(WORK_BANK, rng, prev)
+                return self._choose(work_bank_for(ctx.get("world")), rng, prev)
             return "午休" if hour == 13 else self._choose(REST_BANK, rng, prev)
         if zone == "scenic":
             if spot:
@@ -1058,7 +1159,7 @@ class ScheduleEngine:
                 bank = LUNCH_BANK if 10 <= hour < 15 else DINNER_BANK
                 return self._choose(bank, rng, prev)
             if category == "work":
-                return self._choose(WORK_BANK, rng, prev)
+                return self._choose(work_bank_for(ctx.get("world")), rng, prev)
             if category == "rest":
                 return self._choose(REST_BANK, rng, prev)
             if category == "life":
