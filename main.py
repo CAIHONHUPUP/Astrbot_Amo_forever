@@ -6653,6 +6653,14 @@ class HumanCorePlugin(Star):
                 "【识人回应】对方在让你记称呼/认人。不要复述 @昵称、QQ号、群号或后台字段；"
                 "只自然答应，例如“好，我记住了，这是你朋友吗”，不要把人机式记录念出来。"
             )
+        try:
+            if str(self.db.kv_get("weather_alert_open", "") or "") == today_str():
+                parts.append(
+                    "【天气提醒之后】你今晚已经提醒过他天气了，他说“知道了/好/嗯/收到”就自然应一句，"
+                    "不要再提天气、带伞、加衣服，也不要追问；只有他主动再问天气才回答。"
+                )
+        except Exception:
+            pass
         parts.append("以上是你的内在状态，不要直接复述，只影响语气、长度和是否愿意说话。")
         return "\n".join(parts)
 
@@ -7245,6 +7253,56 @@ class HumanCorePlugin(Star):
         return items[0][1]
 
 
+    def _pick_weather_alert_umo(self):
+        """QQ / 飞书里随机挑一个她收到过消息的平台。"""
+        candidates = []
+        try:
+            for profile in self.db.proactive_profiles(limit=5):
+                item = str(profile.get("private_umo") or "")
+                if item:
+                    candidates.append(item)
+                uid = str(profile.get("uid") or "")
+                data = self.db.kv_get("channels:%s" % uid, {}) or {}
+                if isinstance(data, dict):
+                    for value in data.values():
+                        if isinstance(value, dict) and value.get("umo"):
+                            candidates.append(str(value["umo"]))
+        except Exception as exc:
+            logger.debug("[amo] 天气提醒选平台失败: %s" % exc)
+        seen = []
+        for item in candidates:
+            if item and item not in seen:
+                seen.append(item)
+        if not seen:
+            fallback = self._last_umo or self._first_private_umo()
+            return fallback or ""
+        return random.choice(seen)
+
+    async def _weather_alert_text(self, umo, tomorrow, fallback):
+        """用她自己的语气说这句提醒；模型失败就退回模板。"""
+        facts = []
+        day_text = (str(tomorrow.get("textDay") or "") + " " + str(tomorrow.get("textNight") or "")).strip()
+        if day_text:
+            facts.append("明天天气：" + day_text)
+        if tomorrow.get("tempMax"):
+            facts.append("明天最高 " + str(tomorrow.get("tempMax")) + "℃")
+        system = (
+            await self.llm.persona(umo) + "\n\n"
+            "规则：你就是角色本人，只输出要发出去的消息，不要解释、不要旁白、不要复述数据。"
+        )
+        prompt = (
+            "事实：\n" + "\n".join(facts) + "\n"
+            "参考说法（不要照抄）：" + fallback + "\n"
+            "请用你平时跟他说话的语气提醒他一次：下雨就提带伞，下雪路滑就提慢点，降温就提加衣服。\n"
+            "要求：一句话，口语，不超过 30 个字；不要问他想不想带伞，不要叮嘱两遍，不要煽情。"
+        )
+        try:
+            text = await self.llm.chat(umo, system, prompt, limit=60)
+        except Exception as exc:
+            logger.debug("[amo] 天气提醒文案生成失败: %s" % exc)
+            text = ""
+        return text or fallback
+
     async def _maybe_weather_alert(self):
         """明天天气变坏时，到点提醒一次（每天最多一条）。"""
         if not self.cfg_bool("weather_alert_enabled", False):
@@ -7278,25 +7336,19 @@ class HumanCorePlugin(Star):
         if not text:
             logger.info("[amo] 天气提醒：明天天气正常，不提醒")
             return
-        if self.cfg_bool("weather_alert_dry_run", False):
-            logger.info("[amo] 天气提醒（试跑，不发送）: %s" % text)
-            self.db.kv_set("weather_alert_sent", today)
-            return
-        umo = ""
-        try:
-            for profile in self.db.proactive_profiles(limit=5):
-                umo = self._pick_proactive_umo(profile)
-                if umo:
-                    break
-        except Exception as exc:
-            logger.debug("[amo] 天气提醒选平台失败: %s" % exc)
-        umo = umo or self._last_umo or self._first_private_umo()
+        umo = self._pick_weather_alert_umo()
         if not umo:
             logger.info("[amo] 天气提醒：没有可发送的会话")
+            return
+        text = await self._weather_alert_text(umo, items[1], text)
+        if self.cfg_bool("weather_alert_dry_run", False):
+            logger.info("[amo] 天气提醒（试跑，不发送）: %s -> %s" % (text, umo))
+            self.db.kv_set("weather_alert_sent", today)
             return
         sent = await self._send_to_umo(umo, text)
         if sent:
             self.db.kv_set("weather_alert_sent", today)
+            self.db.kv_set("weather_alert_open", today)
             logger.info("[amo] 天气提醒已发送: %s -> %s" % (text, umo))
         else:
             logger.warning("[amo] 天气提醒发送失败: %s" % umo)
