@@ -1,4 +1,10 @@
 {
+  "weather_city_name": {
+    "type": "string",
+    "description": "城市显示名",
+    "default": "",
+    "hint": "weather_city 填 LocationID（数字）时用，比如填 101281601、这里填东莞；留空就显示城市原值"
+  },
   "weather_alert_enabled": {
     "type": "bool",
     "description": "明晚天气变坏时提醒一次",
