@@ -211,8 +211,15 @@
   "companion_memory_plugin_name": {
     "type": "string",
     "description": "记忆来源插件",
+    "options": [
+      "auto",
+      "astrbot_plugin_livingmemory",
+      "astrbot_plugin_memory_companion",
+      "astrbot_plugin_private_companion",
+      "astrbot_plugin_angel_memory"
+    ],
     "default": "auto",
-    "hint": "auto=自动检测已安装插件；也可以在用户画像页选择。旧默认 astrbot_plugin_private_companion 会自动迁移为 auto。"
+    "hint": "auto=自动检测（优先 livingmemory，其次记忆陪伴类插件）。面板「记忆」页只是只读展示，注入由 livingmemory 自己负责。"
   },
   "companion_profile_sync": {
     "type": "bool",

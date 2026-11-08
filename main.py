@@ -5702,6 +5702,38 @@ class HumanCorePlugin(Star):
                 return str(path)
         return ""
 
+    def _livingmem_active(self):
+        """livingmemory 现在算不算记忆源：启用着，或者用户明确选了它。"""
+        selected = self.cfg_str("companion_memory_plugin_name", "").strip().lower()
+        explicit = selected not in ("", "auto", "automatic", "自动")
+        if explicit and selected != "astrbot_plugin_livingmemory":
+            return False
+        try:
+            meta = self.context.get_registered_star("astrbot_plugin_livingmemory")
+            if meta is not None and not bool(getattr(meta, "activated", True)):
+                return False
+        except Exception:
+            pass
+        return bool(self._livingmem_db_path())
+
+    def _livingmem_stats(self):
+        """livingmemory 有没有数据、大概几个人（面板候选用）。"""
+        if not self._livingmem_db_path():
+            return False, 0
+        rows = self._livingmem_rows("SELECT COUNT(*) AS n FROM documents")
+        total = int(rows[0]["n"]) if rows else 0
+        if not total:
+            return False, 0
+        owners = set()
+        try:
+            for row in self._livingmem_rows("SELECT metadata FROM documents LIMIT 500"):
+                meta = json.loads(row.get("metadata") or "{}")
+                for item in meta.get("participant_uids") or []:
+                    owners.add(str(item))
+        except Exception:
+            owners = set()
+        return True, max(len(owners), 1)
+
     def _livingmem_rows(self, sql, params=()):
         path = self._livingmem_db_path()
         if not path:
@@ -5831,13 +5863,14 @@ class HumanCorePlugin(Star):
     def _external_all_memories(self, uid, query="", limit=50):
         """只读地从已安装记忆插件取完整记忆，不创建画像。"""
         items = []
+        if self._livingmem_active():
+            living = self._livingmem_all_memories(uid, query, limit)
+            if living:
+                return living
         plugin = self._companion_plugin()
         if plugin is None:
             return items
         try:
-            living = self._livingmem_all_memories(uid, query, limit)
-            if living:
-                return living
             if self._is_memory_companion(plugin):
                 items.extend(self._memcomp_all_memories(uid, query, limit))
             elif self._is_angel_memory(plugin):
@@ -5850,9 +5883,10 @@ class HumanCorePlugin(Star):
 
     def _external_profile_memories(self, uid, name="", alias="", limit=200):
         """按 UID 或名字/称呼从已安装记忆插件取完整记忆；只读，不建画像。"""
-        living = self._livingmem_all_memories(uid, "", limit)
-        if living:
-            return living
+        if self._livingmem_active():
+            living = self._livingmem_all_memories(uid, "", limit)
+            if living:
+                return living
         plugin = self._companion_plugin()
         if plugin is None:
             return []
@@ -5956,6 +5990,11 @@ class HumanCorePlugin(Star):
                     + (getattr(meta, "module_path", "") or "")
                 ).lower()
                 score = 0
+                if "livingmemory" in marker:
+                    # 只有真的启用着才给最高权重；停用时让位给别的已激活记忆插件
+                    score += 12 if bool(getattr(meta, "activated", False)) else 3
+                if bool(getattr(meta, "activated", False)):
+                    score += 2
                 if "private_companion" in marker:
                     score += 5
                 if "memory" in marker:
@@ -5995,6 +6034,10 @@ class HumanCorePlugin(Star):
                 users = data.get("users") if isinstance(data, dict) else None
                 count = len(users) if isinstance(users, dict) else 0
                 ready = False
+                marker = (
+                    (getattr(meta, "name", "") or "") + " "
+                    + (getattr(meta, "module_path", "") or "")
+                ).lower()
                 if isinstance(users, dict) and users:
                     sample = next((item for item in users.values() if isinstance(item, dict)), {})
                     ready = isinstance(sample, dict) and (
@@ -6008,6 +6051,11 @@ class HumanCorePlugin(Star):
                 if plugin is not None and self._is_angel_memory(plugin):
                     ready = True
                     count = self._angel_user_count(plugin)
+                if "livingmemory" in marker:
+                    lm_ready, lm_count = self._livingmem_stats()
+                    if lm_ready:
+                        ready = True
+                        count = lm_count
                 items.append({
                     "name": str(getattr(meta, "name", "") or ""),
                     "display_name": str(getattr(meta, "display_name", "") or getattr(meta, "name", "") or ""),
@@ -9224,7 +9272,7 @@ class HumanCorePlugin(Star):
             )
         else:
             items = self.db.list_memories(uid, limit)
-        if self._companion_plugin() is not None:
+        if self._companion_plugin() is not None or self._livingmem_active():
             seen = {
                 re.sub(r"\s+", "", str(item.get("content") or "")).lower()
                 for item in items
