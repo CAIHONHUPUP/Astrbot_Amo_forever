@@ -371,6 +371,94 @@ class HeartflowEngine:
             f"独立配置群数: {len(self.group_threshold_configs)} | 防抖: {'开' if self.enable_debounce else '关'}"
         )
 
+    def _list_chat_providers(self):
+        """列出所有可用的对话供应商（id/model/provider 对象），忽略停用的。"""
+        items = []
+        try:
+            raw = self.context.get_all_providers() or []
+        except Exception:
+            raw = []
+        for provider in raw:
+            config = getattr(provider, "provider_config", None) or {}
+            if config.get("enable") is False:
+                continue
+            pid = str(config.get("id") or "")
+            if not pid:
+                continue
+            model = ""
+            try:
+                model = str(provider.get_model() or "")
+            except Exception:
+                model = str(config.get("model") or "")
+            items.append({"id": pid, "model": model, "provider": provider})
+        return items
+
+    def _auto_pick_judge_provider(self):
+        """未配置判定模型时自动挑一个：优先便宜小模型，其次避开主对话模型。
+
+        结果按供应商列表签名缓存；在 AstrBot 里增删/改模型后下一次判定会自动重选。
+        """
+        providers = self._list_chat_providers()
+        signature = "|".join(sorted(item["id"] + ":" + item["model"] for item in providers))
+        cache = getattr(self, "_judge_auto_cache", None)
+        if isinstance(cache, dict) and cache.get("signature") == signature:
+            return cache.get("provider")
+        if not providers:
+            self._judge_auto_cache = {"signature": signature, "provider": None}
+            return None
+        using_id = ""
+        try:
+            using = self.context.get_using_provider()
+            using_id = str((getattr(using, "provider_config", None) or {}).get("id") or "")
+        except Exception:
+            using_id = ""
+        others = [item for item in providers if item["id"] != using_id]
+        pool = others or providers
+        cheap_hints = (
+            "flash", "mini", "lite", "turbo", "small", "fast", "air",
+            "8b", "7b", "1.5b", "3b", "nano", "haiku", "spark",
+        )
+
+        def cheap_score(item):
+            text = (item["id"] + " " + item["model"]).lower()
+            return sum(1 for hint in cheap_hints if hint in text)
+
+        pool.sort(key=lambda item: (-cheap_score(item), item["id"]))
+        chosen = pool[0]["provider"]
+        self._judge_auto_cache = {"signature": signature, "provider": chosen}
+        try:
+            logger.info(
+                "[心流] 判定模型自动选择: %s (%s)%s"
+                % (pool[0]["id"], pool[0]["model"] or "?",
+                   "；避开主对话模型 " + using_id if using_id and others else "")
+            )
+        except Exception:
+            pass
+        return chosen
+
+    def judge_provider_info(self):
+        """给面板展示：判定模型当前用的哪个、是不是自动选的。"""
+        configured = str(self.judge_provider_name or "").strip()
+        provider = None
+        if configured:
+            try:
+                provider = self.context.get_provider_by_id(configured)
+            except Exception:
+                provider = None
+            auto = False
+        else:
+            provider = self._auto_pick_judge_provider()
+            auto = True
+        info = {"configured": configured, "auto": auto, "id": "", "model": ""}
+        if provider is not None:
+            config = getattr(provider, "provider_config", None) or {}
+            info["id"] = str(config.get("id") or "")
+            try:
+                info["model"] = str(provider.get_model() or "")
+            except Exception:
+                info["model"] = str(config.get("model") or "")
+        return info
+
     def set_identity(self, name: str = "", aliases=None) -> None:
         """更新机器人名字/别名，用于识别群友是否在叫机器人。"""
         values = aliases if isinstance(aliases, (list, tuple, set)) else str(aliases or "").split(",")
@@ -777,6 +865,8 @@ class HeartflowEngine:
         if self.judge_provider_name:
             provider = self.context.get_provider_by_id(self.judge_provider_name)
         if not provider:
+            provider = self._auto_pick_judge_provider()
+        if not provider:
             try:
                 provider = await self.context.get_using_provider_async(event.unified_msg_origin)
             except Exception:
@@ -875,6 +965,8 @@ class HeartflowEngine:
         provider = None
         if self.judge_provider_name:
             provider = self.context.get_provider_by_id(self.judge_provider_name)
+        if not provider:
+            provider = self._auto_pick_judge_provider()
         if not provider:
             try:
                 provider = await self.context.get_using_provider_async(event.unified_msg_origin)

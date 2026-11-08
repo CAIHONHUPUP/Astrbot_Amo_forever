@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 5.2.1
+我想永远陪着你 / 我想永远陪伴你 5.3.0
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -107,7 +107,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.2.1"
+PLUGIN_VERSION = "5.3.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -922,6 +922,100 @@ def usage_cost(usage, prices=None):
         cost += float(bucket.get("input_miss") or 0) * table["miss_" + prefix] / 1e6
         cost += float(bucket.get("output") or 0) * table["out_" + prefix] / 1e6
     return round(cost, 6)
+
+
+def fetch_provider_balance(api_key, base_url, kind, timeout=8.0):
+    """尽力查询供应商余额；查不到就返回 {ok: False, error}，不抛异常。
+
+    支持：DeepSeek（/user/balance）、SiliconFlow（/v1/user/info）、
+    OpenAI 兼容中转（/v1/dashboard/billing/subscription + usage，one-api/new-api 常见）。
+    """
+    import urllib.request
+
+    api_key = str(api_key or "").strip()
+    base = str(base_url or "").rstrip("/")
+    if not api_key or not base:
+        return {"ok": False, "error": "缺密钥或地址"}
+
+    def _request(url, headers=None):
+        auth = dict(headers or {})
+        auth.setdefault("Authorization", "Bearer " + api_key)
+        auth.setdefault("Accept", "application/json")
+        request = urllib.request.Request(url, headers=auth)
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    try:
+        if kind == "deepseek":
+            payload = _request(base + "/user/balance", {"Accept": "application/json"})
+            infos = payload.get("balance_infos") or []
+            chosen = None
+            for item in infos:
+                if str(item.get("currency") or "").upper() == "CNY":
+                    chosen = item
+                    break
+            if chosen is None and infos:
+                chosen = infos[0]
+            if not isinstance(chosen, dict):
+                return {"ok": False, "error": "返回里没有余额信息"}
+
+            def money(value):
+                try:
+                    return round(float(value), 2)
+                except (TypeError, ValueError):
+                    return None
+
+            return {
+                "ok": True,
+                "available": bool(payload.get("is_available")),
+                "currency": str(chosen.get("currency") or "CNY"),
+                "amount": money(chosen.get("total_balance")),
+                "granted": money(chosen.get("granted_balance")),
+                "topped_up": money(chosen.get("topped_up_balance")),
+            }
+        if kind == "siliconflow":
+            payload = _request(base + "/v1/user/info", {"Accept": "application/json"})
+            data = payload.get("data") or {}
+            amount = None
+            for field in ("balance", "totalBalance"):
+                try:
+                    amount = round(float(data.get(field)), 2)
+                    break
+                except (TypeError, ValueError):
+                    continue
+            if amount is None:
+                return {"ok": False, "error": "返回里没有余额字段"}
+            return {"ok": True, "currency": "CNY", "amount": amount}
+        # openai 兼容中转（one-api/new-api 常见）
+        subscription = _request(base + "/v1/dashboard/billing/subscription")
+        hard_limit = None
+        try:
+            hard_limit = float(subscription.get("hard_limit_usd"))
+        except (TypeError, ValueError):
+            hard_limit = None
+        if hard_limit is None:
+            return {"ok": False, "error": "返回里没有 hard_limit_usd"}
+        today = datetime.now()
+        month_start = today.replace(day=1).strftime("%Y-%m-%d")
+        end_date = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+        used_cents = 0.0
+        try:
+            usage = _request(
+                base + "/v1/dashboard/billing/usage?start_date=" + month_start + "&end_date=" + end_date
+            )
+            used_cents = float(usage.get("total_usage") or 0)
+        except Exception:
+            used_cents = 0.0
+        remaining = round(hard_limit - used_cents / 100.0, 2)
+        return {
+            "ok": True,
+            "currency": "USD",
+            "amount": max(0.0, remaining),
+            "used": round(used_cents / 100.0, 2),
+            "limit": round(hard_limit, 2),
+        }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:120]}
 
 
 def fetch_deepseek_balance(api_key, base_url="https://api.deepseek.com", timeout=8.0):
@@ -8460,6 +8554,8 @@ class HumanCorePlugin(Star):
             ("/profiles_sync", self.api_profiles_sync, ["GET", "POST"]),
             ("/config", self.api_config, ["GET"]),
             ("/usage", self.api_usage, ["GET"]),
+            ("/providers", self.api_providers, ["GET"]),
+            ("/providers_list", self.api_providers, ["GET"]),
             ("/balance", self.api_balance, ["GET"]),
             ("/config/save", self.api_config_save, ["GET", "POST"]),
             ("/config_save", self.api_config_save, ["GET", "POST"]),
@@ -8597,6 +8693,7 @@ class HumanCorePlugin(Star):
                 "hint": meta.get("hint", ""),
                 "default": meta.get("default"),
                 "options": meta.get("options") or [],
+                "special": meta.get("_special", ""),
                 "group": group,
                 "value": self.cfg(key, meta.get("default")),
             })
@@ -8691,6 +8788,132 @@ class HumanCorePlugin(Star):
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         return start.timestamp()
 
+    # ---- 供应商识别 / 多模型用量 ----
+    def _provider_inventory(self):
+        """读取 AstrBot 已配置的对话供应商；只返回脱敏信息，绝不回传密钥。"""
+        items = []
+        try:
+            providers = self.context.get_all_providers() or []
+        except Exception:
+            providers = []
+        for provider in providers:
+            config = getattr(provider, "provider_config", None) or {}
+            pid = str(config.get("id") or "")
+            if not pid:
+                continue
+            model = ""
+            try:
+                model = str(provider.get_model() or "")
+            except Exception:
+                model = str(config.get("model") or "")
+            api_base = str(config.get("api_base") or config.get("url") or "").strip()
+            key = config.get("key") or ""
+            if isinstance(key, list):
+                has_key = any(str(item or "").strip() for item in key)
+            else:
+                has_key = bool(str(key or "").strip())
+            items.append({
+                "id": pid,
+                "model": model,
+                "type": str(config.get("type") or ""),
+                "enable": config.get("enable", True) is not False,
+                "has_key": has_key,
+                "api_base": api_base,
+            })
+        return items
+
+    def _judge_provider_id(self):
+        try:
+            if self.heartflow is not None:
+                return str(self.heartflow.judge_provider_info().get("id") or "")
+        except Exception:
+            pass
+        return ""
+
+    def _using_provider_id(self):
+        try:
+            provider = self.context.get_using_provider()
+            return str((getattr(provider, "provider_config", None) or {}).get("id") or "")
+        except Exception:
+            return ""
+
+    async def api_providers(self):
+        """面板下拉用：列出已配置的模型供应商（脱敏），并标注心流判定/主对话模型。"""
+        await self._ensure_ready()
+        judge_id = self._judge_provider_id()
+        using_id = self._using_provider_id()
+        items = self._provider_inventory()
+        for item in items:
+            item["judge"] = bool(judge_id) and item["id"] == judge_id
+            item["using"] = bool(using_id) and item["id"] == using_id
+        return {"code": 0, "data": {"items": items}}
+
+    @staticmethod
+    def _balance_probe_kind(api_base):
+        base = str(api_base or "").lower()
+        if "deepseek" in base:
+            return "deepseek"
+        if "siliconflow" in base:
+            return "siliconflow"
+        return "openai_bill"
+
+    async def _provider_balances_cached(self, providers):
+        """逐个探测供应商余额；60 秒缓存，失败不阻塞面板。"""
+        now = time.time()
+        signature = "|".join(sorted(
+            item["id"] + ":" + item["api_base"] + ":" + str(item["has_key"]) for item in providers
+        ))
+        cache = getattr(self, "_provider_balance_cache", None)
+        if (
+            isinstance(cache, dict)
+            and now - to_float(cache.get("at"), 0) < 60
+            and cache.get("signature") == signature
+        ):
+            return cache.get("data") or []
+        enabled = [item for item in providers if item["enable"] and item["has_key"] and item["api_base"]]
+
+        def probe(item):
+            kind = self._balance_probe_kind(item["api_base"])
+            key = self._provider_api_key(item)
+            result = {"id": item["id"], "model": item["model"], "kind": kind}
+            if not key:
+                result.update({"ok": False, "error": "未配置密钥"})
+                return result
+            data = fetch_provider_balance(key, item["api_base"], kind)
+            data["id"] = item["id"]
+            data["model"] = item["model"]
+            data["kind"] = kind
+            return data
+
+        results = []
+        if enabled:
+            def run_all():
+                return [probe(item) for item in enabled]
+
+            try:
+                results = await asyncio.to_thread(run_all)
+            except Exception as exc:
+                logger.debug("[amo] 供应商余额探测失败: %s" % exc)
+                results = []
+        self._provider_balance_cache = {"at": now, "signature": signature, "data": results}
+        return results
+
+    def _provider_api_key(self, item):
+        """从 AstrBot 供应商配置里取密钥；只在内存中使用，不写日志不回传。"""
+        config = {}
+        try:
+            for provider in (self.context.get_all_providers() or []):
+                candidate = getattr(provider, "provider_config", None) or {}
+                if str(candidate.get("id") or "") == str(item.get("id") or ""):
+                    config = candidate
+                    break
+        except Exception:
+            config = {}
+        key = config.get("key") or ""
+        if isinstance(key, list):
+            key = next((str(item or "").strip() for item in key if str(item or "").strip()), "")
+        return str(key or "").strip()
+
     async def _balance_cached(self):
         """余额 60 秒内复用，避免面板每刷一次就打一次外网。"""
         now = time.time()
@@ -8723,6 +8946,30 @@ class HumanCorePlugin(Star):
             data["balance"] = await self._balance_cached()
         else:
             data["balance"] = {"ok": False, "error": "余额查询已关闭"}
+        # 多模型用量：已配置供应商 + 逐个余额探测 + 按模型匹配今日 token
+        providers = self._provider_inventory()
+        judge_id = self._judge_provider_id()
+        using_id = self._using_provider_id()
+        today_by_model = {}
+        for entry in (data.get("today", {}) or {}).get("by_model", []) or []:
+            today_by_model[str(entry.get("model") or "")] = entry
+        for item in providers:
+            item["judge"] = bool(judge_id) and item["id"] == judge_id
+            item["using"] = bool(using_id) and item["id"] == using_id
+            stats = today_by_model.get(item["model"]) or today_by_model.get(item["id"]) or {}
+            tokens = int(stats.get("input_miss") or 0) + int(stats.get("input_cached") or 0) + int(stats.get("output") or 0)
+            item["today_tokens"] = tokens
+            item["today_calls"] = int(stats.get("calls") or 0)
+            item["today_cost"] = float(stats.get("cost") or 0) if isinstance(stats.get("cost"), (int, float)) else 0.0
+        if self.cfg_bool("usage_balance_enabled", True) and self.cfg_bool("deepseek_balance_enabled", True):
+            balances = await self._provider_balances_cached(providers)
+            by_id = {str(item.get("id") or ""): item for item in balances}
+            for item in providers:
+                item["balance"] = by_id.get(item["id"]) or {"ok": False, "error": "未配置密钥或地址"}
+        else:
+            for item in providers:
+                item["balance"] = {"ok": False, "error": "余额查询已关闭"}
+        data["providers"] = providers
         return {"code": 0, "data": data}
 
     async def api_balance(self):

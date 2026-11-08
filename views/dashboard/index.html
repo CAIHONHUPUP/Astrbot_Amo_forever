@@ -185,6 +185,9 @@
       .schedule-hour-row .time { min-width: 92px; }
     }
 
+    .provider-row { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; border-bottom: 1px dashed var(--line); font-size: 12px; }
+    .provider-row:last-child { border-bottom: 0; }
+    .provider-row .hint { font-size: 11px; }
     .memory-source { margin-top: 10px; }
     .relation-form { margin-top: 10px; }
     .relation-form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
@@ -503,6 +506,13 @@
           <div class="value" id="balanceValue">—</div>
         </div>
         <div class="sub" id="usageModels" style="margin-top:10px"></div>
+        <div class="row between" style="margin-top:14px">
+          <div>
+            <div class="label">模型用量 / 余额</div>
+            <div class="sub" id="providerSub">自动检测 AstrBot 已配置的模型</div>
+          </div>
+        </div>
+        <div id="providerList" class="memory-list"></div>
       </section>
     </div>
 
@@ -685,7 +695,7 @@
       if (action === "status") list.push("get_status");
       if (action === "profiles") list.push("get_profile");
       if (action === "schedule_regen") list.push("schedule/regen");
-      if (action === "schedule_detail") list.push("schedule/detail");
+      if (action === "schedule_detail") list.push("schedule/detail");      if (action === "providers") list.push("providers_list");
       if (action === "kb_regen") list.push("kb/regen");
       if (action === "scenic_kb_regen") list.push("scenic_kb/regen");
       if (action === "worldview_regen") list.push("worldview/regen");
@@ -1360,6 +1370,45 @@
       return String(number);
     }
 
+    function renderProviderUsage(providers) {
+      const box = document.getElementById("providerList");
+      const sub = document.getElementById("providerSub");
+      if (!box) return;
+      box.textContent = "";
+      if (!Array.isArray(providers) || !providers.length) {
+        sub.textContent = "没有检测到已配置的模型供应商";
+        return;
+      }
+      sub.textContent = "共 " + providers.length + " 个供应商 · 密钥来自 AstrBot 模型配置（不回显）";
+      providers.forEach((provider) => {
+        const row = document.createElement("div");
+        row.className = "provider-row";
+        const left = document.createElement("div");
+        left.style.minWidth = "0";
+        const name = document.createElement("div");
+        const tags = [];
+        if (provider.using) tags.push("主对话");
+        if (provider.judge) tags.push("心流判定");
+        if (!provider.enable) tags.push("已停用");
+        name.textContent = (provider.id || "?") + (provider.model ? " · " + provider.model : "") + (tags.length ? "（" + tags.join(" / ") + "）" : "");
+        const detail = document.createElement("div");
+        detail.className = "hint";
+        const balance = provider.balance || {};
+        let money = "余额 —";
+        if (balance.ok) {
+          money = "余额 " + (balance.currency === "USD" ? "$" : "¥") + Number(balance.amount || 0).toFixed(2);
+          if (balance.used !== undefined) money += "（本月已用 $" + Number(balance.used).toFixed(2) + "）";
+        } else {
+          money = "余额 " + (balance.error || "不支持");
+        }
+        detail.textContent = "今日 " + usageNum(provider.today_tokens || 0) + " tokens · " + (provider.today_calls || 0) + " 次 · " + money;
+        left.appendChild(name);
+        left.appendChild(detail);
+        row.appendChild(left);
+        box.appendChild(row);
+      });
+    }
+
     async function loadUsage(force) {
       const setText = (id, text) => {
         const el = document.getElementById(id);
@@ -1407,6 +1456,7 @@
           ? "今日按模型：" + models.map((item) => (item.model || "?") + " " +
               usageNum((item.input_miss || 0) + (item.input_cached || 0) + (item.output || 0))).join(" · ")
           : "");
+        renderProviderUsage(data.providers || []);
       } catch (error) {
         setText("usageIn", "读取失败");
         setText("usageInSub", error && error.message ? error.message : "接口未就绪");
@@ -1418,9 +1468,10 @@
       return res && typeof res === "object" ? res : {};
     }
 
-    const tabButtons = Array.from(document.querySelectorAll(".tab"));
+    const tabButtons = Array.from(document.querySelectorAll(".tab[data-tab]"));
     let settingsGroupFilter = "基础";
     function showTab(name, group, activeButton) {
+      if (!name) return;
       tabButtons.forEach((button) => {
         if (activeButton) button.classList.toggle("active", button === activeButton);
         else button.classList.toggle("active", button.dataset.tab === name && button.dataset.group === undefined);
@@ -1934,6 +1985,28 @@
           });
           input.appendChild(button);
         });
+      } else if (item.special === "select_provider") {
+        input = document.createElement("select");
+        input.className = "input";
+        const auto = document.createElement("option");
+        auto.value = "";
+        auto.textContent = "自动选择（优先便宜小模型，避开主对话）";
+        input.appendChild(auto);
+        providersCache.forEach((provider) => {
+          if (provider.enable === false) return;
+          const node = document.createElement("option");
+          node.value = String(provider.id || "");
+          node.textContent = (provider.id || "?") + (provider.model ? " · " + provider.model : "") + (provider.judge ? "（当前判定）" : "") + (provider.using ? "（主对话）" : "");
+          input.appendChild(node);
+        });
+        const current = String(item.value ?? "");
+        if (current && !Array.from(input.options).some((node) => node.value === current)) {
+          const missing = document.createElement("option");
+          missing.value = current;
+          missing.textContent = current + "（已配置但未检测到）";
+          input.appendChild(missing);
+        }
+        input.value = current;
       } else if (Array.isArray(item.options) && item.options.length) {
         input = document.createElement("select");
         input.className = "input";
@@ -2057,11 +2130,25 @@
       });
     }
 
+    let providersCache = [];
+
+    async function ensureProviders(force) {
+      if (providersCache.length && !force) return providersCache;
+      try {
+        const result = objectFrom(await call("providers")) || {};
+        providersCache = Array.isArray(result.items) ? result.items : [];
+      } catch (error) {
+        providersCache = [];
+      }
+      return providersCache;
+    }
+
     async function loadSettings() {
       try {
         const result = await call("config");
         const data = objectFrom(result);
         configItems = Array.isArray(data.items) ? data.items : [];
+        if (configItems.some((item) => item.special === "select_provider")) await ensureProviders();
         renderSettings();
       } catch (error) {
         document.getElementById("settingsList").textContent = "读取配置失败：" + (error.message || error);

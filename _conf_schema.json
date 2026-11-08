@@ -444,7 +444,7 @@
     "description": "【心流】判断模型提供商",
     "type": "string",
     "default": "",
-    "hint": "留空则使用当前会话的主对话模型；建议单独配置一个快速小模型",
+    "hint": "留空自动选择：优先挑便宜小模型判定（flash/mini/lite/turbo），避开主对话模型；也可下拉选择。面板设置里可直接下拉。",
     "_special": "select_provider"
   },
   "hf_reply_threshold": {
@@ -1129,12 +1129,18 @@
     "type": "float",
     "description": "【私聊】合并等待秒数",
     "hint": "最后一条消息之后，等这么久没有新消息才回复。默认 6（实测连发间隔 3~5.4s）。",
-    "default": 6.0
+    "default": 6
   },
   "private_debounce_max_wait": {
     "type": "float",
     "description": "【私聊】合并最长等待秒数",
     "hint": "对方一直不停发的时候，最多憋这么久就先答一次。默认 14。",
-    "default": 14.0
+    "default": 14
+  },
+  "usage_balance_enabled": {
+    "type": "bool",
+    "description": "用量页显示各模型余额",
+    "hint": "检测 AstrBot 已配置的模型供应商（密钥自动读取），尽力查询余额：DeepSeek / SiliconFlow / OpenAI 兼容中转；查不到的只显示 token 用量。",
+    "default": true
   }
 }
