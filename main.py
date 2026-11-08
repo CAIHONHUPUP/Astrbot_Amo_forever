@@ -242,7 +242,7 @@ DIALECT_REGIONS = {
     "河南话": "河南",
     "上海话": "上海",
 }
-SCHEDULE_VERSION = "backbone-v5"
+SCHEDULE_VERSION = "backbone-v6"
 NETWORK_RELATIONS = ("家人", "恋人", "朋友", "同事", "同学", "熟人", "陌生人", "仇人")
 MOOD_KEYS = ("开心", "平静", "郁闷", "生气", "暴躁", "委屈", "疲惫", "焦虑", "兴奋", "依恋")
 MOOD_BASE = {
