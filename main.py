@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 5.4.0
+我想永远陪着你 / 我想永远陪伴你 5.3.2
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -87,14 +87,6 @@ except Exception:
             return ""
         def parse_weather_daily(*args, **kwargs):
             return []
-
-try:
-    from .gift_engine import GiftEngine
-except Exception:
-    try:
-        from gift_engine import GiftEngine
-    except Exception:
-        GiftEngine = None
         def next_check_slot(*args, **kwargs):
             return ""
         def parse_clock(*args, **kwargs):
@@ -133,7 +125,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.4.0"
+PLUGIN_VERSION = "5.3.2"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -3872,12 +3864,6 @@ class HumanCorePlugin(Star):
         self.state = None
         self.llm = LLMService(self)
         self.gate = ReplyGate(self)
-        self.gift = None
-        if GiftEngine is not None:
-            try:
-                self.gift = GiftEngine(self)
-            except Exception as exc:
-                logger.warning("[amo] 礼物引擎初始化失败: %s" % exc)
         self.heartflow = None
         self.segment_engine = None
         try:
@@ -7243,7 +7229,6 @@ class HumanCorePlugin(Star):
             "【生理期】" + snap["period"]["phase"] + "第" + str(snap["period"]["day"]) + "天",
             "【身体】" + snap["health"]["status"],
             "【天气】" + snap["weather_text"],
-            "【天气一致】你的天气以【天气】为准；不要说出和它相反的冷热（除非刚进出空调房/室内）。",
             "【正在】" + snap["activity"].get("activity", "休息") + "（" + self._short_place(snap["activity"].get("place", "家")) + "）",
             "【地点写法】地点是你自己的事，说的时候用口语（“商场餐厅”“咖啡店”“家”），不要把“城市·地点”这种内部写法念出来。",
             "【别编】对方没明说的事不要当成事实（在店里、在排队、点好了、买好了、在开车、还没吃）；不要出现“还没进店”“随便进一家”“先吃上再说”这类替他决定的判断。",
@@ -7385,14 +7370,6 @@ class HumanCorePlugin(Star):
                 % int(max(1, now_ts() - last_at))
             )
 
-        if self.gift is not None:
-            try:
-                gift_hint = await self.gift.build_hint(event)
-                if gift_hint:
-                    parts.append(gift_hint)
-            except Exception as exc:
-                logger.debug("[amo] 礼物上下文失败: %s" % exc)
-
         parts.append("以上是你的内在状态，不要直接复述，只影响语气、长度和是否愿意说话。")
         return "\n".join(parts)
 
@@ -7466,11 +7443,6 @@ class HumanCorePlugin(Star):
                 text = self._guard_self_location(text, self.state.current_activity().get("place"))
             except Exception:
                 pass
-            if self.gift is not None:
-                try:
-                    self.gift.observe_reply(event, text)
-                except Exception as exc:
-                    logger.debug("[amo] 礼物心愿捕获失败: %s" % exc)
             if looks_like_ai_admission(text):
                 text = "你才人机呢，你见过这么会聊天的机器人吗？"
                 result.chain = [Comp.Plain(text=text)]
@@ -8802,28 +8774,6 @@ class HumanCorePlugin(Star):
         )
         yield event.plain_result("✅ 已经记下来啦。")
 
-    @filter.command("礼物")
-    async def cmd_gift_list(self, event: AstrMessageEvent):
-        await self._ensure_ready()
-        if self.gift is None or not self.gift.enabled:
-            yield event.plain_result("礼物功能还没开。")
-            return
-        if not self.gift.is_owner(event):
-            yield event.plain_result("这个只给主人看哦。")
-            return
-        yield event.plain_result(self.gift.command_text())
-
-    @filter.command("送礼")
-    async def cmd_gift_send(self, event: AstrMessageEvent, item: str = ""):
-        await self._ensure_ready()
-        if self.gift is None or not self.gift.enabled:
-            yield event.plain_result("礼物功能还没开。")
-            return
-        if not self.gift.is_owner(event):
-            yield event.plain_result("这个只给主人用哦。")
-            return
-        yield event.plain_result(self.gift.manual_gift(event, item))
-
     # ---------- Web 面板 ----------
     def _register_web_apis(self):
         prefixes = uniq([
@@ -8909,8 +8859,6 @@ class HumanCorePlugin(Star):
             ("/kb_regen", self.api_kb_regen, ["GET", "POST"]),
             ("/schedule_regen", self.api_schedule_regen, ["GET", "POST"]),
             ("/weather", self.api_weather, ["GET"]),
-            ("/gift", self.api_gift, ["GET"]),
-            ("/gift/list", self.api_gift, ["GET"]),
             ("/worldview", self.api_worldview, ["GET"]),
             ("/worldview/regen", self.api_worldview_regen, ["GET", "POST"]),
             ("/worldview_regen", self.api_worldview_regen, ["GET", "POST"]),
@@ -9115,6 +9063,18 @@ class HumanCorePlugin(Star):
                     "可以写「省+市」或直接填 LocationID" % raw
                 )
             return False
+        if hit.get("ambiguous"):
+            cache = getattr(self, "_city_warn_cache", None)
+            if not isinstance(cache, dict):
+                cache = {}
+                self._city_warn_cache = cache
+            now = time.time()
+            key = "amb:" + raw
+            if now - to_float(cache.get(key), 0) > 3600:
+                cache[key] = now
+                logger.warning(
+                    "[amo] 天气城市%s" % (hit.get("note") or "有多个同名城市，已默认选一个")
+                )
         changed = False
         if str(hit["id"]) != raw:
             self.config["weather_city"] = str(hit["id"])
@@ -9191,6 +9151,9 @@ class HumanCorePlugin(Star):
             "data": {
                 "id": hit["id"], "name": hit["name"],
                 "label": hit["label"], "weather": weather or {},
+                "ambiguous": hit.get("ambiguous", 0),
+                "candidates": hit.get("candidates", []),
+                "note": hit.get("note", ""),
             },
         }
 
@@ -9788,16 +9751,6 @@ class HumanCorePlugin(Star):
                 "msg": "知识库创建失败：请检查是否配置了 Embedding 供应商，并查看 AstrBot 日志",
             }
         return {"code": 0, "msg": "知识库已就绪：" + self._dialect_kb_name()}
-
-    async def api_gift(self):
-        await self._ensure_ready()
-        if self.gift is None:
-            return {"code": 0, "data": {"enabled": False, "wishes": [], "gifts": []}}
-        try:
-            return {"code": 0, "data": self.gift.panel_data()}
-        except Exception as exc:
-            logger.debug("[amo] 礼物面板数据失败: %s" % exc)
-            return {"code": 0, "data": {"enabled": False, "wishes": [], "gifts": []}}
 
     async def api_schedule_regen(self):
         await self._ensure_ready()

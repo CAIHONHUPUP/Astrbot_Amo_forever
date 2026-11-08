@@ -324,7 +324,6 @@
       <button class="tab" data-tab="relations">关系</button>
       <button class="tab" data-tab="actions">操作</button>
       <button class="tab" data-tab="profiles">用户</button>
-      <button class="tab" data-tab="gift">礼物</button>
       <button class="tab" data-tab="settings" data-group="基础">基础</button>
       <button class="tab" data-tab="settings" data-group="状态">参数</button>
       <button class="tab" data-tab="settings" data-group="记忆">记忆</button>
@@ -464,22 +463,6 @@
           <button id="btnSaveRelation">添加 / 更新</button>
         </div>
         <div id="relationList" class="profile-list"><div class="sub">加载中…</div></div>
-      </section>
-    </div>
-
-    <div id="tab-gift" class="tab-panel" hidden>
-      <section class="card">
-        <div class="row between">
-          <div>
-            <div class="label">礼物墙</div>
-            <div class="sub" id="giftSub">他送过的东西 · 她最近想要的</div>
-          </div>
-          <button class="tab" id="giftRefresh" type="button">刷新</button>
-        </div>
-        <div class="label" style="margin-top:12px">她最近想要</div>
-        <div id="giftWishes" class="profile-list"><div class="sub">加载中…</div></div>
-        <div class="label" style="margin-top:16px">收到的礼物</div>
-        <div id="giftList" class="profile-list"><div class="sub">加载中…</div></div>
       </section>
     </div>
 
@@ -1480,71 +1463,6 @@
       }
     }
 
-    function giftTime(ts) {
-      const value = Number(ts);
-      if (!value) return "";
-      const date = new Date(value * 1000);
-      const now = new Date();
-      const pad = (n) => String(n).padStart(2, "0");
-      if (date.toDateString() === now.toDateString()) return pad(date.getHours()) + ":" + pad(date.getMinutes());
-      return (date.getMonth() + 1) + "-" + pad(date.getDate()) + " " + pad(date.getHours()) + ":" + pad(date.getMinutes());
-    }
-
-    function giftRow(item, meta) {
-      const row = document.createElement("div");
-      row.className = "profile-item";
-      const name = document.createElement("div");
-      name.className = "name";
-      name.textContent = item;
-      const sub = document.createElement("div");
-      sub.className = "meta";
-      sub.textContent = meta;
-      row.appendChild(name);
-      row.appendChild(sub);
-      return row;
-    }
-
-    async function loadGift() {
-      const wishesBox = document.getElementById("giftWishes");
-      const giftsBox = document.getElementById("giftList");
-      if (!wishesBox || !giftsBox) return;
-      wishesBox.innerHTML = '<div class="sub">加载中…</div>';
-      giftsBox.innerHTML = '<div class="sub">加载中…</div>';
-      try {
-        const data = objectFrom(await call("gift"));
-        const wishes = Array.isArray(data.wishes) ? data.wishes : [];
-        const gifts = Array.isArray(data.gifts) ? data.gifts : [];
-        wishesBox.innerHTML = "";
-        giftsBox.innerHTML = "";
-        if (data.enabled === false) {
-          const tip = giftRow("礼物功能未开启", "在「基础」里打开 gift_enable");
-          wishesBox.appendChild(tip);
-          return;
-        }
-        if (!wishes.length) {
-          wishesBox.appendChild(giftRow("还没有心愿", "她逛街看到喜欢的小东西时会记下来"));
-        } else {
-          wishes.forEach((wish) => {
-            const meta = [giftTime(wish.ts), wish.place || ""].filter(Boolean).join(" · ");
-            wishesBox.appendChild(giftRow(wish.item || "", meta));
-          });
-        }
-        if (!gifts.length) {
-          giftsBox.appendChild(giftRow("还没有收到的礼物", "说一句「送围巾」试试"));
-        } else {
-          gifts.forEach((gift) => {
-            const kind = { small: "小礼物", valuable: "贵重小件", vehicle: "车", home: "房", luxury: "贵重" }[gift.kind] || "礼物";
-            const meta = [kind, giftTime(gift.ts), gift.where || ""].filter(Boolean).join(" · ");
-            giftsBox.appendChild(giftRow(gift.item || "", meta));
-          });
-        }
-        const sub = document.getElementById("giftSub");
-        if (sub) sub.textContent = "心愿 " + wishes.length + " 件 · 礼物 " + gifts.length + " 件";
-      } catch (error) {
-        wishesBox.innerHTML = '<div class="sub">读取失败：' + (error && error.message ? error.message : "接口未就绪") + "</div>";
-      }
-    }
-
     function objectFrom(res) {
       if (res && res.data && typeof res.data === "object" && !Array.isArray(res.data)) return res.data;
       return res && typeof res === "object" ? res : {};
@@ -1565,7 +1483,6 @@
       if (name === "schedule") loadSchedule();
       if (name === "profiles") loadProfiles();
       if (name === "relations") loadRelations();
-      if (name === "gift") loadGift();
       if (name === "usage") loadUsage();
       if (name === "settings") {
         if (group) settingsGroupFilter = group;
@@ -1576,8 +1493,6 @@
     tabButtons.forEach((button) => button.addEventListener("click", () => showTab(button.dataset.tab, button.dataset.group, button)));
     const usageRefreshButton = document.getElementById("usageRefresh");
     if (usageRefreshButton) usageRefreshButton.addEventListener("click", () => loadUsage(true));
-    const giftRefreshButton = document.getElementById("giftRefresh");
-    if (giftRefreshButton) giftRefreshButton.addEventListener("click", () => loadGift());
 
     (function enableTabNav() {
       const wrap = document.querySelector(".tabnav");
