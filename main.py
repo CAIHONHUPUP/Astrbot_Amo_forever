@@ -112,6 +112,28 @@ DIALECT_SAMPLES = {
     "河南话": "弄啥嘞、中、得劲、木有",
     "上海话": "阿拉、侬、哪能、老灵",
 }
+CITY_DIALECT_RULES = (
+    (("贵阳", "贵州", "遵义", "安顺", "六盘水", "凯里"), "贵州话"),
+    (("成都", "四川", "重庆", "绵阳", "德阳", "宜宾"), "四川话"),
+    (("广州", "深圳", "东莞", "佛山", "珠海", "中山", "惠州", "江门", "汕头", "广东"), "广东话"),
+    (("上海", "苏州", "无锡", "常州", "昆山"), "上海话"),
+    (("天津",), "天津话"),
+    (("郑州", "河南", "洛阳", "开封"), "河南话"),
+    (("哈尔滨", "沈阳", "长春", "大连", "东北", "辽宁", "吉林", "黑龙江"), "东北话"),
+    (("台北", "台湾", "高雄", "台中"), "台湾腔"),
+)
+
+
+def dialect_for_city(city):
+    text = str(city or "")
+    if not text:
+        return ""
+    for keys, style in CITY_DIALECT_RULES:
+        if any(key in text for key in keys):
+            return style
+    return ""
+
+
 DIALECT_FALLBACK_ROWS = {
     "东北话": [
         ("咋整", "怎么办", "咋整啊"), ("唠嗑", "聊天", "来唠嗑"), ("得瑟", "显摆", "别得瑟"),
@@ -3741,14 +3763,14 @@ class HumanCorePlugin(Star):
             rows = []
         if rows:
             return rows
-        style = self.cfg_str("dialect_style", "贵州话").strip()
+        style = self._dialect_style().strip()
         return [
             {"term": term, "meaning": meaning, "region": style, "example": example}
             for term, meaning, example in DIALECT_FALLBACK_ROWS.get(style, [])
         ]
 
     def _dialect_region(self):
-        style = self.cfg_str("dialect_style", "贵州话").strip()
+        style = self._dialect_style().strip()
         return DIALECT_REGIONS.get(style, style)
 
     def _apply_dialect(self, text):
@@ -3879,9 +3901,27 @@ class HumanCorePlugin(Star):
             logger.debug("[amo] 景区知识库检索失败: %s" % exc)
             return ""
 
+    def _dialect_style(self):
+        """语种：配置里写了就用配置（面板可覆盖），没写就按世界观城市自动选。"""
+        explicit = str(self.cfg_str("dialect_style", "") or "").strip()
+        if explicit:
+            return explicit
+        city = ""
+        try:
+            world = getattr(self.state, "worldview", None) or {}
+            city = str(world.get("city") or "")
+        except Exception:
+            pass
+        if not city:
+            try:
+                city = str(self.cfg_str("weather_city", "") or "")
+            except Exception:
+                pass
+        return dialect_for_city(city)
+
     def _dialect_kb_name(self):
         base = self.cfg_str("dialect_kb_name", "陪伴方言库").strip() or "陪伴方言库"
-        style = self.cfg_str("dialect_style", "贵州话").strip()
+        style = self._dialect_style().strip()
         return base + "-" + style if style else base
 
     @staticmethod
@@ -6182,9 +6222,10 @@ class HumanCorePlugin(Star):
         if consult:
             system_parts.append("【回答方式】这是咨询/步骤类问题：先给结论，最多 2-3 句，口语化，保留角色感，不要客服腔。")
         if self.cfg_bool("dialect_enabled", True):
-            style = self.cfg_str("dialect_style", "贵州话")
+            style = self._dialect_style()
             samples = DIALECT_SAMPLES.get(style, "")
-            system_parts.append("【方言】你的语种设定是「" + style + "」，偶尔自然用一点当地方言口语（如" + samples + "），但不要每句都用，也不要硬替换“就是/什么/怎么”。")
+            if style and samples:
+                system_parts.append("【方言】你的语种设定是「" + style + "」，偶尔自然用一点当地方言口语（如" + samples + "），但不要每句都用，也不要硬替换“就是/什么/怎么”。")
         if relation == "相恋" and (snap["mood"]["暴躁"] >= 60 or snap["mood"]["生气"] >= 62):
             system_parts.append("【恋人情绪】你在生他的气，但会抱怨、闹别扭、要哄，不会像对普通人一样冷怼或赶人。")
         if getattr(event, "amo_impersonation", False):
@@ -6538,9 +6579,10 @@ class HumanCorePlugin(Star):
         if re.search(r"(怎么|如何|为什么|步骤|怎么办|该怎么做|教程|方法|建议|教我|能不能|是什么|该不该|可不可以)", event.message_str or ""):
             parts.append("【回答方式】这是咨询/步骤类问题：先给结论，最多 2-3 句，口语化，保留角色感，不要客服腔。")
         if self.cfg_bool("dialect_enabled", True):
-            style = self.cfg_str("dialect_style", "贵州话")
+            style = self._dialect_style()
             samples = DIALECT_SAMPLES.get(style, "")
-            parts.append("【方言】你的语种设定是「" + style + "」，偶尔自然用一点当地方言口语（如" + samples + "），但不要每句都用，也不要硬替换“就是/什么/怎么”。")
+            if style and samples:
+                parts.append("【方言】你的语种设定是「" + style + "」，偶尔自然用一点当地方言口语（如" + samples + "），但不要每句都用，也不要硬替换“就是/什么/怎么”。")
         if re.search(r"(旅游|景区|景点|去哪|好玩|假期|游玩)", event.message_str or ""):
             scenic_text = await self._scenic_kb_context(event.message_str or "")
             if scenic_text:
@@ -7351,7 +7393,7 @@ class HumanCorePlugin(Star):
                 "weather_host": self.cfg_str("weather_host", "https://devapi.qweather.com"),
                 "version": PLUGIN_VERSION,
                 "memory_source": self.cfg_str("memory_source", "auto"),
-                "dialect_style": self.cfg_str("dialect_style", "贵州话"),
+                "dialect_style": self._dialect_style(),
                 "dialect_count": len(self._dialect_rows()),
                 "companion_memory_available": self._companion_plugin() is not None,
             },
@@ -8439,7 +8481,7 @@ class HumanCorePlugin(Star):
                     self.config.save_config()
             except Exception:
                 pass
-        style_now = self.cfg_str("dialect_style", "贵州话").strip()
+        style_now = self._dialect_style().strip()
         logger.info("[amo] 重建语种: style=%s region=%s rows=%d kb=%s" % (
             style_now, self._dialect_region(), len(self._dialect_rows()), self._dialect_kb_name()
         ))
