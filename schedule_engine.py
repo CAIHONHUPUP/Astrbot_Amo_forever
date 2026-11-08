@@ -62,6 +62,11 @@ PROVINCE_CITIES = {
 }
 
 POSITIVE_LABELS = ("开心", "兴奋", "黏人")
+def _city_of(ctx):
+    """当前城市。景点/车站/饭店这类前缀都用它，别再写死某个城市。"""
+    return str((ctx or {}).get("city") or "").strip() or "贵阳"
+
+
 CITY_POOL = [
     "贵阳", "上海", "杭州", "成都", "重庆", "长沙", "昆明", "广州",
     "深圳", "南京", "武汉", "西安", "北京", "苏州", "天津", "青岛",
@@ -311,8 +316,8 @@ class ScheduleEngine:
     def _extract_work(text):
         text = str(text or "")
         patterns = (
-            r"(?:在|就职于|任职于|工作在)([^，。；\n]{2,24})(?:上班|工作|任职|实习)",
-            r"([^，。；\n]{2,24})(?:上班|工作)",
+            r"(?:在|就职于|任职于|工作在)([^，。；：（）「」“”\n]{2,24})(?:上班|工作|任职|实习)",
+            r"([^，。；：（）「」“”\n]{2,24})(?:上班|工作)",
         )
         for pattern in patterns:
             matched = re.search(pattern, text)
@@ -491,6 +496,12 @@ class ScheduleEngine:
         except Exception:
             spots = []
         spots = [item for item in spots if isinstance(item, dict) and item.get("name")]
+        _city = str(city or "").strip()
+        _local = [item for item in spots if _city and _city in str(item.get("city") or "")]
+        if _city and not _local and int((meta or {}).get("holiday_days") or 0) < 4:
+            return None
+        if _local:
+            spots = _local
         if not spots:
             return {
                 "name": "黔灵山公园", "city": "贵阳", "province": "贵州",
@@ -584,9 +595,9 @@ class ScheduleEngine:
         return [
             self._seg("00:00", "06:00", "睡觉", home, "home", "sleep"),
             self._seg("06:00", "07:00", "起床收拾行李", home, "home", "life"),
-            self._seg("07:00", "08:00", "接到外派通知，打车去贵阳北站", "路上", "road", "commute",
+            self._seg("07:00", "08:00", "接到外派通知，打车去" + _city_of(ctx) + "北站", "路上", "road", "commute",
                       transit="taxi", event="business_trip", effects=effects),
-            self._seg("08:00", "09:00", "进站候车", "贵阳北站", "station", "commute", transit="train"),
+            self._seg("08:00", "09:00", "进站候车", _city_of(ctx) + "北站", "station", "commute", transit="train"),
             self._seg("09:00", "12:00", "坐高铁去" + city, "路上", "road", "commute",
                       transit="train", detail="临时买票，只剩二等座"),
             self._seg("12:00", "13:00", "到站吃午饭", where + "·车站附近", "restaurant", "meal"),
@@ -617,12 +628,12 @@ class ScheduleEngine:
         home = ctx["home"]
         spot = ctx.get("scenic") or {}
         name = str(spot.get("name") or "附近公园")
-        place = "贵阳·" + name
+        place = _city_of(ctx) + "·" + name
         car = ctx["car"]
         projects = [str(item) for item in (spot.get("projects") or []) if str(item)]
         project_a = projects[0] if projects else "景区主景点"
         project_b = projects[1] if len(projects) > 1 else "拍照散步"
-        long_trip = int((ctx.get("meta") or {}).get("holiday_days") or 0) >= 4 and "贵阳" not in str(spot.get("city") or "")
+        long_trip = int((ctx.get("meta") or {}).get("holiday_days") or 0) >= 4 and _city_of(ctx) not in str(spot.get("city") or "")
         if long_trip:
             return [
                 self._seg("00:00", "08:00", "睡觉", home, "home", "sleep"),
@@ -636,7 +647,7 @@ class ScheduleEngine:
                 self._seg("15:00", "16:00", "找地方歇脚、喝点东西", place + "·茶饮店", "restaurant", "rest"),
                 self._seg("16:00", "17:00", "继续逛" + name + "：" + project_b, place, "scenic", "play",
                           transit="drive", vehicle=car, spot=name, soothe=True),
-                self._seg("17:00", "19:00", "开车回贵阳", "路上", "road", "commute",
+                self._seg("17:00", "19:00", "开车回" + _city_of(ctx), "路上", "road", "commute",
                           transit="drive", vehicle=car, detail="返程堵在高速上"),
                 self._seg("19:00", "20:00", "到家附近吃晚饭", home + "附近", "restaurant", "meal"),
                 self._seg("20:00", "22:00", "回家整理照片、追剧", home, "home", "rest"),
@@ -670,7 +681,7 @@ class ScheduleEngine:
         home = ctx["home"]
         spot = ctx.get("scenic") or {}
         name = str(spot.get("name") or "商场")
-        place = "贵阳·" + name
+        place = _city_of(ctx) + "·" + name
         car = ctx["car"]
         return [
             self._seg("00:00", "08:00", "睡觉", home, "home", "sleep"),
@@ -738,7 +749,7 @@ class ScheduleEngine:
         if ctx.get("scenic") and ctx.get("good_weather"):
             spot = ctx.get("scenic") or {}
             name = str(spot.get("name") or "附近公园")
-            place = "贵阳·" + name
+            place = _city_of(ctx) + "·" + name
             car = ctx["car"]
             projects = [str(item) for item in (spot.get("projects") or []) if str(item)]
             project_a = projects[0] if projects else "景区主景点"
@@ -758,7 +769,7 @@ class ScheduleEngine:
                 self._seg("17:00", "18:00", "开车回家", "路上", "road", "commute",
                           transit="drive", vehicle=car),
                 self._seg("18:00", "19:00", "回家换衣服，出门赴约", "路上", "road", "commute", transit="taxi"),
-                self._seg("19:00", "21:00", "和朋友吃饭、聊天", "贵阳·饭店", "restaurant", "social",
+                self._seg("19:00", "21:00", "和朋友吃饭、聊天", _city_of(ctx) + "·饭店", "restaurant", "social",
                           event="friend_dinner", effects=event.get("effects") or {}, soothe=True),
                 self._seg("21:00", "22:00", "饭后散步、吹吹风", "路上", "road", "other"),
                 self._seg("22:00", "23:00", "回家洗澡", home, "home", "life"),
@@ -773,7 +784,7 @@ class ScheduleEngine:
             self._seg("13:00", "16:00", "睡午觉、发呆", home, "home", "rest"),
             self._seg("16:00", "17:00", "收拾一下准备出门", home, "home", "life"),
             self._seg("17:00", "18:00", "出门赴约", "路上", "road", "commute", transit="taxi"),
-            self._seg("18:00", "20:00", "和朋友吃饭、聊天", "贵阳·饭店", "restaurant", "social",
+            self._seg("18:00", "20:00", "和朋友吃饭、聊天", _city_of(ctx) + "·饭店", "restaurant", "social",
                       event="friend_dinner", effects=event.get("effects") or {}, soothe=True),
             self._seg("20:00", "21:00", "饭后散步", "路上", "road", "other"),
             self._seg("21:00", "22:00", "回家", home, "home", "rest"),
