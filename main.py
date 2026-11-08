@@ -3674,6 +3674,7 @@ class HumanCorePlugin(Star):
         self._tasks = set()
         self._group_times = {}
         self._buffers = {}
+        self._private_buffers = {}
         self._last_reply_at = {}
         self._last_umo = ""
         self._last_group = ""
@@ -6161,6 +6162,13 @@ class HumanCorePlugin(Star):
             return
         if not private and not self.cfg_bool("enable_group_reply", True):
             return
+        if private and self.cfg_bool("private_debounce_enabled", True):
+            # 同一个人连着发的几条先合起来，只让最后一条走完整回复流程
+            if not await self._debounce_private(event, text):
+                return
+            text = (event.message_str or "").strip()
+            if not text:
+                return
 
         if not private:
             try:
@@ -6228,6 +6236,55 @@ class HumanCorePlugin(Star):
             logger.debug("[amo] 群聊定向判定: %s" % json.dumps(result, ensure_ascii=False))
         if not result["reply"]:
             event.stop_event()
+
+    async def _debounce_private(self, event, text):
+        """私聊防抖：同一会话连发的几条合并成一句，只让最后一条继续回复。
+
+        返回 True = 这条是这一批的最后一条（合并后的文本已写回 event.message_str）；
+        返回 False = 已被合并，事件保持 stop 状态，调用方直接 return。
+        """
+        umo = event.unified_msg_origin
+        delay = max(0.3, self.cfg_float("private_debounce_seconds", 6.0))
+        max_wait = max(delay + 0.1, self.cfg_float("private_debounce_max_wait", 14.0))
+        now = time.monotonic()
+        buffer = self._private_buffers.get(umo)
+        if buffer is None:
+            buffer = {"seq": 0, "texts": [], "started": now, "updated": now}
+            self._private_buffers[umo] = buffer
+        buffer["seq"] += 1
+        my_seq = buffer["seq"]
+        buffer["texts"].append(str(text or ""))
+        buffer["updated"] = now
+        event.stop_event()
+        deadline = buffer["started"] + max_wait
+        while True:
+            current = time.monotonic()
+            if self._private_buffers.get(umo) is not buffer:
+                return False  # 这一批已经被前面的某条发出去了
+            if my_seq != buffer["seq"]:
+                return False  # 后面又来了新的，交给最新的那条
+            quiet_at = buffer["updated"] + delay
+            if current >= quiet_at or current >= deadline:
+                break
+            try:
+                await asyncio.sleep(min(quiet_at, deadline) - current)
+            except asyncio.CancelledError:
+                return False
+        if self._private_buffers.get(umo) is buffer:
+            self._private_buffers.pop(umo, None)
+        merged = "｜".join(item for item in buffer["texts"] if item).strip()[:300]
+        if len(buffer["texts"]) > 1:
+            logger.info("[amo] 私聊合并 %d 条: %s" % (len(buffer["texts"]), merged[:200]))
+            try:
+                event.set_extra("amo_debounce_count", len(buffer["texts"]))
+            except Exception:
+                pass
+        event.message_str = merged or (event.message_str or "")
+        try:
+            event.continue_event()
+        except Exception:
+            pass
+        return True
 
     def _buffer_group(self, event, text, profile):
         umo = event.unified_msg_origin
