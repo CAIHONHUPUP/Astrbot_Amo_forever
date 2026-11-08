@@ -62,6 +62,33 @@ PROVINCE_CITIES = {
 }
 
 POSITIVE_LABELS = ("开心", "兴奋", "黏人")
+CITY_POOL = [
+    "贵阳", "上海", "杭州", "成都", "重庆", "长沙", "昆明", "广州",
+    "深圳", "南京", "武汉", "西安", "北京", "苏州", "天津", "青岛",
+]
+DISTRICT_MAP = {
+    "贵阳": ["观山湖区", "云岩区", "南明区", "花溪区", "乌当区"],
+    "上海": ["徐汇区", "静安区", "浦东新区", "长宁区", "杨浦区"],
+    "杭州": ["西湖区", "滨江区", "拱墅区", "余杭区"],
+    "成都": ["武侯区", "锦江区", "高新区", "成华区"],
+    "重庆": ["渝中区", "江北区", "南岸区", "渝北区"],
+    "长沙": ["岳麓区", "芙蓉区", "天心区", "开福区"],
+    "昆明": ["五华区", "盘龙区", "西山区", "官渡区"],
+    "广州": ["天河区", "越秀区", "海珠区", "番禺区"],
+    "深圳": ["南山区", "福田区", "罗湖区", "宝安区"],
+    "南京": ["鼓楼区", "玄武区", "建邺区", "江宁区"],
+    "武汉": ["武昌区", "洪山区", "江汉区", "汉阳区"],
+    "西安": ["雁塔区", "碑林区", "莲湖区", "高新区"],
+}
+HOME_STYLES = ["小窝", "公寓", "出租屋", "家"]
+COMPANY_POOL = ["互联网公司", "设计工作室", "广告公司", "贸易公司", "医院", "学校", "书店", "咖啡店"]
+CAR_POOL = [
+    "黑色奔驰C级", "白色大众高尔夫", "银色特斯拉Model 3",
+    "红色Mini Cooper", "深灰色奥迪A4L", "蓝色比亚迪海豹",
+    "白色丰田凯美瑞", "黑色沃尔沃S60",
+]
+CAR_BRANDS = ["奔驰", "宝马", "奥迪", "特斯拉", "比亚迪", "大众", "本田", "丰田", "Mini", "保时捷", "路虎", "沃尔沃", "吉利", "蔚来"]
+
 NEGATIVE_LABELS = ("低落", "烦躁", "委屈", "焦虑", "疲惫")
 
 CATEGORY_MOOD = {
@@ -183,16 +210,149 @@ class ScheduleEngine:
         self.p = state.p
 
     # ------------------------------------------------------------------
+    # 0. 角色位置/资产：配置优先，其次人格提示词/世界观，最后自动随机
+    # ------------------------------------------------------------------
+    def resolve_profile(self, world, persona="", seed=""):
+        """把“城市/住址/公司/车”解析出来，并在缺失时自动生成一套稳定值。"""
+        world = world or {}
+        text = "\n".join([
+            str(persona or ""),
+            str(world.get("city") or ""),
+            str(world.get("workplace") or ""),
+            str(world.get("daily_life") or ""),
+            str(world.get("world_rules") or ""),
+            str(world.get("summary") or ""),
+        ])
+        cached = {}
+        try:
+            cached = self.state.db.kv_get("schedule_profile", {}) or {}
+        except Exception:
+            cached = {}
+        if not isinstance(cached, dict):
+            cached = {}
+        city = str(self.p.cfg_str("schedule_city", "") or "").strip()
+        if not city:
+            city = self._extract_city(text)
+        if not city:
+            city = str(world.get("city") or "").strip()
+        if not city or city in ("城市", "未知", "某市"):
+            city = str(cached.get("city") or "").strip()
+        if not city:
+            city = CITY_POOL[md5_int(str(world.get("name") or "") + "|city") % len(CITY_POOL)]
+        if cached.get("city") and cached.get("city") != city:
+            cached = {}
+
+        home = str(self.p.cfg_str("schedule_home", "") or "").strip()
+        if not home:
+            home = self._extract_home(text)
+        if not home:
+            home = str(cached.get("home") or "").strip()
+        if not home:
+            home = self._random_home(city, seed)
+
+        workplace = str(self.p.cfg_str("schedule_workplace", "") or "").strip()
+        if not workplace:
+            workplace = self._extract_work(text)
+        if not workplace:
+            world_work = str(world.get("workplace") or "").strip()
+            if world_work and world_work not in ("公司", "单位", "工作地点", "上班"):
+                workplace = world_work
+        if not workplace:
+            workplace = str(cached.get("workplace") or "").strip()
+        if not workplace:
+            workplace = self._random_workplace(city, seed)
+
+        car = str(self.p.cfg_str("schedule_car", "") or "").strip()
+        if not car:
+            car = self._extract_car(text)
+        if not car:
+            car = str(cached.get("car") or "").strip()
+        if not car:
+            car = CAR_POOL[md5_int(str(world.get("name") or "") + "|car") % len(CAR_POOL)]
+
+        profile = {
+            "city": city,
+            "home": home,
+            "workplace": workplace,
+            "car": car,
+        }
+        try:
+            if cached != profile:
+                self.state.db.kv_set("schedule_profile", profile)
+        except Exception:
+            pass
+        return profile
+
+    @staticmethod
+    def _extract_city(text):
+        text = str(text or "")
+        for city in CITY_POOL:
+            if city in text:
+                return city
+        return ""
+
+    @staticmethod
+    def _extract_home(text):
+        text = str(text or "")
+        patterns = (
+            r"(?:住在|家住在|家在|住址在|家在)([^，。；\n]{2,20})",
+            r"(?:我家在|我住在)([^，。；\n]{2,20})",
+        )
+        for pattern in patterns:
+            matched = re.search(pattern, text)
+            if not matched:
+                continue
+            value = str(matched.group(1) or "").strip(" 的了是在")
+            if value and "公司" not in value and "上班" not in value:
+                return value[:20]
+        return ""
+
+    @staticmethod
+    def _extract_work(text):
+        text = str(text or "")
+        patterns = (
+            r"(?:在|就职于|任职于|工作在)([^，。；\n]{2,24})(?:上班|工作|任职|实习)",
+            r"([^，。；\n]{2,24})(?:上班|工作)",
+        )
+        for pattern in patterns:
+            matched = re.search(pattern, text)
+            if not matched:
+                continue
+            value = str(matched.group(1) or "").strip(" 的了是在")
+            if value and "家" not in value and "住" not in value:
+                return value[:24]
+        return ""
+
+    @staticmethod
+    def _extract_car(text):
+        text = str(text or "")
+        for brand in CAR_BRANDS:
+            if brand in text:
+                return brand
+        return ""
+
+    @staticmethod
+    def _random_home(city, seed):
+        districts = DISTRICT_MAP.get(str(city or "")) or ["市区"]
+        rng = random.Random(md5_int(str(city or "") + "|home|" + str(seed or "")))
+        return rng.choice(districts) + "·" + rng.choice(HOME_STYLES)
+
+    @staticmethod
+    def _random_workplace(city, seed):
+        rng = random.Random(md5_int(str(city or "") + "|work|" + str(seed or "")))
+        return rng.choice(COMPANY_POOL) + "（" + str(city or "市区") + "）"
+
+    # ------------------------------------------------------------------
     # 1. 当天上下文
     # ------------------------------------------------------------------
-    def build_context(self, day, meta, weather, world, mood, period, health, salt=""):
+    def build_context(self, day, meta, weather, world, mood, period, health, persona="", salt=""):
         seed_text = "%s|%s" % (day, salt)
         seed = md5_int(seed_text)
-        rng = random.Random(seed)
-        city = str(self.p.cfg_str("schedule_city", "贵阳") or "贵阳").strip() or "贵阳"
-        home = str(self.p.cfg_str("schedule_home", "观山湖区·小窝") or "观山湖区·小窝").strip()
-        workplace = str(self.p.cfg_str("schedule_workplace", "公司（贵阳·观山湖区）") or "公司（贵阳·观山湖区）").strip()
-        car = str(self.p.cfg_str("schedule_car", "黑色奔驰C级") or "黑色奔驰C级").strip()
+        profile = self.resolve_profile(world, persona, seed=str(seed))
+        city = profile["city"]
+        home = profile["home"]
+        workplace = profile["workplace"]
+        car = profile["car"]
         yesterday = self.yesterday_summary(day)
         good_weather = self._good_weather(weather)
         event = self._pick_event(day, meta, weather, health, period, seed)
@@ -216,6 +376,7 @@ class ScheduleEngine:
             "good_weather": good_weather,
             "event": event,
             "scenic": scenic,
+            "profile": profile,
             "location": (event.get("where") if event.get("kind") == "business_trip" else city),
             "seed": seed,
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

@@ -158,7 +158,8 @@
     .schedule-group > summary::before { content: "▸"; color: var(--muted); }
     .schedule-group[open] > summary::before { content: "▾"; }
     .schedule-group > summary .time { color: var(--muted); font-weight: 500; min-width: 104px; font-variant-numeric: tabular-nums; }
-    .schedule-group > summary .place { color: var(--muted); font-weight: 400; }
+    .schedule-group > summary .title { flex: 0 0 auto; white-space: nowrap; }
+    .schedule-group > summary .place { flex: 1 1 auto; min-width: 0; color: var(--muted); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .schedule-hour { margin: 0; border-top: 1px dashed var(--line); cursor: pointer; border-radius: 8px; transition: background .15s ease; }
     .schedule-hour:first-of-type { border-top: 0; }
     .schedule-hour:hover, .schedule-hour:focus-visible { background: rgba(232, 72, 154, 0.06); outline: none; }
@@ -989,8 +990,11 @@
       box.textContent = "";
       const meta = data.meta || {};
       currentScheduleDay = data.day || "";
+      const context = data.context || {};
+      const event = context.event || {};
+      const eventText = event.kind && event.kind !== "none" ? " · " + (event.title || "突发事件") : "";
       day.textContent = data.day
-        ? "日期：" + data.day + (meta.label ? " · " + meta.label : "") + (meta.rest ? " · 休息日" : "") + " · 点开每小时卡片生成小日记"
+        ? "日期：" + data.day + (meta.label ? " · " + meta.label : "") + (meta.rest ? " · 休息日" : "") + eventText + " · 点开每小时卡片生成小日记"
         : "";
       const tree = Array.isArray(data.tree) ? data.tree : (Array.isArray(data.schedule_tree) ? data.schedule_tree : []);
       if (!tree.length) {
@@ -1006,6 +1010,7 @@
         time.className = "time";
         time.textContent = (block.start || "") + "-" + (block.end || "");
         const label = document.createElement("span");
+        label.className = "title";
         label.textContent = block.title || block.activity || "";
         const place = document.createElement("span");
         place.className = "place";

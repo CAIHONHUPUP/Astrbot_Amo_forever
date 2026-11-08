@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 5.1.0
+我想永远陪着你 / 我想永远陪伴你 5.1.1
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -96,7 +96,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.1.0"
+PLUGIN_VERSION = "5.1.1"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -2021,6 +2021,9 @@ class HumanState:
         self.schedule_ctx = self.db.kv_get("schedule_ctx", {}) or {}
         if not isinstance(self.schedule_ctx, dict):
             self.schedule_ctx = {}
+        self.schedule_profile = self.db.kv_get("schedule_profile", {}) or {}
+        if not isinstance(self.schedule_profile, dict):
+            self.schedule_profile = {}
         self.engine = None
         if ScheduleEngine is not None:
             try:
@@ -2264,8 +2267,13 @@ class HumanState:
             base_temp = 19
         text, tag = rng.choice(choices)
         temp = base_temp + rng.randint(-4, 4)
+        city = (
+            self.p.cfg_str("weather_city", "").strip()
+            or str((getattr(self, "schedule_profile", {}) or {}).get("city") or "").strip()
+            or "贵阳"
+        )
         return {
-            "city": self.p.cfg_str("weather_city", "贵阳"),
+            "city": city,
             "text": text, "tag": tag, "temp": temp,
             "humidity": rng.randint(40, 90),
             "wind": random.choice(["东风", "南风", "西北风", "微风"]) + str(rng.randint(1, 4)) + "级",
@@ -2375,7 +2383,11 @@ class HumanState:
             pass
         current = self.weather or {}
         key = self.p.cfg_str("hefeng_key", "")
-        city = self.p.cfg_str("weather_city", "贵阳")
+        city = (
+            self.p.cfg_str("weather_city", "").strip()
+            or str((getattr(self, "schedule_profile", {}) or {}).get("city") or "").strip()
+            or "贵阳"
+        )
         host = self.p.cfg_str("weather_host", "")
         # 配置里的城市/Key/Host 变了就必须重取，不能继续用旧缓存。
         current_signature = (current.get("city"), bool(current.get("key_set")), current.get("host"))
@@ -2413,7 +2425,11 @@ class HumanState:
         return {
             "name": self.p.persona_name or self.p.cfg_str("bot_name", "") or "陪伴",
             "age": 22,
-            "city": self.p.cfg_str("weather_city", "贵阳"),
+            "city": (
+                self.p.cfg_str("weather_city", "").strip()
+                or str((getattr(self, "schedule_profile", {}) or {}).get("city") or "").strip()
+                or "贵阳"
+            ),
             "occupation": "普通上班族",
             "workplace": "公司",
             "personality": "温柔、敏感，偶尔有点小脾气",
@@ -2558,6 +2574,12 @@ class HumanState:
                     block["activity"] = "出去玩"
                 elif any(item.get("category") == "work" for item in children):
                     block["activity"] = "上班"
+                elif any(item.get("category") == "commute" for item in children):
+                    block["activity"] = "回家"
+                elif any(item.get("category") == "meal" for item in children):
+                    block["activity"] = "吃饭"
+                elif any(item.get("category") == "rest" for item in children):
+                    block["activity"] = "休息"
                 else:
                     block["activity"] = children[0].get("activity") or "休息"
                 block["place"] = children[0].get("place") or ""
@@ -2582,8 +2604,9 @@ class HumanState:
 
     def _emergency_schedule(self):
         """新引擎不可用时的最小兜底，保证 24 小时闭环、不瞬移。"""
-        home = self.p.cfg_str("schedule_home", "观山湖区·小窝")
-        office = self.p.cfg_str("schedule_workplace", "公司（贵阳·观山湖区）")
+        profile = getattr(self, "schedule_profile", {}) or {}
+        home = self.p.cfg_str("schedule_home", "") or profile.get("home") or "家"
+        office = self.p.cfg_str("schedule_workplace", "") or profile.get("workplace") or "公司"
         items = []
         for hour in range(24):
             if hour < 7 or hour >= 23:
@@ -2635,6 +2658,17 @@ class HumanState:
                 self.db.save_schedule(today, hourly)
             return hourly
         world = await self.ensure_worldview(umo)
+        persona = ""
+        try:
+            if self.p.llm is not None:
+                persona = await self.p.llm.persona(umo)
+        except Exception:
+            persona = ""
+        if self.engine is not None:
+            try:
+                self.schedule_profile = self.engine.resolve_profile(world, persona, seed=today)
+            except Exception as exc:
+                logger.debug("[amo] 角色位置解析失败: %s" % exc)
         weather = await self.refresh_weather()
         try:
             self.roll_health()
@@ -2648,8 +2682,9 @@ class HumanState:
             try:
                 context = self.engine.build_context(
                     today, meta, weather, world, self.mood, period, health,
-                    salt=str(now_ts()) if force else "",
+                    persona=persona, salt=str(now_ts()) if force else "",
                 )
+                self.schedule_profile = context.get("profile") or self.schedule_profile
                 items = self.engine.build_skeleton(context)
                 try:
                     items = await self.engine.enrich(umo, context, items, self.p.llm)
@@ -2659,22 +2694,30 @@ class HumanState:
                 logger.warning("[amo] 日程主干生成失败，使用兜底: %s" % exc)
                 items = None
         if not items:
+            profile = getattr(self, "schedule_profile", {}) or {}
+            fallback_city = (
+                self.p.cfg_str("schedule_city", "").strip()
+                or str(profile.get("city") or "").strip()
+                or str((weather or {}).get("city") or "").strip()
+                or "贵阳"
+            )
             context = context or {
                 "version": "backbone-v5",
                 "day": today,
                 "meta": meta,
                 "weather": weather,
                 "world": world,
-                "city": self.p.cfg_str("schedule_city", "贵阳"),
-                "home": self.p.cfg_str("schedule_home", "观山湖区·小窝"),
-                "workplace": self.p.cfg_str("schedule_workplace", "公司（贵阳·观山湖区）"),
-                "car": self.p.cfg_str("schedule_car", "黑色奔驰C级"),
+                "city": fallback_city,
+                "home": self.p.cfg_str("schedule_home", "") or profile.get("home") or "家",
+                "workplace": self.p.cfg_str("schedule_workplace", "") or profile.get("workplace") or "公司",
+                "car": self.p.cfg_str("schedule_car", "") or profile.get("car") or "",
                 "mood": dict(self.mood),
                 "period": period,
                 "health": health,
                 "event": {"kind": "none"},
                 "scenic": None,
-                "location": self.p.cfg_str("schedule_city", "贵阳"),
+                "profile": profile,
+                "location": fallback_city,
                 "good_weather": True,
                 "yesterday": self.engine.yesterday_summary(today) if self.engine is not None else {},
             }
@@ -2717,22 +2760,30 @@ class HumanState:
             meta = day_meta(day)
         except Exception:
             meta = day_meta()
+        profile = getattr(self, "schedule_profile", {}) or {}
+        city = (
+            self.p.cfg_str("schedule_city", "").strip()
+            or str(profile.get("city") or "").strip()
+            or str((self.weather or {}).get("city") or "").strip()
+            or "贵阳"
+        )
         return {
             "version": "backbone-v5",
             "day": day,
             "meta": meta,
             "weather": self.weather or {},
             "world": self.worldview or {},
-            "city": self.p.cfg_str("schedule_city", "贵阳"),
-            "home": self.p.cfg_str("schedule_home", "观山湖区·小窝"),
-            "workplace": self.p.cfg_str("schedule_workplace", "公司（贵阳·观山湖区）"),
-            "car": self.p.cfg_str("schedule_car", "黑色奔驰C级"),
+            "city": city,
+            "home": self.p.cfg_str("schedule_home", "") or profile.get("home") or "家",
+            "workplace": self.p.cfg_str("schedule_workplace", "") or profile.get("workplace") or "公司",
+            "car": self.p.cfg_str("schedule_car", "") or profile.get("car") or "",
             "mood": dict(self.mood),
             "period": self.period_info(),
             "health": self.health_info(),
             "event": {"kind": "none"},
             "scenic": None,
-            "location": self.p.cfg_str("schedule_city", "贵阳"),
+            "profile": profile,
+            "location": city,
             "good_weather": True,
             "yesterday": self.engine.yesterday_summary(day) if self.engine is not None else {},
         }
@@ -4155,26 +4206,32 @@ class HumanCorePlugin(Star):
             self._spawn(self._warm_up())
 
     def _migrate_schedule_defaults(self):
-        """5.1.0：老配置默认杭州，日程已按贵阳生成，把天气城市一起迁移到贵阳。"""
+        """5.1.1：位置/资产改为“人格优先、缺失随机”，清掉 5.1.0 自动写入的固定默认值。"""
         try:
-            if self.db.kv_get("schedule_defaults_510", False):
+            if self.db.kv_get("schedule_defaults_511", False):
                 return
+            auto_filled = bool(self.db.kv_get("schedule_defaults_510", False))
             changed = False
-            if self.cfg_str("weather_city", "").strip() in ("", "杭州"):
-                self.config["weather_city"] = "贵阳"
-                changed = True
-            for key, value in (
-                ("schedule_city", "贵阳"),
-                ("schedule_home", "观山湖区·小窝"),
-                ("schedule_workplace", "公司（贵阳·观山湖区）"),
-                ("schedule_car", "黑色奔驰C级"),
-            ):
-                if not self.cfg_str(key, "").strip():
-                    self.config[key] = value
+            cleared_city = False
+            old_defaults = {
+                "schedule_city": "贵阳",
+                "schedule_home": "观山湖区·小窝",
+                "schedule_workplace": "公司（贵阳·观山湖区）",
+                "schedule_car": "黑色奔驰C级",
+            }
+            for key, value in old_defaults.items():
+                if self.cfg_str(key, "").strip() == value:
+                    self.config[key] = ""
                     changed = True
+                    if key == "schedule_city":
+                        cleared_city = True
+            weather_city = self.cfg_str("weather_city", "").strip()
+            if weather_city == "杭州" or ((cleared_city or auto_filled) and weather_city == "贵阳"):
+                self.config["weather_city"] = ""
+                changed = True
             if changed and hasattr(self.config, "save_config"):
                 self.config.save_config()
-            self.db.kv_set("schedule_defaults_510", True)
+            self.db.kv_set("schedule_defaults_511", True)
         except Exception as exc:
             logger.debug("[amo] 日程默认配置迁移失败: %s" % exc)
 
@@ -7231,7 +7288,12 @@ class HumanCorePlugin(Star):
         umo = self._last_umo or self._first_private_umo()
         if not self.state.weather:
             self.state.weather = self.state._simulate_weather()
-        if self.state.weather.get("city") != self.cfg_str("weather_city", "贵阳"):
+        desired_city = (
+            self.cfg_str("weather_city", "").strip()
+            or str((getattr(self.state, "schedule_profile", {}) or {}).get("city") or "").strip()
+            or "贵阳"
+        )
+        if self.state.weather.get("city") != desired_city:
             await self.state.refresh_weather(force=True)
         else:
             self._spawn(self.state.refresh_weather())

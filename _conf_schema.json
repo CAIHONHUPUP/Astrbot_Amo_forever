@@ -8,8 +8,8 @@
   "weather_city": {
     "type": "string",
     "description": "天气城市",
-    "hint": "例如：贵阳、杭州、北京；日程引擎默认按贵阳（观山湖区）生成",
-    "default": "贵阳"
+    "hint": "留空则跟随日程城市（人格/世界观解析结果）；例如：贵阳、杭州、北京",
+    "default": ""
   },
   "weather_host": {
     "type": "string",
@@ -1047,26 +1047,26 @@
   "schedule_city": {
     "type": "string",
     "description": "日程所在城市",
-    "hint": "默认贵阳；角色的小窝在观山湖区。",
-    "default": "贵阳"
+    "hint": "留空则优先从人格提示词/世界观获取城市；都没有时自动随机生成。",
+    "default": ""
   },
   "schedule_home": {
     "type": "string",
     "description": "角色住址",
-    "hint": "用于空间连贯校验，默认观山湖区·小窝。",
-    "default": "观山湖区·小窝"
+    "hint": "留空则从人格提示词提取住址；没有就按城市自动生成（如 观山湖区·小窝）。",
+    "default": ""
   },
   "schedule_workplace": {
     "type": "string",
     "description": "角色公司",
-    "hint": "用于工作日主干，默认公司（贵阳·观山湖区）。",
-    "default": "公司（贵阳·观山湖区）"
+    "hint": "留空则从人格提示词/世界观提取公司；没有就自动生成。",
+    "default": ""
   },
   "schedule_car": {
     "type": "string",
     "description": "角色资产（车）",
-    "hint": "周末开车出行会绑定这辆车，并生成堵车/找停车位细节。",
-    "default": "黑色奔驰C级"
+    "hint": "留空则从人格提示词提取车；没有就自动随机一辆，并用于周末堵车/停车细节。",
+    "default": ""
   },
   "schedule_event_prob": {
     "type": "float",
