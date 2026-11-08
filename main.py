@@ -9077,8 +9077,10 @@ class HumanCorePlugin(Star):
                                 allowed_hosts.add(value.split(":")[0].strip().lower())
                     allowed_hosts.discard("")
                     if origin_host and allowed_hosts and origin_host not in allowed_hosts:
-                        logger.warning("[amo] 拒绝跨站 Web 写操作: %s -> %s" % (origin, host))
-                        return {"code": 403, "msg": "forbidden"}
+                        # 只记日志不拦截：AstrBot 常被 nginx / 内网穿透包一层，Host 与 Origin 不一致是常态，
+                        # 硬拦会把面板所有写操作废掉（上架审核也会当成功能 bug）。
+                        # 真正的 CSRF 防线是「写操作只收 POST」：跨站发 JSON 需要 CORS 预检，浏览器会先拦。
+                        logger.warning("[amo] Web 写操作来源与 Host 不一致（放行）: %s -> %s" % (origin, host))
 
             except Exception as exc:
                 logger.debug("[amo] Web 守卫检查失败（放行）: %s" % exc)

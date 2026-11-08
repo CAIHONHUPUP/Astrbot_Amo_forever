@@ -745,6 +745,12 @@
               errors.push(result.message || result.msg || "接口返回错误");
               continue;
             }
+            // 403/405 这类说明桥接没走 POST（老版本 AstrBot 可能只有 apiGet）：
+            // 当作失败继续往下试，最终会退回 httpCall 用 fetch 发 POST。
+            if (typeof result.code === "number" && result.code >= 400) {
+              errors.push(result.msg || ("HTTP " + result.code));
+              continue;
+            }
             return result;
           }
           if (result !== undefined && result !== null) {
