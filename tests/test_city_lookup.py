@@ -31,6 +31,21 @@ class ResolveCityTests(unittest.TestCase):
         self.assertEqual(nanshan["id"], "101280604")
         self.assertEqual(nanshan["city"], "深圳市")
 
+    def test_ambiguous_short_name_is_flagged(self) -> None:
+        hit = resolve_city("鼓楼区")  # 开封/南京/徐州/福州 四个
+        self.assertEqual(hit["ambiguous"], 4)
+        self.assertTrue(any("南京" in c for c in hit["candidates"]))
+        self.assertIn("南京鼓楼", hit["note"])
+
+    def test_ambiguous_district_has_candidates(self) -> None:
+        hit = resolve_city("南山区")  # 鹤岗 / 深圳
+        self.assertEqual(hit["ambiguous"], 2)
+        self.assertIn("广东省·深圳市", hit["candidates"])
+
+    def test_disambiguated_has_no_warning(self) -> None:
+        self.assertFalse(resolve_city("深圳南山").get("ambiguous"))
+        self.assertFalse(resolve_city("东莞").get("ambiguous"))
+
     def test_numeric_id_passthrough(self) -> None:
         hit = resolve_city("101281601")
         self.assertEqual(hit["id"], "101281601")

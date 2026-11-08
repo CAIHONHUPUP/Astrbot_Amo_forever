@@ -9115,6 +9115,18 @@ class HumanCorePlugin(Star):
                     "可以写「省+市」或直接填 LocationID" % raw
                 )
             return False
+        if hit.get("ambiguous"):
+            cache = getattr(self, "_city_warn_cache", None)
+            if not isinstance(cache, dict):
+                cache = {}
+                self._city_warn_cache = cache
+            now = time.time()
+            key = "amb:" + raw
+            if now - to_float(cache.get(key), 0) > 3600:
+                cache[key] = now
+                logger.warning(
+                    "[amo] 天气城市%s" % (hit.get("note") or "有多个同名城市，已默认选一个")
+                )
         changed = False
         if str(hit["id"]) != raw:
             self.config["weather_city"] = str(hit["id"])
@@ -9191,6 +9203,9 @@ class HumanCorePlugin(Star):
             "data": {
                 "id": hit["id"], "name": hit["name"],
                 "label": hit["label"], "weather": weather or {},
+                "ambiguous": hit.get("ambiguous", 0),
+                "candidates": hit.get("candidates", []),
+                "note": hit.get("note", ""),
             },
         }
 
