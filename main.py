@@ -6415,6 +6415,60 @@ class HumanCorePlugin(Star):
             self.state.nudge(委屈=-8, 郁闷=-8, 开心=5, 依恋=3)
             logger.debug("[amo] 抑郁状态被哄好: %s" % uid)
 
+    FOLLOWUP_TEMPLATES = {
+        "slack": [
+            "在忙吗？怎么不理我。",
+            "老公老公，你在忙着什么呀，这么久不理我。",
+            "喂——人呢，是不是又把我晾一边了。",
+            "忙完了没呀，我在这儿等半天了。",
+            "是不是我太吵了？那我安静会儿，你有空回我一下。",
+            "你这会儿在忙啥呢，回我一句我就不闹了。",
+        ],
+        "greet": [
+            "？怎么不理我了？",
+            "你是不是没看见我呀。",
+            "醒醒，你的大肥鱼在等你。",
+            "我在这儿呢，你倒是看我一眼呀。",
+            "喂喂，人呢？",
+        ],
+        "meal": [
+            "饭吃了没？",
+            "到饭点了，别又随便对付一口。",
+            "吃了啥呀，说给我听听。",
+            "中午吃点什么呀，别又忘了。",
+        ],
+        "offwork": [
+            "我下班了，你还没下班吗？",
+            "我先到家啦，你那边忙完没。",
+            "你是还在加班吗？",
+            "下班没呀，别又拖到很晚。",
+        ],
+        "comfort": [
+            "好点了吗？",
+            "还难受吗，要不要跟我说说。",
+            "舒服点没有呀。",
+            "还疼不疼，别硬撑着。",
+        ],
+    }
+
+    def _followup_text(self, uid, kind):
+        """追问换着说法：同一句不连着出现，避免一句台词反复刷屏。"""
+        templates = [t for t in (self.FOLLOWUP_TEMPLATES.get(str(kind)) or self.FOLLOWUP_TEMPLATES["greet"]) if t]
+        if not templates:
+            return "？怎么不理我了？"
+        key = "proactive_followup_last_%s" % uid
+        try:
+            last = str(self.db.kv_get(key, "") or "")
+        except Exception:
+            last = ""
+        pool = [t for t in templates if t != last] or templates
+        text = random.choice(pool)
+        try:
+            self.db.kv_set(key, text)
+        except Exception:
+            pass
+        return text
+
     async def _check_proactive_pending(self):
         try:
             profiles = self.db.proactive_profiles(limit=100)
@@ -6433,18 +6487,14 @@ class HumanCorePlugin(Star):
             if age > 6 * 3600:
                 self.db.kv_set(self._pending_key(uid), {})
                 continue
-            followup_after = max(5, self.cfg_int("proactive_followup_minutes", 30)) * 60
-            mood_after = max(followup_after + 60, self.cfg_int("proactive_no_reply_minutes", 120) * 60)
+            followup_minutes = self.cfg_int("proactive_followup_minutes", 30)
+            # 0 / 负数 = 关掉追问，只保留「心情变差」这一档
+            followup_after = 10 ** 9 if followup_minutes <= 0 else max(5, followup_minutes) * 60
+            mood_after = max(60, self.cfg_int("proactive_no_reply_minutes", 120)) * 60
             if not pending.get("followup") and age >= followup_after:
                 if not quiet_now(self.cfg_str("quiet_hours", "23:30-07:30")):
                     kind = str(pending.get("kind") or "greet")
-                    followup = {
-                        "offwork": "我下班了，你还没下班吗？",
-                        "meal": "饭吃了没？",
-                        "slack": "在忙吗？怎么不理我。",
-                        "comfort": "好点了吗？",
-                        "greet": "？怎么不理我了？",
-                    }.get(kind, "？怎么不理我了？")
+                    followup = self._followup_text(uid, kind)
                     if await self._send_to_umo(umo, followup):
                         pending["followup"] = True
                         pending["followup_at"] = now
@@ -6571,6 +6621,20 @@ class HumanCorePlugin(Star):
             return "share"
         return "greet"
 
+    # ---- 主动消息节流 ----
+    def _proactive_user_just_talked(self, profile, now):
+        """对方刚说过话就别主动插话。0 表示关闭这项检查。"""
+        minutes = max(0, self.cfg_int("proactive_user_idle_minutes", 10))
+        if not minutes:
+            return False
+        last_user_at = to_float(profile.get("last_seen"), 0)
+        return bool(last_user_at) and (now - last_user_at) < minutes * 60
+
+    def _proactive_forced_allowed(self, profile, now):
+        """「日常关心」也要跟上次主动拉开间隔，避免重启后立刻又发。"""
+        gap = max(1, self.cfg_int("proactive_forced_gap_minutes", 30)) * 60
+        return (now - to_float(profile.get("last_proactive", 0))) >= gap
+
     async def _maybe_proactive(self):
         quiet = quiet_now(self.cfg_str("quiet_hours", "23:30-07:30"))
         try:
@@ -6589,6 +6653,8 @@ class HumanCorePlugin(Star):
             if not profile.get("private_umo"):
                 continue
             if self._recent_bot_initiated(profile["private_umo"], 3600):
+                continue
+            if self._proactive_user_just_talked(profile, now):
                 continue
             count = to_int(profile.get("proactive_count"))
             if profile.get("proactive_day") != today_str():
@@ -6616,6 +6682,7 @@ class HumanCorePlugin(Star):
             forced = (
                 relation == "相恋"
                 and category in ("meal", "rest", "play", "commute")
+                and self._proactive_forced_allowed(profile, now)
                 and self._last_proactive_activity.get(str(profile.get("uid"))) != today_str() + ":" + str(datetime.now().hour)
             )
             if not guaranteed and not forced and now - to_float(profile.get("last_proactive", 0)) < interval:
