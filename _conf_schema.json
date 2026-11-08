@@ -1079,5 +1079,23 @@
     "description": "用大模型润色主干文案",
     "hint": "只改写每小时 activity，不改时间/地点/类别；关闭后使用内置真人化文案。",
     "default": true
+  },
+  "private_debounce_enabled": {
+    "type": "bool",
+    "description": "【私聊】连发合并",
+    "hint": "同一个人几秒内连发几条时，合并成一句再回复，避免一条一条各答一遍。默认开。",
+    "default": true
+  },
+  "private_debounce_seconds": {
+    "type": "float",
+    "description": "【私聊】合并等待秒数",
+    "hint": "最后一条消息之后，等这么久没有新消息才回复。默认 6（实测连发间隔 3~5.4s）。",
+    "default": 6.0
+  },
+  "private_debounce_max_wait": {
+    "type": "float",
+    "description": "【私聊】合并最长等待秒数",
+    "hint": "对方一直不停发的时候，最多憋这么久就先答一次。默认 14。",
+    "default": 14.0
   }
 }
