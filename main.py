@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 5.3.1
+我想永远陪着你 / 我想永远陪伴你 5.3.2
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -125,7 +125,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.3.1"
+PLUGIN_VERSION = "5.3.2"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -6801,6 +6801,15 @@ class HumanCorePlugin(Star):
             "【长度】默认只回 1-2 句，能一句说清就一句；不要解释、不要列点、不要总结，不要写成客服长文。",
             "【人格】保持上面的人格设定，不要变成通用助手或客服；即使回答咨询也要用自己的口吻。",
         ]
+        if group:
+            system_parts.append(
+                "【群聊】这是群聊，不是你和他私聊，群里还有别人。只有这条消息明确在叫你/回你时才正常接话；"
+                "如果只是群友之间互相聊、或和你无关，就别硬接话、别把话抢过来，更不要用恋人的语气。"
+            )
+        system_parts.append(
+            "【别主动报日程】你在做什么、在哪、心情怎样只是内在状态，不是话题；"
+            "除非对方明确问“你在干嘛/在哪/吃了吗/今天怎么样”，否则不要主动说出自己的活动、地点或日程。"
+        )
         if consult:
             system_parts.append("【回答方式】这是咨询/步骤类问题：先给结论，最多 2-3 句，口语化，保留角色感，不要客服腔。")
         if self.cfg_bool("dialect_enabled", True):
@@ -7157,6 +7166,30 @@ class HumanCorePlugin(Star):
         self_name, self_uid, self_qq_nick, self_display = await self._self_identity(event)
         alias = str(profile.get("alias") or "").strip()
         sender_nick = str(event.get_sender_name() or profile.get("name") or uid).strip()
+        try:
+            is_group = not event.is_private_chat()
+        except Exception:
+            is_group = False
+        addressed = False
+        if is_group:
+            try:
+                if getattr(event, "is_at_or_wake_command", False):
+                    addressed = True
+            except Exception:
+                addressed = False
+            if not addressed:
+                try:
+                    for component in event.message_obj.message:
+                        if isinstance(component, Comp.At) and str(getattr(component, "qq", "")) == str(event.get_self_id()):
+                            addressed = True
+                            break
+                except Exception:
+                    pass
+            if not addressed and self.heartflow is not None:
+                try:
+                    addressed = bool(self.heartflow._addresses_bot(event.message_str or ""))
+                except Exception:
+                    addressed = False
         parts = [
             "【你的角色名】" + self_name + "（这是角色本名，不是QQ昵称）",
             "【你的QQ账号】QQ昵称：" + self_qq_nick + "；群名片/当前显示名：" + self_display + "；UID：" + (self_uid or "未知") + "。这是你自己的QQ账号，不要和对方混淆。",
@@ -7185,6 +7218,23 @@ class HumanCorePlugin(Star):
             "【长度】默认只回 1-2 句，能一句说清就一句；不要解释、不要列点、不要总结，不要写成客服长文。",
             "【人格】保持上面的人格设定，不要变成通用助手或客服；即使回答咨询也要用自己的口吻。",
         ]
+        if is_group:
+            parts.append(
+                "【群聊】这是群聊，不是你和他私聊，群里还有别的成员，说话的是 " + sender_nick + "。"
+                + ("这条消息是**明确叫你/回你**的，可以正常接话。" if addressed else
+                   "这条消息**没有叫你的名字，也不一定是在跟你说话**：先看上下文——"
+                   "如果只是群友之间互相聊、或和你无关的话题，就别硬接、别把话抢过来，"
+                   "更不要用恋人或女朋友的语气。")
+            )
+            parts.append(
+                "【群聊称呼】不要叫群里的人“老公/宝贝/亲爱的”，除非关系确实是相恋；"
+                "对普通群友就叫昵称或“你”。"
+            )
+        parts.append(
+            "【别主动报日程】你在做什么、在哪、心情怎样，是你的内在状态，**不是话题**。"
+            "除非他明确问“你在干嘛/在哪/吃了吗/今天怎么样”，否则不要主动说出自己的活动、地点、日程安排；"
+            "不要把【正在】【天气】【生理期】这些字段念出来或当成开场白。"
+        )
         if re.search(r"(怎么|如何|为什么|步骤|怎么办|该怎么做|教程|方法|建议|教我|能不能|是什么|该不该|可不可以)", event.message_str or ""):
             parts.append("【回答方式】这是咨询/步骤类问题：先给结论，最多 2-3 句，口语化，保留角色感，不要客服腔。")
         if self.cfg_bool("dialect_enabled", True):
@@ -7307,18 +7357,23 @@ class HumanCorePlugin(Star):
             if self._looks_like_command(event.message_str or ""):
                 return
             context_text = await self._dynamic_context(event)
+            # 只走官方推荐的 extra_user_content_parts（临时 part）注入。
+            # 绝不能改 req.system_prompt：那里放每轮都变的内容会打散系统提示词前缀，
+            # 破坏模型侧缓存（成本涨 7-20 倍），上架审核也会因此被拒。
+            body = "<amo_state>\n" + context_text + "\n</amo_state>"
+            parts = getattr(req, "extra_user_content_parts", None)
+            if parts is None:
+                return
+            part = None
             if TextPart is not None:
-                part = TextPart(text="<amo_state>\n" + context_text + "\n</amo_state>")
                 try:
-                    part = part.mark_as_temp()
+                    part = TextPart(text=body).mark_as_temp()
                 except Exception:
-                    pass
-                req.system_prompt = (req.system_prompt or "") + "\n\n<amo_state>\n" + context_text + "\n</amo_state>"
-                parts = getattr(req, "extra_user_content_parts", None)
-                if parts is not None:
-                    parts.append(part)
-            else:
-                req.system_prompt = (req.system_prompt or "") + "\n\n" + context_text
+                    part = None
+            if part is None:
+                # 老版本 AstrBot 拿不到 TextPart：用 dict 形式，同样只在本轮生效
+                part = {"type": "text", "text": body, "_no_save": True}
+            parts.append(part)
         except Exception as exc:
             logger.debug("[amo] 注入状态失败: %s" % exc)
 

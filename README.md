@@ -4,6 +4,12 @@
 >
 > 反馈、Bug、建议请加 QQ 群：**1055679275**
 
+## 5.3.2 上架修复：不再改 system_prompt
+
+- 动态状态只通过 `extra_user_content_parts` + `mark_as_temp()` 注入，完全不动 `req.system_prompt`，不破坏缓存；
+- 群聊会先判断“这条是不是在跟我说”，不抢话、不乱用恋人语气；
+- 不再主动汇报自己在做什么/在哪，除非对方问起。
+
 ## 5.3.1 和风天气修复 + PR #19/#20
 
 - 和风 API Host 只填域名会自动补 `https://`，修复 `unknown url type`；
