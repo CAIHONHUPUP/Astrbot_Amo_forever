@@ -4010,7 +4010,7 @@ class HumanCorePlugin(Star):
     def _apply_dialect(self, text):
         """按语境偶尔替换一个方言词；不改变整体意思。"""
         text = str(text or "")
-        if not text or not self.cfg_bool("dialect_enabled", True):
+        if not text or not self._dialect_active():
             return text
         if not self.cfg_bool("dialect_auto_replace", False):
             return text
@@ -4135,10 +4135,17 @@ class HumanCorePlugin(Star):
             logger.debug("[amo] 景区知识库检索失败: %s" % exc)
             return ""
 
+    def _dialect_active(self):
+        """方言是否生效：方言选择里选「普通话」就等于关掉方言（连方言库都不查）。"""
+        style = str(self.cfg_str("dialect_style", "") or "").strip()
+        if style in ("普通话", "关闭", "off", "none"):
+            return False
+        return self.cfg_bool("dialect_enabled", True)
+
     def _dialect_style(self):
         """语种：配置里写了就用配置（面板可覆盖），没写就按世界观城市自动选。"""
         explicit = str(self.cfg_str("dialect_style", "") or "").strip()
-        if explicit:
+        if explicit and explicit not in ("自动", "auto", "auto_city"):
             return explicit
         city = ""
         try:
@@ -4177,7 +4184,7 @@ class HumanCorePlugin(Star):
 
     async def _dialect_kb_context(self, query):
         # 关掉方言就别再检索方言库：不查不注入，省一次 embedding 查询和一段提示词
-        if not self.cfg_bool("dialect_enabled", True):
+        if not self._dialect_active():
             return ""
         try:
             manager = getattr(self.context, "kb_manager", None)
@@ -4203,6 +4210,8 @@ class HumanCorePlugin(Star):
 
     async def _ensure_dialect_kb(self):
         """把方言同步进 AstrBot 知识库；失败会明确写日志，不再静默。"""
+        if not self._dialect_active():
+            return None
         if not self.cfg_bool("create_dialect_kb", True):
             return None
         try:
@@ -6854,7 +6863,7 @@ class HumanCorePlugin(Star):
         )
         if consult:
             system_parts.append("【回答方式】这是咨询/步骤类问题：先给结论，最多 2-3 句，口语化，保留角色感，不要客服腔。")
-        if self.cfg_bool("dialect_enabled", True):
+        if self._dialect_active():
             style = self._dialect_style()
             samples = DIALECT_SAMPLES.get(style, "")
             if style and samples:
@@ -7280,7 +7289,7 @@ class HumanCorePlugin(Star):
         )
         if re.search(r"(怎么|如何|为什么|步骤|怎么办|该怎么做|教程|方法|建议|教我|能不能|是什么|该不该|可不可以)", event.message_str or ""):
             parts.append("【回答方式】这是咨询/步骤类问题：先给结论，最多 2-3 句，口语化，保留角色感，不要客服腔。")
-        if self.cfg_bool("dialect_enabled", True):
+        if self._dialect_active():
             style = self._dialect_style()
             samples = DIALECT_SAMPLES.get(style, "")
             if style and samples:
@@ -8402,7 +8411,7 @@ class HumanCorePlugin(Star):
                 "version": PLUGIN_VERSION,
                 "memory_source": self.cfg_str("memory_source", "auto"),
                 "dialect_style": self._dialect_style(),
-                "dialect_count": len(self._dialect_rows()),
+                "dialect_count": len(self._dialect_rows()) if self._dialect_active() else 0,
                 "companion_memory_available": self._companion_plugin() is not None,
             },
         }
@@ -9449,7 +9458,11 @@ class HumanCorePlugin(Star):
         for key, value in (changes or {}).items():
             meta = schema.get(key)
             if not isinstance(meta, dict):
-                continue
+                # 操作页的「语种」下拉不在 schema 里，单独放行（普通话/各地方言）
+                if key == "dialect_style":
+                    meta = {"type": "string", "default": ""}
+                else:
+                    continue
             try:
                 coerced = self._coerce_config_value(meta.get("type", "string"), value)
             except Exception as exc:
@@ -9898,6 +9911,8 @@ class HumanCorePlugin(Star):
         except Exception:
             data = {}
         style = str(data.get("dialect_style") or self._q("dialect_style", "") or "").strip()
+        if not self._dialect_active() and style not in DIALECT_REGIONS:
+            return {"code": 1, "msg": "现在选的是普通话（方言已关闭），不需要重建语种库"}
         if style in DIALECT_REGIONS:
             self.config["dialect_style"] = style
             try:

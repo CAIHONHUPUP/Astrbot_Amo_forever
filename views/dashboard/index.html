@@ -556,6 +556,7 @@
         <div class="row" style="gap:8px;align-items:center;">
           <span class="label">语种</span>
           <select id="worldDialect" class="input grow">
+            <option value="普通话">普通话（关闭方言）</option>
             <option value="贵州话">贵州话</option>
             <option value="东北话">东北话</option>
             <option value="四川话">四川话</option>
@@ -1233,11 +1234,15 @@
     document.getElementById("worldDialect").addEventListener("change", async (event) => {
       const select = event.currentTarget;
       const value = select.value;
+      const plain = value === "普通话";
       select.disabled = true;
       try {
-        const result = await call("config_save", { changes: { dialect_style: value } });
+        const changes = plain
+          ? { dialect_style: "普通话", dialect_enabled: false, create_dialect_kb: false }
+          : { dialect_style: value, dialect_enabled: true };
+        const result = await call("config_save", { changes });
         if (result && result.code && result.code !== 0) throw new Error(result.msg || "切换失败");
-        toast("语种已切换：" + value + "，建议重建语种库");
+        toast(plain ? "已切到普通话：方言已关闭（不再查方言库）" : "语种已切换：" + value);
       } catch (error) {
         toast("切换失败：" + (error.message || error), true);
       } finally {
@@ -1248,11 +1253,15 @@
       const button = event.currentTarget;
       const select = document.getElementById("worldDialect");
       const style = select ? select.value : "贵州话";
+      if (style === "普通话") {
+        toast("普通话不需要方言库：已保持关闭");
+        return;
+      }
       const old = button.textContent;
       button.disabled = true;
       button.textContent = "重建中…";
       try {
-        const saved = await call("config_save", { changes: { dialect_style: style } });
+        const saved = await call("config_save", { changes: { dialect_style: style, dialect_enabled: true } });
         if (saved && saved.code && saved.code !== 0) throw new Error(saved.msg || "保存语种失败");
         const result = await call("kb_regen", { dialect_style: style });
         if (result && result.code && result.code !== 0) throw new Error(result.msg || "重建失败");
