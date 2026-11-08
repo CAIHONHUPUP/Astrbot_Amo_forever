@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 5.0.2
+我想永远陪着你 / 我想永远陪伴你 5.1.0
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -77,9 +77,26 @@ except Exception:
         except Exception as _engine_exc:
             logger.error("[amo] 内置心流/分段模块加载失败: %s" % _engine_exc)
 
+try:
+    from .schedule_engine import ScheduleEngine
+except Exception:
+    try:
+        from schedule_engine import ScheduleEngine
+    except Exception:
+        try:
+            import importlib.util as _importlib_util
+            _schedule_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schedule_engine.py")
+            _schedule_spec = _importlib_util.spec_from_file_location("amo_schedule_engine", _schedule_path)
+            _schedule_module = _importlib_util.module_from_spec(_schedule_spec)
+            _schedule_spec.loader.exec_module(_schedule_module)
+            ScheduleEngine = getattr(_schedule_module, "ScheduleEngine")
+        except Exception as _schedule_exc:
+            ScheduleEngine = None
+            logger.error("[amo] 日程引擎加载失败: %s" % _schedule_exc)
+
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.0.2"
+PLUGIN_VERSION = "5.1.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -142,7 +159,7 @@ DIALECT_REGIONS = {
     "河南话": "河南",
     "上海话": "上海",
 }
-SCHEDULE_VERSION = "human-v4"
+SCHEDULE_VERSION = "backbone-v5"
 NETWORK_RELATIONS = ("家人", "恋人", "朋友", "同事", "同学", "熟人", "陌生人", "仇人")
 MOOD_KEYS = ("开心", "平静", "郁闷", "生气", "暴躁", "委屈", "疲惫", "焦虑", "兴奋", "依恋")
 MOOD_BASE = {
@@ -1250,6 +1267,13 @@ class AmoDB:
                     items TEXT DEFAULT '[]',
                     updated REAL DEFAULT 0
                 );
+                CREATE TABLE IF NOT EXISTS schedule_diary (
+                    day TEXT DEFAULT '',
+                    hour TEXT DEFAULT '',
+                    text TEXT DEFAULT '',
+                    updated REAL DEFAULT 0,
+                    PRIMARY KEY(day, hour)
+                );
                 CREATE TABLE IF NOT EXISTS proactive_log (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     uid TEXT DEFAULT '',
@@ -1926,6 +1950,34 @@ class AmoDB:
         except Exception:
             return None
 
+    def get_diary(self, day, hour):
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT text FROM schedule_diary WHERE day=? AND hour=?",
+                (str(day), str(hour)),
+            ).fetchone()
+        return str(row["text"] or "") if row else ""
+
+    def save_diary(self, day, hour, text):
+        with self.lock:
+            self.conn.execute(
+                "INSERT INTO schedule_diary(day, hour, text, updated) VALUES(?,?,?,?) "
+                "ON CONFLICT(day, hour) DO UPDATE SET text=excluded.text, updated=excluded.updated",
+                (str(day), str(hour), str(text or ""), now_ts()),
+            )
+            self.conn.commit()
+
+    def clear_diaries(self, day):
+        with self.lock:
+            self.conn.execute("DELETE FROM schedule_diary WHERE day=?", (str(day),))
+            self.conn.commit()
+
+    def purge_diaries(self, days=30):
+        cutoff = (date.today() - timedelta(days=max(1, int(days)))).isoformat()
+        with self.lock:
+            self.conn.execute("DELETE FROM schedule_diary WHERE day < ?", (cutoff,))
+            self.conn.commit()
+
     # ---------- 统计 ----------
     def counts(self):
         with self.lock:
@@ -1966,6 +2018,15 @@ class HumanState:
         self.weather = self.db.kv_get("weather", {}) or {}
         self.worldview = self.db.kv_get("worldview", {}) or {}
         self.schedule = self.db.kv_get("schedule", {}) or {}
+        self.schedule_ctx = self.db.kv_get("schedule_ctx", {}) or {}
+        if not isinstance(self.schedule_ctx, dict):
+            self.schedule_ctx = {}
+        self.engine = None
+        if ScheduleEngine is not None:
+            try:
+                self.engine = ScheduleEngine(self)
+            except Exception as exc:
+                logger.warning("[amo] 日程引擎初始化失败: %s" % exc)
         self.last_daily = self.db.kv_get("last_daily", "")
         self.last_health_roll = self.db.kv_get("last_health_roll", "")
 
@@ -2204,7 +2265,7 @@ class HumanState:
         text, tag = rng.choice(choices)
         temp = base_temp + rng.randint(-4, 4)
         return {
-            "city": self.p.cfg_str("weather_city", "杭州"),
+            "city": self.p.cfg_str("weather_city", "贵阳"),
             "text": text, "tag": tag, "temp": temp,
             "humidity": rng.randint(40, 90),
             "wind": random.choice(["东风", "南风", "西北风", "微风"]) + str(rng.randint(1, 4)) + "级",
@@ -2314,7 +2375,7 @@ class HumanState:
             pass
         current = self.weather or {}
         key = self.p.cfg_str("hefeng_key", "")
-        city = self.p.cfg_str("weather_city", "杭州")
+        city = self.p.cfg_str("weather_city", "贵阳")
         host = self.p.cfg_str("weather_host", "")
         # 配置里的城市/Key/Host 变了就必须重取，不能继续用旧缓存。
         current_signature = (current.get("city"), bool(current.get("key_set")), current.get("host"))
@@ -2352,7 +2413,7 @@ class HumanState:
         return {
             "name": self.p.persona_name or self.p.cfg_str("bot_name", "") or "陪伴",
             "age": 22,
-            "city": self.p.cfg_str("weather_city", "杭州"),
+            "city": self.p.cfg_str("weather_city", "贵阳"),
             "occupation": "普通上班族",
             "workplace": "公司",
             "personality": "温柔、敏感，偶尔有点小脾气",
@@ -2402,10 +2463,10 @@ class HumanState:
             "规则：%s" % world.get("world_rules", ""),
         ])
 
-    # ---------- 日程 ----------
+    # ---------- 日程（主干生成 + 动态展开） ----------
     @staticmethod
     def _hourly_schedule(items):
-        """把任意日程整理成 24 条整点日程。"""
+        """把任意日程整理成 24 条整点日程；最后一条固定 23:00-24:00。"""
         valid = [item for item in (items or []) if isinstance(item, dict) and item.get("start")]
         valid.sort(key=lambda item: parse_hhmm(item.get("start")))
         result = []
@@ -2419,48 +2480,52 @@ class HumanState:
                 if begin <= start_min < finish:
                     found = item
                     break
+            entry = {
+                "start": "%02d:00" % hour,
+                "end": "24:00" if hour == 23 else "%02d:00" % (hour + 1),
+                "activity": "睡觉" if hour < 7 or hour >= 23 else "休息",
+                "place": "家",
+                "category": "sleep" if hour < 7 or hour >= 23 else "rest",
+            }
             if found:
-                entry = {
-                    "start": "%02d:00" % hour,
-                    "end": "23:59" if hour == 23 else "%02d:00" % (hour + 1),
+                entry.update({
                     "activity": found.get("activity", "休息"),
                     "place": found.get("place", "家"),
                     "category": found.get("category", "rest"),
-                }
-                if found.get("detail"):
-                    entry["detail"] = found["detail"]
-                if isinstance(found.get("segments"), list):
-                    entry["segments"] = found["segments"]
-            else:
-                sleep = hour < 7 or hour >= 23
-                entry = {
-                    "start": "%02d:00" % hour,
-                    "end": "23:59" if hour == 23 else "%02d:00" % (hour + 1),
-                    "activity": "睡觉" if sleep else "休息",
-                    "place": "家",
-                    "category": "sleep" if sleep else "rest",
-                }
+                })
+                for key in ("zone", "transit", "vehicle", "detail", "spot",
+                            "event", "mood", "mood_valence"):
+                    if found.get(key) not in (None, "", 0):
+                        entry[key] = found.get(key)
+                if isinstance(found.get("effects"), dict):
+                    entry["effects"] = found.get("effects")
+                if found.get("soothe"):
+                    entry["soothe"] = True
             result.append(entry)
         return result
 
     @staticmethod
     def _fmt_minutes(value):
-        value = max(0, min(24 * 60 - 1, int(value)))
+        value = max(0, min(24 * 60, int(value)))
+        if value >= 24 * 60:
+            return "24:00"
         return "%02d:%02d" % (value // 60, value % 60)
 
-    def schedule_tree(self):
-        """一级 3 段、二级每小时、三级每 10 分钟的日程树。"""
-        hourly = self._hourly_schedule(self.schedule.get(today_str()) or [])
+    def schedule_tree(self, day=None):
+        """一级 4 段、二级每小时；不再生成三级 10 分钟。"""
+        day = str(day or today_str())
+        hourly = self._hourly_schedule(self.schedule.get(day) or self.db.get_schedule(day) or [])
         now_min = minutes_now()
+        is_today = day == today_str()
         blocks = [
-            {"start": "00:00", "end": "06:00", "title": "夜间", "activity": "休息", "place": "家", "category": "sleep"},
-            {"start": "06:00", "end": "12:00", "title": "上午", "activity": "活动", "place": "家", "category": "life"},
-            {"start": "12:00", "end": "18:00", "title": "下午", "activity": "活动", "place": "家", "category": "life"},
-            {"start": "18:00", "end": "23:59", "title": "晚上", "activity": "活动", "place": "家", "category": "rest"},
+            {"start": "00:00", "end": "06:00", "title": "深夜"},
+            {"start": "06:00", "end": "12:00", "title": "上午"},
+            {"start": "12:00", "end": "18:00", "title": "中午"},
+            {"start": "18:00", "end": "24:00", "title": "晚上"},
         ]
         for block in blocks:
             bstart = parse_hhmm(block["start"])
-            bend = 24 * 60 if block["end"] == "23:59" else parse_hhmm(block["end"])
+            bend = 24 * 60 if block["end"] == "24:00" else parse_hhmm(block["end"])
             children = []
             for item in hourly:
                 start = max(bstart, parse_hhmm(item.get("start")))
@@ -2469,84 +2534,38 @@ class HumanState:
                     continue
                 hour = {
                     "start": self._fmt_minutes(start),
-                    "end": self._fmt_minutes(end - 1 if end < 24 * 60 else 23 * 60 + 59),
+                    "end": self._fmt_minutes(end),
                     "activity": item.get("activity", "休息"),
                     "place": item.get("place", "家"),
                     "category": item.get("category", "rest"),
+                    "zone": item.get("zone", ""),
+                    "transit": item.get("transit", ""),
+                    "vehicle": item.get("vehicle", ""),
                     "detail": item.get("detail", ""),
-                    "current": start <= now_min < end,
-                    "children": [],
+                    "event": item.get("event", ""),
+                    "mood": item.get("mood", ""),
+                    "current": bool(is_today and start <= now_min < end),
                 }
-                hour["children"] = self._micro_segments(item, start, end)
                 children.append(hour)
+            block["date"] = day
             block["children"] = children
             block["current"] = any(child["current"] for child in children)
             if children:
-                block["place"] = children[0].get("place") or block["place"]
-                block["activity"] = children[0].get("activity") or block["activity"]
+                activities = [str(child.get("activity") or "") for child in children]
+                if all(item.get("category") == "sleep" for item in children):
+                    block["activity"] = "睡觉"
+                elif any(item.get("category") in ("play", "social") for item in children):
+                    block["activity"] = "出去玩"
+                elif any(item.get("category") == "work" for item in children):
+                    block["activity"] = "上班"
+                else:
+                    block["activity"] = children[0].get("activity") or "休息"
+                block["place"] = children[0].get("place") or ""
         return blocks
-
-    def _micro_segments(self, hour, start, end):
-        """把一小时拆成 6 个 10 分钟小段；优先用模型给出的细段。"""
-        raw = hour.get("segments") if isinstance(hour.get("segments"), list) else []
-        if raw:
-            result = []
-            for item in raw:
-                if not isinstance(item, dict):
-                    continue
-                begin = parse_hhmm(item.get("start"))
-                finish = parse_hhmm(item.get("end"))
-                if begin >= finish:
-                    continue
-                result.append({
-                    "start": self._fmt_minutes(begin),
-                    "end": self._fmt_minutes(finish - 1),
-                    "activity": item.get("activity", hour.get("activity", "休息")),
-                    "place": item.get("place", hour.get("place", "家")),
-                    "category": item.get("category", hour.get("category", "rest")),
-                    "current": begin <= minutes_now() < finish,
-                })
-            if result:
-                return result
-        category = hour.get("category", "rest")
-        hour_num = start // 60
-        patterns = {
-            "work": ["开电脑看消息", "写代码改文档", "开会讨论", "回消息处理需求", "起身倒水、上厕所", "摸鱼刷手机"],
-            "study": ["看书", "整理笔记", "做题", "查资料", "起身活动", "摸鱼"],
-            "commute": ["走路", "等车", "车上刷手机", "换乘", "出站", "到公司/到家"],
-            "meal": ["吃饭", "边吃边聊", "刷手机", "喝汤", "收碗", "回工位"],
-            "rest": ["刷手机", "发呆", "喝水", "上厕所", "看视频", "伸懒腰"],
-            "play": ["玩游戏", "看视频", "聊天", "吃点零食", "起身走动", "继续玩"],
-            "sleep": ["睡觉", "睡觉", "睡觉", "睡觉", "睡觉", "睡觉"],
-            "life": ["收拾东西", "走动", "喝水", "看手机", "整理", "准备下一件事"],
-        }
-        if category == "life" and 7 <= hour_num < 8:
-            actions = ["洗脸刷牙", "换衣服", "吃早餐", "收拾包", "穿鞋", "出门"]
-        elif category == "life" and 22 <= hour_num < 23:
-            actions = ["洗澡", "吹头发", "护肤", "刷牙", "躺床上", "刷会儿手机"]
-        else:
-            actions = patterns.get(category, patterns["rest"])
-        offset = hour_num % len(actions)
-        result = []
-        cursor = start
-        for index in range(6):
-            if cursor >= end:
-                break
-            nxt = min(cursor + 10, end)
-            result.append({
-                "start": self._fmt_minutes(cursor),
-                "end": self._fmt_minutes(nxt - 1),
-                "activity": actions[(index + offset) % len(actions)],
-                "place": hour.get("place", "家"),
-                "category": category,
-                "current": cursor <= minutes_now() < nxt,
-            })
-            cursor = nxt
-        return result
 
     @staticmethod
     def _cover_schedule(items):
-        """给日程补上 00:00 到第一条安排之间的睡眠段。"""
+        """兼容旧数据：补上 00:00 到第一条安排之间的睡眠段。"""
         if not isinstance(items, list) or not items:
             return items
         valid = [item for item in items if isinstance(item, dict) and item.get("start")]
@@ -2557,230 +2576,258 @@ class HumanState:
         if parse_hhmm(first_start) > 0:
             ordered.insert(0, {
                 "start": "00:00", "end": first_start,
-                "activity": "睡觉", "place": "家", "category": "sleep",
+                "activity": "睡觉", "place": "家", "category": "sleep", "zone": "home",
             })
         return ordered
 
-    def _travel_schedule(self, meta):
-        """长假去外省旅游，日程里包含交通、景区、酒店和当地吃饭。"""
-        seed = (meta.get("holiday") or "") + (meta.get("date") or "")[:4]
-        spots = self.p.scenic_spots()
-        home = self.p.cfg_str("weather_city", "")
-        if home in ("铜仁", "贵阳", "遵义", "安顺", "毕节", "六盘水", "凯里", "都匀", "兴义"):
-            spots = [item for item in spots if str(item.get("province") or "") != "贵州"]
-        if spots:
-            chosen = spots[md5_int(seed) % len(spots)]
-            city = str(chosen.get("city") or chosen.get("province") or "")
-            spot = str(chosen.get("name") or "")
-            projects = [str(item) for item in (chosen.get("projects") or []) if str(item)]
-            project_a = projects[0] if projects else "景区主景点"
-            project_b = projects[1] if len(projects) > 1 else "拍照散步"
-            night_spot = city + "·夜市"
-        else:
-            city, spot, project_a, project_b, night_spot = "云南·大理", "大理古城", "大理古城", "洱海", "大理·夜市"
-        return [
-            {"start": "00:00", "end": "06:00", "activity": "在酒店睡觉", "place": city + "·酒店", "category": "sleep"},
-            {"start": "06:00", "end": "07:00", "activity": "起床洗漱", "place": city + "·酒店", "category": "life"},
-            {"start": "07:00", "end": "08:00", "activity": "酒店吃早饭", "place": city + "·酒店", "category": "meal"},
-            {"start": "08:00", "end": "10:00", "activity": "坐高铁/飞机去" + city, "place": "路上", "category": "commute"},
-            {"start": "10:00", "end": "12:00", "activity": "到酒店放行李、去" + spot, "place": city + "·" + spot, "category": "commute"},
-            {"start": "12:00", "end": "13:00", "activity": "在景区附近吃当地午饭", "place": city + "·" + spot, "category": "meal"},
-            {"start": "13:00", "end": "15:00", "activity": "逛" + spot + "：" + project_a, "place": city + "·" + spot, "category": "play"},
-            {"start": "15:00", "end": "17:00", "activity": "体验" + project_b, "place": city + "·" + spot, "category": "play"},
-            {"start": "17:00", "end": "19:00", "activity": "回酒店休息", "place": city + "·酒店", "category": "rest"},
-            {"start": "19:00", "end": "20:00", "activity": "吃当地特色晚饭", "place": city + "·" + night_spot, "category": "meal"},
-            {"start": "20:00", "end": "22:00", "activity": "逛" + night_spot + "夜市", "place": city + "·" + night_spot, "category": "play"},
-            {"start": "22:00", "end": "23:00", "activity": "回酒店洗澡", "place": city + "·酒店", "category": "life"},
-            {"start": "23:00", "end": "23:59", "activity": "睡觉", "place": city + "·酒店", "category": "sleep"},
-        ]
-
-    def _fallback_schedule(self):
-        """真人化的整点兜底日程：通勤、开会、下午茶、上厕所、摸鱼都有。"""
-        meta = day_meta()
-        if meta["holiday_days"] >= 4:
-            return self._with_daily_events(self._travel_schedule(meta))
-        weekday = not meta["rest"]
-        if weekday:
-            items = [
-                {"start": "00:00", "end": "01:00", "activity": "睡觉", "place": "家", "category": "sleep"},
-                {"start": "01:00", "end": "02:00", "activity": "睡觉", "place": "家", "category": "sleep"},
-                {"start": "02:00", "end": "03:00", "activity": "睡觉", "place": "家", "category": "sleep"},
-                {"start": "03:00", "end": "04:00", "activity": "睡觉", "place": "家", "category": "sleep"},
-                {"start": "04:00", "end": "05:00", "activity": "睡觉", "place": "家", "category": "sleep"},
-                {"start": "05:00", "end": "06:00", "activity": "睡觉", "place": "家", "category": "sleep"},
-                {"start": "06:00", "end": "07:00", "activity": "睡觉", "place": "家", "category": "sleep"},
-                {"start": "07:00", "end": "08:00", "activity": "起床洗漱、吃早餐", "place": "家", "category": "life"},
-                {"start": "08:00", "end": "09:00", "activity": "通勤去公司", "place": "地铁上", "category": "commute"},
-                {"start": "09:00", "end": "10:00", "activity": "到公司、开电脑、看消息", "place": "公司", "category": "work"},
-                {"start": "10:00", "end": "11:00", "activity": "写代码、开个短会", "place": "公司", "category": "work"},
-                {"start": "11:00", "end": "12:00", "activity": "处理需求、回消息", "place": "公司", "category": "work"},
-                {"start": "12:00", "end": "13:00", "activity": "吃午饭、和同事闲聊", "place": "公司附近", "category": "meal"},
-                {"start": "13:00", "end": "14:00", "activity": "午休、摸鱼刷手机", "place": "工位", "category": "rest"},
-                {"start": "14:00", "end": "15:00", "activity": "写代码、改 bug", "place": "公司", "category": "work"},
-                {"start": "15:00", "end": "16:00", "activity": "下午茶、上厕所、摸鱼", "place": "茶水间", "category": "rest"},
-                {"start": "16:00", "end": "17:00", "activity": "开会、对齐需求", "place": "会议室", "category": "work"},
-                {"start": "17:00", "end": "18:00", "activity": "收尾、准备下班", "place": "公司", "category": "work"},
-                {"start": "18:00", "end": "19:00", "activity": "下班通勤回家", "place": "地铁上", "category": "commute"},
-                {"start": "19:00", "end": "20:00", "activity": "吃晚饭", "place": "家", "category": "meal"},
-                {"start": "20:00", "end": "21:00", "activity": "追剧、瘫着", "place": "家", "category": "rest"},
-                {"start": "21:00", "end": "22:00", "activity": "刷手机、聊天", "place": "家", "category": "play"},
-                {"start": "22:00", "end": "23:00", "activity": "洗漱、护肤", "place": "家", "category": "life"},
-                {"start": "23:00", "end": "23:59", "activity": "睡觉", "place": "家", "category": "sleep"},
-            ]
-            return self._with_daily_events(items)
-        items = [
-            {"start": "00:00", "end": "01:00", "activity": "睡觉", "place": "家", "category": "sleep"},
-            {"start": "01:00", "end": "02:00", "activity": "睡觉", "place": "家", "category": "sleep"},
-            {"start": "02:00", "end": "03:00", "activity": "睡觉", "place": "家", "category": "sleep"},
-            {"start": "03:00", "end": "04:00", "activity": "睡觉", "place": "家", "category": "sleep"},
-            {"start": "04:00", "end": "05:00", "activity": "睡觉", "place": "家", "category": "sleep"},
-            {"start": "05:00", "end": "06:00", "activity": "睡觉", "place": "家", "category": "sleep"},
-            {"start": "06:00", "end": "07:00", "activity": "睡觉", "place": "家", "category": "sleep"},
-            {"start": "07:00", "end": "08:00", "activity": "赖床、刷手机", "place": "家", "category": "rest"},
-            {"start": "08:00", "end": "09:00", "activity": "起床洗漱、吃早餐", "place": "家", "category": "life"},
-            {"start": "09:00", "end": "10:00", "activity": "打扫房间、洗衣服", "place": "家", "category": "life"},
-            {"start": "10:00", "end": "11:00", "activity": "去附近公园散步、晒太阳", "place": "附近公园", "category": "play"},
-            {"start": "11:00", "end": "12:00", "activity": "公园里坐着聊天", "place": "附近公园", "category": "rest"},
-            {"start": "12:00", "end": "13:00", "activity": "吃午饭", "place": "外面", "category": "meal"},
-            {"start": "13:00", "end": "14:00", "activity": "继续逛、买点小东西", "place": "商场", "category": "play"},
-            {"start": "14:00", "end": "15:00", "activity": "找地方喝下午茶", "place": "咖啡店", "category": "rest"},
-            {"start": "15:00", "end": "16:00", "activity": "坐着发呆、刷手机", "place": "咖啡店", "category": "rest"},
-            {"start": "16:00", "end": "17:00", "activity": "看电影或玩游戏", "place": "商场", "category": "play"},
-            {"start": "17:00", "end": "18:00", "activity": "回家路上", "place": "路上", "category": "commute"},
-            {"start": "18:00", "end": "19:00", "activity": "吃晚饭", "place": "家", "category": "meal"},
-            {"start": "19:00", "end": "20:00", "activity": "追剧", "place": "家", "category": "rest"},
-            {"start": "20:00", "end": "21:00", "activity": "打游戏", "place": "家", "category": "play"},
-            {"start": "21:00", "end": "22:00", "activity": "刷手机、聊天", "place": "家", "category": "play"},
-            {"start": "22:00", "end": "23:00", "activity": "洗澡、护肤", "place": "家", "category": "life"},
-            {"start": "23:00", "end": "23:59", "activity": "睡觉", "place": "家", "category": "sleep"},
-        ]
-        if day_meta()["rest"] and random.random() < 0.18:
-            for item in items:
-                if item.get("start") in ("10:00", "11:00"):
-                    item.update(activity="临时加班处理点事", place="家", category="work")
-        return self._with_daily_events(items)
-
-    def _with_daily_events(self, items):
-        """加入熬夜→精神恍惚→工作失误→被老板骂→扣工资/同事闹脾气的事件链。"""
-        if day_meta()["rest"]:
-            return items
-        late_night = md5_int(today_str() + "late_night") % 4 == 0
-        for item in items:
-            hour = parse_hhmm(item.get("start")) // 60
-            if late_night and hour == 0:
-                item.update(activity="熬夜刷手机、赶东西", category="play", detail="熬夜")
-            elif late_night and hour == 9:
-                item.update(activity="精神恍惚，工作出错", detail="精神恍惚")
-            elif late_night and hour == 10:
-                item.update(activity="被老板叫去骂了一顿", detail="老板骂人")
-            elif late_night and hour == 16:
-                item.update(activity="工作失误，被扣了点工资", detail="扣工资")
-            elif hour == 10:
-                item.update(activity="和同事讨论需求，偶尔聊两句", detail="同事聊天")
-            elif hour == 15:
-                item.update(activity="和同事下午茶、八卦", detail="同事聊天")
-            elif hour == 16:
-                item.update(activity="和同事闹脾气", detail="同事闹脾气")
+    def _emergency_schedule(self):
+        """新引擎不可用时的最小兜底，保证 24 小时闭环、不瞬移。"""
+        home = self.p.cfg_str("schedule_home", "观山湖区·小窝")
+        office = self.p.cfg_str("schedule_workplace", "公司（贵阳·观山湖区）")
+        items = []
+        for hour in range(24):
+            if hour < 7 or hour >= 23:
+                activity, place, zone, category = "睡觉", home, "home", "sleep"
+            elif hour < 8:
+                activity, place, zone, category = "起床洗漱", home, "home", "life"
+            elif hour < 9:
+                activity, place, zone, category = "通勤去公司", "路上", "road", "commute"
+            elif hour < 12:
+                activity, place, zone, category = "上班", office, "office", "work"
+            elif hour < 13:
+                activity, place, zone, category = "吃午饭", office + "附近", "restaurant", "meal"
+            elif hour < 14:
+                activity, place, zone, category = "午休", office, "office", "rest"
+            elif hour < 18:
+                activity, place, zone, category = "上班", office, "office", "work"
+            elif hour < 19:
+                activity, place, zone, category = "下班回家", "路上", "road", "commute"
+            elif hour < 20:
+                activity, place, zone, category = "吃晚饭", home, "home", "meal"
+            elif hour < 22:
+                activity, place, zone, category = "休息", home, "home", "rest"
+            else:
+                activity, place, zone, category = "洗澡护肤", home, "home", "life"
+            items.append({
+                "start": "%02d:00" % hour,
+                "end": "24:00" if hour == 23 else "%02d:00" % (hour + 1),
+                "activity": activity, "place": place, "zone": zone,
+                "category": category,
+            })
         return items
 
     async def ensure_schedule(self, umo, force=False):
+        """每天只生成一次主干；点击二级卡片时再动态生成这一小时的日记。"""
         today = today_str()
-        meta = day_meta()
+        meta = day_meta(today)
         existing = None if force else self.schedule.get(today)
-        if existing and self.db.kv_get("schedule_version", "") != SCHEDULE_VERSION:
-            existing = self._fallback_schedule()
-            self.schedule[today] = existing
-            self.db.kv_set("schedule_version", SCHEDULE_VERSION)
-            self.db.save_schedule(today, existing)
-            return existing
-        if existing and meta["rest"]:
-            activities = " ".join(str(item.get("activity") or "") for item in existing)
-            if (
-                any(str(item.get("category") or "") in ("work", "study") for item in existing)
-                or (meta["holiday_days"] >= 4 and not any(word in activities for word in ("景区", "古城", "洱海", "夜市", "漓江", "兵马俑")))
-                or (meta["holiday_days"] < 4 and not any(word in activities for word in ("公园", "附近", "商场", "咖啡")))
-            ):
-                existing = None
-        if existing:
+        context = self.schedule_ctx.get(today) or {}
+        version_ok = (
+            self.db.kv_get("schedule_version", "") == SCHEDULE_VERSION
+            and isinstance(context, dict)
+            and context.get("version") == "backbone-v5"
+        )
+        if existing and version_ok and not force:
             hourly = self._hourly_schedule(existing)
             if hourly != existing:
                 self.schedule[today] = hourly
                 self.db.kv_set("schedule", self.schedule)
                 self.db.save_schedule(today, hourly)
             return hourly
-        if meta.get("rest"):
-            # 休息日直接走兜底：长假旅游、短假附近公园，保证不排上班/通勤。
-            items = self._fallback_schedule()
-        else:
-            world = await self.ensure_worldview(umo)
-            weather = await self.refresh_weather()
-            period = self.period_info()
-            health = self.health_info()
-            items = await self.p.llm.gen_schedule(umo, world, weather, period, health, meta)
-            if not items:
-                items = self._fallback_schedule()
-        items = self._with_daily_events(items)
+        world = await self.ensure_worldview(umo)
+        weather = await self.refresh_weather()
+        try:
+            self.roll_health()
+        except Exception:
+            pass
+        period = self.period_info()
+        health = self.health_info()
+        context = None
+        items = None
+        if self.engine is not None:
+            try:
+                context = self.engine.build_context(
+                    today, meta, weather, world, self.mood, period, health,
+                    salt=str(now_ts()) if force else "",
+                )
+                items = self.engine.build_skeleton(context)
+                try:
+                    items = await self.engine.enrich(umo, context, items, self.p.llm)
+                except Exception as exc:
+                    logger.debug("[amo] 日程主干文案润色失败，保留骨架: %s" % exc)
+            except Exception as exc:
+                logger.warning("[amo] 日程主干生成失败，使用兜底: %s" % exc)
+                items = None
+        if not items:
+            context = context or {
+                "version": "backbone-v5",
+                "day": today,
+                "meta": meta,
+                "weather": weather,
+                "world": world,
+                "city": self.p.cfg_str("schedule_city", "贵阳"),
+                "home": self.p.cfg_str("schedule_home", "观山湖区·小窝"),
+                "workplace": self.p.cfg_str("schedule_workplace", "公司（贵阳·观山湖区）"),
+                "car": self.p.cfg_str("schedule_car", "黑色奔驰C级"),
+                "mood": dict(self.mood),
+                "period": period,
+                "health": health,
+                "event": {"kind": "none"},
+                "scenic": None,
+                "location": self.p.cfg_str("schedule_city", "贵阳"),
+                "good_weather": True,
+                "yesterday": self.engine.yesterday_summary(today) if self.engine is not None else {},
+            }
+            items = self._emergency_schedule()
         items = self._hourly_schedule(items)
         self.schedule[today] = items
+        if context:
+            context["version"] = "backbone-v5"
+            context["day"] = today
+            self.schedule_ctx[today] = context
+            self.db.kv_set("schedule_ctx", self.schedule_ctx)
         self.db.kv_set("schedule_version", SCHEDULE_VERSION)
         self.db.kv_set("schedule", self.schedule)
         self.db.save_schedule(today, items)
+        if force:
+            try:
+                self.db.clear_diaries(today)
+            except Exception:
+                pass
         cutoff = (date.today() - timedelta(days=14)).isoformat()
         for day in list(self.schedule.keys()):
             if day < cutoff:
                 self.schedule.pop(day, None)
+                self.schedule_ctx.pop(day, None)
+        self.db.kv_set("schedule_ctx", self.schedule_ctx)
+        logger.info("[amo] 生成日程主干 %s：%s" % (
+            today, (context or {}).get("event", {}).get("kind", "none"),
+        ))
         return items
 
-    async def detail_next_hour(self, umo):
-        """整点前三分钟，把下一个整点的小时日程再细化一次。"""
-        now = datetime.now()
-        target = now.hour + 1
-        if target >= 24:
-            return
-        day = today_str()
-        items = self._hourly_schedule(self.schedule.get(day) or [])
+    def schedule_context(self, day=None):
+        day = str(day or today_str())
+        context = self.schedule_ctx.get(day) or {}
+        if isinstance(context, dict):
+            return context
+        return {}
+
+    def _minimal_context(self, day):
         try:
-            world = await self.ensure_worldview(umo)
-            weather = await self.refresh_weather()
-            detail = await self.p.llm.gen_hour_detail(
-                umo, target, world, weather, self.period_info(), self.health_info()
-            )
-        except Exception as exc:
-            logger.debug("[amo] 细化日程失败: %s" % exc)
-            return
-        if not detail:
-            return
-        for item in items:
-            if parse_hhmm(item.get("start")) == target * 60:
-                item.update(detail)
+            meta = day_meta(day)
+        except Exception:
+            meta = day_meta()
+        return {
+            "version": "backbone-v5",
+            "day": day,
+            "meta": meta,
+            "weather": self.weather or {},
+            "world": self.worldview or {},
+            "city": self.p.cfg_str("schedule_city", "贵阳"),
+            "home": self.p.cfg_str("schedule_home", "观山湖区·小窝"),
+            "workplace": self.p.cfg_str("schedule_workplace", "公司（贵阳·观山湖区）"),
+            "car": self.p.cfg_str("schedule_car", "黑色奔驰C级"),
+            "mood": dict(self.mood),
+            "period": self.period_info(),
+            "health": self.health_info(),
+            "event": {"kind": "none"},
+            "scenic": None,
+            "location": self.p.cfg_str("schedule_city", "贵阳"),
+            "good_weather": True,
+            "yesterday": self.engine.yesterday_summary(day) if self.engine is not None else {},
+        }
+
+    async def expand_hour(self, day, item, items=None, force=False):
+        """点击二级卡片时，实时生成这一小时的第一人称小日记。"""
+        day = str(day or today_str())
+        item = dict(item or {})
+        items = items or self._hourly_schedule(self.schedule.get(day) or [])
+        start = item.get("start") or ""
+        if not start:
+            return {"diary": "", "mood": "平静", "place": "", "activity": ""}
+        if not force:
+            cached = self.db.get_diary(day, start)
+            if cached:
+                return {
+                    "diary": cached,
+                    "mood": item.get("mood") or "平静",
+                    "place": item.get("place") or "",
+                    "activity": item.get("activity") or "",
+                    "cached": True,
+                }
+        context = self.schedule_context(day)
+        if not context:
+            context = self._minimal_context(day)
+        else:
+            context = dict(context)
+            context["mood"] = dict(self.mood)
+            context["health"] = self.health_info()
+            context["period"] = self.period_info()
+            if self.weather:
+                context["weather"] = self.weather
+        index = 0
+        for position, entry in enumerate(items):
+            if entry.get("start") == start:
+                index = position
                 break
-        self.schedule[day] = items
-        self.db.kv_set("schedule", self.schedule)
-        self.db.save_schedule(day, items)
+        prev_item = items[index - 1] if index > 0 else None
+        next_item = items[index + 1] if index + 1 < len(items) else None
+        result = {"diary": "", "mood": item.get("mood") or "平静",
+                  "place": item.get("place") or "", "activity": item.get("activity") or ""}
+        if self.engine is not None:
+            try:
+                result.update(await self.engine.generate_diary(
+                    self.p._last_umo, context, item, prev_item, next_item, self.p.llm,
+                ))
+            except Exception as exc:
+                logger.warning("[amo] 动态日记生成失败: %s" % exc)
+        if not result.get("diary") and self.engine is not None:
+            result["diary"] = self.engine.fallback_diary(context, item, prev_item)
+        if not result.get("diary"):
+            result["diary"] = "这小时我在%s，%s，心情%s。" % (
+                item.get("place") or "家", item.get("activity") or "待着",
+                item.get("mood") or "平静",
+            )
+        self.db.save_diary(day, start, result["diary"])
+        return result
 
     def apply_schedule_events(self):
         """当前小时的日程事件只触发一次，避免每轮都扣心情。"""
         item = self.current_activity()
-        detail = str(item.get("detail") or "")
-        if not detail:
-            return
+        effects = item.get("effects") if isinstance(item.get("effects"), dict) else {}
+        ctx = self.schedule_context(today_str())
         key = "schedule_event_%s_%s_%s" % (
-            today_str(), item.get("start", ""), detail
+            today_str(), item.get("start", ""), ctx.get("seed", ""),
         )
         if self.db.kv_get(key, False):
             return
-        if "熬夜" in detail:
-            self.nudge(疲惫=7, 暴躁=3, 开心=-3)
-        elif "精神恍惚" in detail:
-            self.nudge(疲惫=5, 焦虑=5)
-        elif "老板" in detail:
-            self.nudge(生气=8, 委屈=8, 郁闷=6, 暴躁=4)
-        elif "扣工资" in detail:
-            self.nudge(郁闷=8, 生气=6)
-        elif "同事闹脾气" in detail:
-            self.nudge(生气=5, 委屈=3)
-        elif "同事聊天" in detail:
-            self.nudge(开心=3, 平静=2)
+        applied = False
+        clean = {}
+        for mood_key, delta in effects.items():
+            if mood_key in MOOD_KEYS:
+                try:
+                    clean[mood_key] = float(delta)
+                    applied = True
+                except Exception:
+                    continue
+        if clean:
+            self.nudge(**clean)
+        # 兼容旧版日程里用 detail 标记的事件链。
+        detail = str(item.get("detail") or "")
+        if not applied and detail:
+            legacy = {
+                "熬夜": {"疲惫": 7, "暴躁": 3, "开心": -3},
+                "精神恍惚": {"疲惫": 5, "焦虑": 5},
+                "老板": {"生气": 8, "委屈": 8, "郁闷": 6, "暴躁": 4},
+                "扣工资": {"郁闷": 8, "生气": 6},
+                "同事闹脾气": {"生气": 5, "委屈": 3},
+                "同事聊天": {"开心": 3, "平静": 2},
+            }
+            for word, deltas in legacy.items():
+                if word in detail:
+                    self.nudge(**deltas)
+                    applied = True
+                    break
         self.db.kv_set(key, True)
 
     def current_activity(self):
@@ -2804,7 +2851,7 @@ class HumanState:
             return {"start": "18:00", "end": "20:00", "activity": "吃晚饭", "place": "家", "category": "meal"}
         if hour < 23:
             return {"start": "20:00", "end": "23:00", "activity": "休息", "place": "家", "category": "rest"}
-        return {"start": "23:00", "end": "23:59", "activity": "准备睡觉", "place": "家", "category": "sleep"}
+        return {"start": "23:00", "end": "24:00", "activity": "准备睡觉", "place": "家", "category": "sleep"}
 
     @staticmethod
     def busy_level(activity):
@@ -3123,7 +3170,7 @@ class LLMService:
         return {
             "name": str(data.get("name") or self.p.bot_name),
             "age": to_int(data.get("age"), 22),
-            "city": str(data.get("city") or self.p.cfg_str("weather_city", "杭州")),
+            "city": str(data.get("city") or self.p.cfg_str("weather_city", "贵阳")),
             "occupation": str(data.get("occupation") or "普通上班族"),
             "workplace": str(data.get("workplace") or "公司"),
             "personality": str(data.get("personality") or "温柔敏感"),
@@ -3131,108 +3178,6 @@ class LLMService:
             "daily_life": str(data.get("daily_life") or ""),
             "world_rules": str(data.get("world_rules") or ""),
             "summary": str(data.get("summary") or ""),
-        }
-
-    async def gen_schedule(self, umo, world, weather, period, health, meta=None):
-        system = "你是作息安排器。只输出 JSON 数组，不要输出其他文字。"
-        prompt = (
-            "角色世界观：\n" + truncate(json.dumps(world, ensure_ascii=False), 1200) + "\n"
-            "今天是 " + today_str() + " 星期" + weekday_cn() + "。\n"
-            "今天日期标签：" + str((meta or {}).get("label") or "普通工作日") + "；"
-            + ("今天是休息日，不要安排上班、通勤或工作。" if (meta or {}).get("rest") else "") + "\n"
-            "天气：" + str(weather.get("text", "")) + " " + str(weather.get("temp", "")) + "℃。\n"
-            "身体：" + str(health.get("status", "健康")) + "；生理期：" + str(period.get("phase", "")) + "。\n"
-            "请生成角色今天 00:00-24:00 的日程，共 24 条，每小时一条。"
-            + ("休息日安排：睡懒觉、收拾屋子、追剧、看漫画、逛菜市场/商场、朋友聚会、散步等，不要出现上班/通勤/公司。\n" if (meta or {}).get("rest") else "工作日安排：通勤、到公司、开电脑、开会、下午茶、上厕所、摸鱼、午饭、午休、下班通勤都要有，不要连续几个小时都只写“上班”。可以加入熬夜、精神恍惚、工作失误、被老板骂、扣工资、和同事聊天/闹脾气等事件，用 detail 字段标注。\n")
-            + "JSON 数组，每项包含："
-            "start(HH:MM)、end(HH:MM)、activity(在做什么)、place(地点)、"
-            "category(只能是 sleep/work/study/commute/meal/rest/play/social/life)。"
-            "时间要连续、不要重叠。"
-        )
-        raw = await self.chat_raw(umo, system, prompt)
-        data = json_extract(raw)
-        if not isinstance(data, list):
-            return None
-        items = []
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-            start = str(item.get("start", "")).strip()
-            end = str(item.get("end", "")).strip()
-            if not re.match(r"^\d{1,2}:\d{2}$", start):
-                continue
-            if not re.match(r"^\d{1,2}:\d{2}$", end):
-                continue
-            activity = str(item.get("activity", "")).strip()
-            if not activity:
-                continue
-            category = str(item.get("category", "life")).strip()
-            if category not in ("sleep", "work", "study", "commute", "meal",
-                                "rest", "play", "social", "life"):
-                category = "life"
-            items.append({
-                "start": start.zfill(5), "end": end.zfill(5),
-                "activity": activity[:20],
-                "place": str(item.get("place", ""))[:20],
-                "category": category,
-            })
-        if len(items) < 4:
-            return None
-        items.sort(key=lambda entry: parse_hhmm(entry["start"]))
-        return items
-
-    async def gen_hour_detail(self, umo, hour, world, weather, period, health):
-        system = "你是作息细化器。只输出 JSON 对象，不要输出其他文字。"
-        start = "%02d:00" % hour
-        end = "23:59" if hour == 23 else "%02d:00" % (hour + 1)
-        prompt = (
-            "角色世界观：\n" + truncate(json.dumps(world, ensure_ascii=False), 900) + "\n"
-            "天气：" + str(weather.get("text", "")) + " " + str(weather.get("temp", "")) + "℃；"
-            "身体：" + str(health.get("status", "健康")) + "；生理期：" + str(period.get("phase", "")) + "。\n"
-            "请细化 " + start + "-" + end + " 这一小时在做什么，输出 JSON 对象："
-            "activity(具体在做什么，20字内)、place(地点，20字内)、"
-            "category(只能是 sleep/work/study/commute/meal/rest/play/social/life)、"
-            "detail(一句更细的描述，可选)、"
-            "segments(6 个 10 分钟小段，每段 start(HH:MM)、end(HH:MM)、activity、place、category；"
-            "要包含开会、下午茶、上厕所、摸鱼、喝水等真人细节，不要每段都一样)。"
-        )
-        raw = await self.chat_raw(umo, system, prompt)
-        data = json_extract(raw)
-        if not isinstance(data, dict):
-            return None
-        activity = str(data.get("activity") or "").strip()
-        if not activity:
-            return None
-        category = str(data.get("category") or "rest").strip()
-        if category not in ("sleep", "work", "study", "commute", "meal", "rest", "play", "social", "life"):
-            category = "rest"
-        segments = []
-        raw_segments = data.get("segments") if isinstance(data.get("segments"), list) else []
-        for raw in raw_segments[:6]:
-            if not isinstance(raw, dict):
-                continue
-            seg_start = str(raw.get("start") or "").strip()
-            seg_end = str(raw.get("end") or "").strip()
-            seg_activity = str(raw.get("activity") or "").strip()
-            if not re.match(r"^\d{1,2}:\d{2}$", seg_start) or not re.match(r"^\d{1,2}:\d{2}$", seg_end):
-                continue
-            if not seg_activity:
-                continue
-            seg_category = str(raw.get("category") or category).strip()
-            if seg_category not in ("sleep", "work", "study", "commute", "meal", "rest", "play", "social", "life"):
-                seg_category = category
-            segments.append({
-                "start": seg_start.zfill(5), "end": seg_end.zfill(5),
-                "activity": seg_activity[:20],
-                "place": str(raw.get("place") or "家")[:20],
-                "category": seg_category,
-            })
-        return {
-            "activity": activity[:20],
-            "place": str(data.get("place") or "家")[:20],
-            "category": category,
-            "detail": str(data.get("detail") or "")[:80],
-            "segments": segments,
         }
 
     async def gen_proactive(self, umo, profile, snap, kind):
@@ -3613,7 +3558,6 @@ class HumanCorePlugin(Star):
         self._last_affect = {}
         self._disturb_until = {}
         self._disturb_last = {}
-        self._last_hour_detail = ""
         self._last_pending_check = 0.0
         self._last_proactive_activity = {}
         self._last_schedule_save = ""
@@ -4202,12 +4146,37 @@ class HumanCorePlugin(Star):
             self._migrate_memory_source_default()
             self._migrate_legacy_admin_default()
             self._migrate_scenic_kb_name()
+            self._migrate_schedule_defaults()
             self._cleanup_legacy_memory_profiles()
             await asyncio.to_thread(self._merge_alias_profiles)
             self.state = HumanState(self)
             self._ready = True
             self._loop_task = self._spawn(self._background_loop())
             self._spawn(self._warm_up())
+
+    def _migrate_schedule_defaults(self):
+        """5.1.0：老配置默认杭州，日程已按贵阳生成，把天气城市一起迁移到贵阳。"""
+        try:
+            if self.db.kv_get("schedule_defaults_510", False):
+                return
+            changed = False
+            if self.cfg_str("weather_city", "").strip() in ("", "杭州"):
+                self.config["weather_city"] = "贵阳"
+                changed = True
+            for key, value in (
+                ("schedule_city", "贵阳"),
+                ("schedule_home", "观山湖区·小窝"),
+                ("schedule_workplace", "公司（贵阳·观山湖区）"),
+                ("schedule_car", "黑色奔驰C级"),
+            ):
+                if not self.cfg_str(key, "").strip():
+                    self.config[key] = value
+                    changed = True
+            if changed and hasattr(self.config, "save_config"):
+                self.config.save_config()
+            self.db.kv_set("schedule_defaults_510", True)
+        except Exception as exc:
+            logger.debug("[amo] 日程默认配置迁移失败: %s" % exc)
 
     def _migrate_scenic_kb_name(self):
         try:
@@ -6734,6 +6703,7 @@ class HumanCorePlugin(Star):
         if (
             not self.state.schedule.get(today_str())
             or self.db.kv_get("schedule_version", "") != SCHEDULE_VERSION
+            or not self.state.schedule_context(today_str())
         ):
             await self.state.ensure_schedule(umo)
         try:
@@ -6754,16 +6724,6 @@ class HumanCorePlugin(Star):
             self._last_auto_learn = now
             await self._auto_learn()
 
-        current_dt = datetime.now()
-        if current_dt.minute >= 57 and current_dt.hour < 23:
-            detail_key = today_str() + ":" + str(current_dt.hour)
-            if detail_key != self._last_hour_detail:
-                self._last_hour_detail = detail_key
-                try:
-                    await self.state.detail_next_hour(umo)
-                except Exception as exc:
-                    logger.debug("[amo] 整点前细化日程失败: %s" % exc)
-
         if now - self._last_pending_check >= 60:
             self._last_pending_check = now
             try:
@@ -6781,6 +6741,7 @@ class HumanCorePlugin(Star):
                         self.db.save_schedule(save_key, items)
                     self.db.fade_schedules(7)
                     self.db.purge_schedules(14)
+                    self.db.purge_diaries(30)
                 except Exception as exc:
                     logger.debug("[amo] 保存/清理日程失败: %s" % exc)
 
@@ -7270,7 +7231,7 @@ class HumanCorePlugin(Star):
         umo = self._last_umo or self._first_private_umo()
         if not self.state.weather:
             self.state.weather = self.state._simulate_weather()
-        if self.state.weather.get("city") != self.cfg_str("weather_city", "杭州"):
+        if self.state.weather.get("city") != self.cfg_str("weather_city", "贵阳"):
             await self.state.refresh_weather(force=True)
         else:
             self._spawn(self.state.refresh_weather())
@@ -7280,6 +7241,7 @@ class HumanCorePlugin(Star):
         if (
             not self.state.schedule.get(today_str())
             or self.db.kv_get("schedule_version", "") != SCHEDULE_VERSION
+            or not self.state.schedule_context(today_str())
         ):
             await self.state.ensure_schedule(umo)
         snap = self.state.snapshot()
@@ -7799,6 +7761,8 @@ class HumanCorePlugin(Star):
             ("/memory/delete", self.api_memory_delete, ["GET", "POST"]),
             ("/memory_delete", self.api_memory_delete, ["GET", "POST"]),
             ("/schedule", self.api_schedule, ["GET", "POST"]),
+            ("/schedule/detail", self.api_schedule_detail, ["GET", "POST"]),
+            ("/schedule_detail", self.api_schedule_detail, ["GET", "POST"]),
             ("/mood/update", self.api_mood_update, ["GET", "POST"]),
             ("/mood_update", self.api_mood_update, ["GET", "POST"]),
             ("/schedule/regen", self.api_schedule_regen, ["GET", "POST"]),
@@ -8356,8 +8320,36 @@ class HumanCorePlugin(Star):
         if day == today_str():
             items = await self.state.ensure_schedule(self._last_umo)
         else:
-            items = self.state._cover_schedule(self.db.get_schedule(day) or [])
-        return {"code": 0, "data": {"day": day, "meta": day_meta(day), "items": items, "tree": self.state.schedule_tree(), "current": self.state.current_activity()}}
+            items = self.state._hourly_schedule(self.db.get_schedule(day) or [])
+        return {"code": 0, "data": {"day": day, "meta": day_meta(day), "items": items, "tree": self.state.schedule_tree(day), "current": self.state.current_activity(), "context": self.state.schedule_context(day)}}
+
+    async def api_schedule_detail(self):
+        await self._ensure_ready()
+        data = await self._body()
+        day = str(data.get("date") or self._q("date", "") or today_str())
+        start_raw = str(data.get("start") or self._q("start", "") or "").strip()
+        matched = re.match(r"^(\d{1,2})(?::(\d{2}))?$", start_raw)
+        if not matched:
+            return {"code": 1, "msg": "start 需要 HH:MM，例如 10:00"}
+        hour = max(0, min(23, int(matched.group(1))))
+        start = "%02d:00" % hour
+        if day == today_str():
+            items = await self.state.ensure_schedule(self._last_umo)
+        else:
+            items = self.state._hourly_schedule(self.db.get_schedule(day) or [])
+        item = None
+        for entry in items:
+            if str(entry.get("start") or "") == start:
+                item = entry
+                break
+        if item is None:
+            return {"code": 1, "msg": "没有找到这一小时的日程：" + start}
+        force_raw = data.get("force", self._q("force", ""))
+        force = str(force_raw).lower() in ("1", "true", "yes", "on")
+        result = await self.state.expand_hour(day, item, items, force=force)
+        payload = {"day": day, "start": item.get("start", start), "end": item.get("end", "")}
+        payload.update(result)
+        return {"code": 0, "data": payload}
 
     async def api_scenic_kb_regen(self):
         await self._ensure_ready()

@@ -1,0 +1,1172 @@
+# -*- coding: utf-8 -*-
+"""日程主干生成引擎。
+
+设计目标（对应 5.1.0 重构）：
+
+1. 每天只生成一次“主干”：24 个整点槽位，每个槽位都有
+   start/end/activity/place/zone/category/transit/vehicle/mood。
+2. 主干先由确定性规则保证物理连贯（不能瞬移、不能情绪突变），
+   再让大模型只改写“这一小时在做什么”，不允许改时间、地点和类别。
+3. 三级 10 分钟细分彻底废弃；点击二级卡片时，由 main.py 调用
+   generate_diary() 实时生成这一小时的第一人称小日记。
+4. 休息日天气好时优先读取 scenic_spots.json 里的贵阳/贵州景区；
+   周末开车出行固定绑定角色资产（黑色奔驰 C 级），并带堵车/找车位细节。
+5. 突发事件：
+   - 休息日：老板临时叫去公司改 Bug / 朋友临时叫出去聚餐；
+   - 工作日：被公司外派到插件内置的随机省份。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import random
+import re
+from datetime import date, datetime, timedelta
+
+MOOD_KEYS = ("开心", "平静", "郁闷", "生气", "暴躁", "委屈", "疲惫", "焦虑", "兴奋", "依恋")
+MOOD_BASE = {
+    "开心": 55, "平静": 60, "郁闷": 18, "生气": 8, "暴躁": 6, "委屈": 20,
+    "疲惫": 28, "焦虑": 18, "兴奋": 30, "依恋": 45,
+}
+
+# 外派省份：全部写在插件里，按日期种子随机，不依赖任何外部接口。
+PROVINCE_CITIES = {
+    "四川省": "成都",
+    "云南省": "昆明",
+    "湖南省": "长沙",
+    "广西壮族自治区": "南宁",
+    "广东省": "广州",
+    "湖北省": "武汉",
+    "陕西省": "西安",
+    "浙江省": "杭州",
+    "江苏省": "南京",
+    "福建省": "福州",
+    "江西省": "南昌",
+    "安徽省": "合肥",
+    "河南省": "郑州",
+    "山东省": "济南",
+    "河北省": "石家庄",
+    "山西省": "太原",
+    "辽宁省": "沈阳",
+    "吉林省": "长春",
+    "黑龙江省": "哈尔滨",
+    "甘肃省": "兰州",
+    "青海省": "西宁",
+    "海南省": "海口",
+    "新疆维吾尔自治区": "乌鲁木齐",
+    "内蒙古自治区": "呼和浩特",
+    "宁夏回族自治区": "银川",
+    "西藏自治区": "拉萨",
+}
+
+POSITIVE_LABELS = ("开心", "兴奋", "黏人")
+NEGATIVE_LABELS = ("低落", "烦躁", "委屈", "焦虑", "疲惫")
+
+CATEGORY_MOOD = {
+    "sleep": {"平静": 2.0, "焦虑": -2.0, "疲惫": -1.0, "生气": -1.0},
+    "work": {"疲惫": 2.2, "焦虑": 1.4, "开心": -0.4},
+    "study": {"疲惫": 1.4, "焦虑": 1.0},
+    "commute": {"疲惫": 1.4, "烦躁": 0.8, "开心": -0.5},
+    "meal": {"开心": 1.8, "疲惫": -1.2, "平静": 0.8},
+    "rest": {"平静": 1.4, "疲惫": -1.4, "焦虑": -0.8},
+    "play": {"开心": 2.4, "兴奋": 1.2, "疲惫": -0.8},
+    "social": {"开心": 3.0, "依恋": 1.6, "疲惫": -1.0},
+    "life": {"平静": 0.8, "疲惫": 0.4},
+}
+
+WORK_BANK = [
+    "开电脑看邮件", "写代码改需求", "开会对齐方案", "改 Bug",
+    "回消息处理需求", "摸鱼喝咖啡", "整理文档", "和同事讨论接口",
+]
+COMMUTE_BANK = [
+    "挤地铁去公司", "在车上听歌", "等红灯", "换乘", "堵在路上",
+    "刷手机看路况", "快步往公司走",
+]
+LUNCH_BANK = [
+    "下楼吃牛肉粉", "和同事拼饭", "点外卖", "吃肠旺面",
+    "去便利店随便对付一口", "边吃边刷手机",
+]
+REST_BANK = [
+    "瘫在沙发上", "刷手机", "追剧", "发呆", "看短视频",
+    "窝着不想动", "听歌",
+]
+DINNER_BANK = [
+    "煮面", "点外卖", "炒两个菜", "下楼吃烙锅", "喝碗热汤",
+]
+HOME_LIFE_BANK = [
+    "刷牙洗脸", "煎蛋热牛奶", "收拾包", "换衣服", "洗衣服",
+    "扫地", "洗澡", "吹头发", "护肤", "收拾明天要带的东西",
+]
+SCENIC_BANK = [
+    "排队买票", "拍照", "慢慢逛", "找地方坐一会儿", "买奶茶",
+    "看路边的小摊", "跟着人群往前走",
+]
+ROAD_BANK = [
+    "开车去景区", "堵在路上", "找停车位", "导航绕路", "等红绿灯",
+]
+TAXI_BANK = [
+    "打车", "在网约车后排刷手机", "看着窗外的街景", "催司机快一点",
+]
+STATION_BANK = [
+    "进站候车", "检票上车", "在候车厅买水", "看大屏找检票口",
+]
+HOTEL_BANK = [
+    "在酒店整理资料", "躺床上刷手机", "洗澡", "给手机充电", "看明天的安排",
+]
+INDOOR_BANK = [
+    "逛展", "看电影", "逛街", "在咖啡店坐着", "看橱窗",
+]
+
+
+def clamp(value, low=0.0, high=100.0):
+    try:
+        value = float(value)
+    except Exception:
+        return float(low)
+    return max(float(low), min(float(high), value))
+
+
+def md5_int(text):
+    return int(hashlib.md5(str(text).encode("utf-8")).hexdigest()[:8], 16)
+
+
+def parse_hhmm(value, default=0):
+    try:
+        parts = str(value).strip().split(":")
+        return int(parts[0]) * 60 + int(parts[1])
+    except Exception:
+        return default
+
+
+def fmt_hhmm(minutes):
+    """把分钟格式化成 HH:MM；1440 输出 24:00（用于 23:00-24:00 闭环）。"""
+    try:
+        minutes = int(minutes)
+    except Exception:
+        minutes = 0
+    if minutes >= 24 * 60:
+        return "24:00"
+    if minutes < 0:
+        minutes = 0
+    return "%02d:%02d" % (minutes // 60, minutes % 60)
+
+
+def json_extract(raw):
+    """从模型输出里尽量抠出 JSON，容忍 ```json 包裹和前后废话。"""
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
+    text = re.sub(r"\s*```$", "", text)
+    for opener, closer in (("[", "]"), ("{", "}")):
+        start = text.find(opener)
+        end = text.rfind(closer)
+        if start >= 0 and end > start:
+            chunk = text[start:end + 1]
+            try:
+                return json.loads(chunk)
+            except Exception:
+                continue
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
+
+
+class ScheduleEngine:
+    """把“状态 -> 主干 -> 可选润色 -> 动态日记”拆开。"""
+
+    def __init__(self, state):
+        self.state = state
+        self.p = state.p
+
+    # ------------------------------------------------------------------
+    # 1. 当天上下文
+    # ------------------------------------------------------------------
+    def build_context(self, day, meta, weather, world, mood, period, health, salt=""):
+        seed_text = "%s|%s" % (day, salt)
+        seed = md5_int(seed_text)
+        rng = random.Random(seed)
+        city = str(self.p.cfg_str("schedule_city", "贵阳") or "贵阳").strip() or "贵阳"
+        home = str(self.p.cfg_str("schedule_home", "观山湖区·小窝") or "观山湖区·小窝").strip()
+        workplace = str(self.p.cfg_str("schedule_workplace", "公司（贵阳·观山湖区）") or "公司（贵阳·观山湖区）").strip()
+        car = str(self.p.cfg_str("schedule_car", "黑色奔驰C级") or "黑色奔驰C级").strip()
+        yesterday = self.yesterday_summary(day)
+        good_weather = self._good_weather(weather)
+        event = self._pick_event(day, meta, weather, health, period, seed)
+        scenic = self._pick_scenic(day, meta, weather, health, period, event, good_weather, seed, city)
+
+        mood_now = {key: clamp(mood.get(key, MOOD_BASE[key])) for key in MOOD_KEYS}
+        return {
+            "version": "backbone-v5",
+            "day": day,
+            "meta": dict(meta or {}),
+            "weather": dict(weather or {}),
+            "world": dict(world or {}),
+            "city": city,
+            "home": home,
+            "workplace": workplace,
+            "car": car,
+            "mood": mood_now,
+            "period": dict(period or {}),
+            "health": dict(health or {}),
+            "yesterday": yesterday,
+            "good_weather": good_weather,
+            "event": event,
+            "scenic": scenic,
+            "location": (event.get("where") if event.get("kind") == "business_trip" else city),
+            "seed": seed,
+            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+
+    def yesterday_summary(self, day):
+        """读取昨日遗留：熬夜、睡眠不足、生病，今天必须疲惫。"""
+        try:
+            target = date.fromisoformat(str(day))
+        except Exception:
+            target = date.today()
+        prev_day = (target - timedelta(days=1)).isoformat()
+        items = []
+        try:
+            items = self.state.schedule.get(prev_day) or self.state.db.get_schedule(prev_day) or []
+        except Exception:
+            items = []
+        if not isinstance(items, list):
+            items = []
+        sleep_hours = 0
+        late_night = False
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            category = str(item.get("category") or "")
+            activity = str(item.get("activity") or "")
+            if category == "sleep":
+                sleep_hours += 1
+            start = parse_hhmm(item.get("start"), 0)
+            if 0 <= start < 4 * 60 and category not in ("sleep", ""):
+                late_night = True
+            if any(word in activity for word in ("熬夜", "通宵", "失眠", "加班到")):
+                late_night = True
+        if items and sleep_hours and sleep_hours < 6:
+            late_night = True
+        note = ""
+        if late_night:
+            note = "昨晚熬到很晚，今天一整天都容易累、注意力不集中"
+        elif sleep_hours and sleep_hours <= 6:
+            note = "昨晚睡得不太够，今天起床有点费劲"
+        return {
+            "day": prev_day,
+            "late_night": late_night,
+            "sleep_hours": sleep_hours,
+            "note": note,
+        }
+
+    def _good_weather(self, weather):
+        weather = weather or {}
+        tag = str(weather.get("tag") or "").lower()
+        text = str(weather.get("text") or "")
+        if tag in ("rain", "storm", "snow", "thunder", "fog"):
+            return False
+        if any(word in text for word in ("雨", "雪", "雷", "雾", "沙尘")):
+            return False
+        try:
+            temp = float(weather.get("temp", 20))
+        except Exception:
+            temp = 20.0
+        return 5.0 <= temp <= 34.0
+
+    def _pick_event(self, day, meta, weather, health, period, seed):
+        """按日期种子决定突发事件，保证同一天多次读取结果一致。"""
+        prob = clamp(self.p.cfg_float("schedule_event_prob", 0.28), 0.0, 0.9)
+        rng = random.Random(seed ^ 0x5F3759DF)
+        if rng.random() > prob:
+            return {"kind": "none"}
+        rest = bool((meta or {}).get("rest"))
+        if not rest:
+            # 工作日：外派省份随机生成，影响当天所在位置和整段日程。
+            provinces = sorted(PROVINCE_CITIES.keys())
+            province = provinces[rng.randrange(len(provinces))]
+            city = PROVINCE_CITIES[province]
+            return {
+                "kind": "business_trip",
+                "title": "临时外派",
+                "province": province,
+                "city": city,
+                "where": "%s·%s" % (province, city),
+                "note": "早上接到通知，被公司临时外派去%s出差，当天回不来" % city,
+                "effects": {"疲惫": 10, "焦虑": 10, "开心": -6, "生气": 3},
+                "soothe": False,
+            }
+        # 休息日：老板叫去加班 / 朋友叫出去聚餐。
+        if rng.random() < 0.55:
+            return {
+                "kind": "overtime",
+                "title": "临时加班",
+                "note": "上午老板打电话来，说线上有紧急 Bug，让我临时去公司改一下",
+                "effects": {"生气": 16, "暴躁": 8, "焦虑": 12, "开心": -12, "疲惫": 6},
+                "soothe": False,
+            }
+        return {
+            "kind": "friend_dinner",
+            "title": "朋友聚餐",
+            "note": "下午朋友突然发消息，说好久没见了，晚上一起吃饭",
+            "effects": {"开心": 14, "依恋": 8, "兴奋": 6, "疲惫": -4},
+            "soothe": True,
+        }
+
+    def _pick_scenic(self, day, meta, weather, health, period, event, good_weather, seed, city):
+        if not (meta or {}).get("rest"):
+            return None
+        if event.get("kind") == "overtime":
+            return None
+        if (health or {}).get("sick"):
+            return None
+        if int((period or {}).get("pain") or 0) >= 8:
+            return None
+        try:
+            spots = self.p.scenic_spots() or []
+        except Exception:
+            spots = []
+        spots = [item for item in spots if isinstance(item, dict) and item.get("name")]
+        if not spots:
+            return {
+                "name": "黔灵山公园", "city": "贵阳", "province": "贵州",
+                "area": "云岩区", "projects": ["弘福寺", "黔灵湖", "猕猴观赏区"],
+                "duration": "3-4小时", "indoor": False,
+            }
+        guiyang = [item for item in spots if "贵阳" in str(item.get("city") or "")]
+        guizhou = [item for item in spots if str(item.get("province") or "") == "贵州"]
+        if not good_weather:
+            indoor = [item for item in guizhou if item.get("indoor")]
+            pool = indoor or guiyang
+        elif int((meta or {}).get("holiday_days") or 0) >= 4:
+            pool = [item for item in guizhou if "贵阳" not in str(item.get("city") or "")] or guizhou
+        else:
+            pool = guiyang or guizhou
+        if good_weather:
+            outdoor = [item for item in pool if not item.get("indoor")]
+            if outdoor:
+                pool = outdoor
+        longer = [item for item in pool if not str(item.get("duration") or "").startswith("1")]
+        if longer:
+            pool = longer
+        pool = sorted(pool, key=lambda item: str(item.get("name") or ""))
+        if not pool:
+            pool = sorted(spots, key=lambda item: str(item.get("name") or ""))
+        chosen = dict(pool[seed % len(pool)])
+        chosen["why"] = "天气不错，想出去走走" if good_weather else "天气一般，找个室内的地方待着"
+        chosen["from_city"] = city
+        return chosen
+
+    # ------------------------------------------------------------------
+    # 2. 主干骨架
+    # ------------------------------------------------------------------
+    def build_skeleton(self, ctx):
+        event_kind = (ctx.get("event") or {}).get("kind")
+        if event_kind == "business_trip" and not (ctx.get("meta") or {}).get("rest"):
+            segments = self._business_trip_segments(ctx)
+        elif (ctx.get("meta") or {}).get("rest"):
+            segments = self._rest_segments(ctx)
+        else:
+            segments = self._workday_segments(ctx)
+        items = self._expand(segments, ctx)
+        items = self._fill_activities(items, ctx)
+        items = self._smooth_moods(items, ctx)
+        items = self._validate(items, ctx)
+        return items
+
+    def _seg(self, start, end, activity, place, zone, category,
+             transit="", vehicle="", detail="", effects=None,
+             event="", spot="", soothe=False):
+        return {
+            "start": start, "end": end, "activity": activity, "place": place,
+            "zone": zone, "category": category, "transit": transit,
+            "vehicle": vehicle, "detail": detail, "effects": effects or {},
+            "event": event, "spot": spot, "soothe": soothe,
+        }
+
+    def _workday_segments(self, ctx):
+        home = ctx["home"]
+        office = ctx["workplace"]
+        late = bool((ctx.get("yesterday") or {}).get("late_night"))
+        sick = bool((ctx.get("health") or {}).get("sick"))
+        pain = int((ctx.get("period") or {}).get("pain") or 0)
+        wake = "赖床、起不来" if late else "起床洗漱、吃早餐"
+        commute = "挤地铁去公司"
+        if sick:
+            commute = "带病出门，慢慢走去地铁站"
+        return [
+            self._seg("00:00", "07:00", "睡觉", home, "home", "sleep"),
+            self._seg("07:00", "08:00", wake, home, "home", "life", detail="昨晚没睡好" if late else ""),
+            self._seg("08:00", "09:00", commute, "路上", "road", "commute", transit="subway"),
+            self._seg("09:00", "12:00", "上班", office, "office", "work"),
+            self._seg("12:00", "13:00", "吃午饭", office + "附近", "restaurant", "meal"),
+            self._seg("13:00", "14:00", "午休", office, "office", "rest"),
+            self._seg("14:00", "18:00", "上班", office, "office", "work"),
+            self._seg("18:00", "19:00", "下班回家", "路上", "road", "commute", transit="subway"),
+            self._seg("19:00", "20:00", "吃晚饭", home, "home", "meal"),
+            self._seg("20:00", "22:00", "休息", home, "home", "rest"),
+            self._seg("22:00", "23:00", "洗澡护肤", home, "home", "life"),
+            self._seg("23:00", "24:00", "睡觉", home, "home", "sleep"),
+        ]
+
+    def _business_trip_segments(self, ctx):
+        home = ctx["home"]
+        event = ctx.get("event") or {}
+        city = str(event.get("city") or "成都")
+        where = str(event.get("where") or ("外省·" + city))
+        office = where + "·客户公司"
+        hotel = where + "·酒店"
+        effects = event.get("effects") or {}
+        return [
+            self._seg("00:00", "06:00", "睡觉", home, "home", "sleep"),
+            self._seg("06:00", "07:00", "起床收拾行李", home, "home", "life"),
+            self._seg("07:00", "08:00", "接到外派通知，打车去贵阳北站", "路上", "road", "commute",
+                      transit="taxi", event="business_trip", effects=effects),
+            self._seg("08:00", "09:00", "进站候车", "贵阳北站", "station", "commute", transit="train"),
+            self._seg("09:00", "12:00", "坐高铁去" + city, "路上", "road", "commute",
+                      transit="train", detail="临时买票，只剩二等座"),
+            self._seg("12:00", "13:00", "到站吃午饭", where + "·车站附近", "restaurant", "meal"),
+            self._seg("13:00", "14:00", "打车去客户公司", "路上", "road", "commute", transit="taxi"),
+            self._seg("14:00", "18:00", "在客户公司处理紧急项目", office, "office", "work"),
+            self._seg("18:00", "19:00", "打车去酒店", "路上", "road", "commute", transit="taxi"),
+            self._seg("19:00", "20:00", "酒店附近吃晚饭", where + "·小吃街", "restaurant", "meal"),
+            self._seg("20:00", "21:00", "回酒店整理资料", hotel, "hotel", "work"),
+            self._seg("21:00", "23:00", "在酒店休息", hotel, "hotel", "rest"),
+            self._seg("23:00", "24:00", "睡觉", hotel, "hotel", "sleep"),
+        ]
+
+    def _rest_segments(self, ctx):
+        event_kind = (ctx.get("event") or {}).get("kind")
+        health = ctx.get("health") or {}
+        period = ctx.get("period") or {}
+        if health.get("sick") or int(period.get("pain") or 0) >= 8:
+            return self._sick_rest_segments(ctx)
+        if event_kind == "overtime":
+            return self._overtime_segments(ctx)
+        if event_kind == "friend_dinner":
+            return self._friend_dinner_segments(ctx)
+        if ctx.get("scenic") and ctx.get("good_weather"):
+            return self._scenic_segments(ctx)
+        return self._indoor_rest_segments(ctx)
+
+    def _scenic_segments(self, ctx):
+        home = ctx["home"]
+        spot = ctx.get("scenic") or {}
+        name = str(spot.get("name") or "附近公园")
+        place = "贵阳·" + name
+        car = ctx["car"]
+        projects = [str(item) for item in (spot.get("projects") or []) if str(item)]
+        project_a = projects[0] if projects else "景区主景点"
+        project_b = projects[1] if len(projects) > 1 else "拍照散步"
+        long_trip = int((ctx.get("meta") or {}).get("holiday_days") or 0) >= 4 and "贵阳" not in str(spot.get("city") or "")
+        if long_trip:
+            return [
+                self._seg("00:00", "08:00", "睡觉", home, "home", "sleep"),
+                self._seg("08:00", "09:00", "起床吃早餐", home, "home", "meal"),
+                self._seg("09:00", "10:00", "收拾东西准备出发", home, "home", "life"),
+                self._seg("10:00", "12:00", "开车去" + name, "路上", "road", "commute",
+                          transit="drive", vehicle=car, detail="出城有点堵，导航显示还要两个多小时"),
+                self._seg("12:00", "13:00", "到景区附近吃午饭", place + "·餐馆", "restaurant", "meal"),
+                self._seg("13:00", "15:00", "逛" + name + "：" + project_a, place, "scenic", "play",
+                          transit="drive", vehicle=car, spot=name, soothe=True),
+                self._seg("15:00", "16:00", "找地方歇脚、喝点东西", place + "·茶饮店", "restaurant", "rest"),
+                self._seg("16:00", "17:00", "继续逛" + name + "：" + project_b, place, "scenic", "play",
+                          transit="drive", vehicle=car, spot=name, soothe=True),
+                self._seg("17:00", "19:00", "开车回贵阳", "路上", "road", "commute",
+                          transit="drive", vehicle=car, detail="返程堵在高速上"),
+                self._seg("19:00", "20:00", "到家附近吃晚饭", home + "附近", "restaurant", "meal"),
+                self._seg("20:00", "22:00", "回家整理照片、追剧", home, "home", "rest"),
+                self._seg("22:00", "23:00", "洗澡护肤", home, "home", "life"),
+                self._seg("23:00", "24:00", "睡觉", home, "home", "sleep"),
+            ]
+        return [
+            self._seg("00:00", "08:00", "睡觉", home, "home", "sleep"),
+            self._seg("08:00", "09:00", "起床吃早餐", home, "home", "meal"),
+            self._seg("09:00", "10:00", "收拾包、换衣服准备出门", home, "home", "life"),
+            self._seg("10:00", "11:00", "开车去" + name, "路上", "road", "commute",
+                      transit="drive", vehicle=car, detail="周末出城有点堵，停车场还不好找"),
+            self._seg("11:00", "12:00", "到" + name + "，排队停车买票", place, "scenic", "play",
+                      transit="drive", vehicle=car, spot=name, detail="停车位找了半天", soothe=True),
+            self._seg("12:00", "13:00", "在景区附近吃午饭", place + "·餐馆", "restaurant", "meal"),
+            self._seg("13:00", "15:00", "逛" + name + "：" + project_a, place, "scenic", "play",
+                      spot=name, soothe=True),
+            self._seg("15:00", "16:00", "找家店喝下午茶", place + "·茶饮店", "restaurant", "rest"),
+            self._seg("16:00", "17:00", "继续逛" + name + "：" + project_b, place, "scenic", "play",
+                      spot=name, soothe=True),
+            self._seg("17:00", "18:00", "开车回家", "路上", "road", "commute",
+                      transit="drive", vehicle=car, detail="晚高峰，堵在回观山湖区的路上"),
+            self._seg("18:00", "19:00", "到家瘫一会儿", home, "home", "rest"),
+            self._seg("19:00", "20:00", "吃晚饭", home, "home", "meal"),
+            self._seg("20:00", "22:00", "整理照片、追剧", home, "home", "rest"),
+            self._seg("22:00", "23:00", "洗澡护肤", home, "home", "life"),
+            self._seg("23:00", "24:00", "睡觉", home, "home", "sleep"),
+        ]
+
+    def _indoor_rest_segments(self, ctx):
+        home = ctx["home"]
+        spot = ctx.get("scenic") or {}
+        name = str(spot.get("name") or "商场")
+        place = "贵阳·" + name
+        car = ctx["car"]
+        return [
+            self._seg("00:00", "08:00", "睡觉", home, "home", "sleep"),
+            self._seg("08:00", "09:00", "起床吃早餐", home, "home", "meal"),
+            self._seg("09:00", "10:00", "收拾屋子、洗衣服", home, "home", "life"),
+            self._seg("10:00", "11:00", "开车去" + name, "路上", "road", "commute",
+                      transit="drive", vehicle=car, detail="下雨天路滑，开得慢"),
+            self._seg("11:00", "13:00", "逛" + name, place, "mall" if not spot.get("indoor") else "scenic",
+                      "play", vehicle=car, spot=name),
+            self._seg("13:00", "14:00", "吃午饭", place + "·餐厅", "restaurant", "meal"),
+            self._seg("14:00", "16:00", "继续逛、找地方坐着", place, "mall", "play"),
+            self._seg("16:00", "17:00", "喝杯热饮", place + "·咖啡店", "restaurant", "rest"),
+            self._seg("17:00", "18:00", "开车回家", "路上", "road", "commute",
+                      transit="drive", vehicle=car),
+            self._seg("18:00", "19:00", "到家缓一会儿", home, "home", "rest"),
+            self._seg("19:00", "20:00", "吃晚饭", home, "home", "meal"),
+            self._seg("20:00", "22:00", "追剧、刷手机", home, "home", "rest"),
+            self._seg("22:00", "23:00", "洗澡护肤", home, "home", "life"),
+            self._seg("23:00", "24:00", "睡觉", home, "home", "sleep"),
+        ]
+
+    def _sick_rest_segments(self, ctx):
+        home = ctx["home"]
+        return [
+            self._seg("00:00", "08:00", "睡觉", home, "home", "sleep"),
+            self._seg("08:00", "09:00", "起床吃早餐", home, "home", "meal"),
+            self._seg("09:00", "10:00", "吃药、量体温", home, "home", "life"),
+            self._seg("10:00", "12:00", "窝在床上休息", home, "home", "rest"),
+            self._seg("12:00", "13:00", "简单吃点午饭", home, "home", "meal"),
+            self._seg("13:00", "16:00", "睡午觉、捂汗", home, "home", "rest"),
+            self._seg("16:00", "17:00", "起来喝水、吃药", home, "home", "life"),
+            self._seg("17:00", "18:00", "靠在沙发上发呆", home, "home", "rest"),
+            self._seg("18:00", "19:00", "喝点粥当晚饭", home, "home", "meal"),
+            self._seg("19:00", "22:00", "早早躺着刷手机", home, "home", "rest"),
+            self._seg("22:00", "23:00", "洗漱", home, "home", "life"),
+            self._seg("23:00", "24:00", "睡觉", home, "home", "sleep"),
+        ]
+
+    def _overtime_segments(self, ctx):
+        home = ctx["home"]
+        office = ctx["workplace"]
+        car = ctx["car"]
+        event = ctx.get("event") or {}
+        return [
+            self._seg("00:00", "08:00", "睡觉", home, "home", "sleep"),
+            self._seg("08:00", "09:00", "起床吃早餐", home, "home", "meal"),
+            self._seg("09:00", "10:00", "本来打算在家躺一天", home, "home", "rest"),
+            self._seg("10:00", "11:00", "接到老板电话，打开电脑改紧急 Bug", home, "home", "work",
+                      event="overtime", effects=event.get("effects") or {}),
+            self._seg("11:00", "12:00", "开车赶去公司", "路上", "road", "commute",
+                      transit="drive", vehicle=car, detail="周末也堵，心里更烦了"),
+            self._seg("12:00", "13:00", "在公司楼下随便吃一口", office + "附近", "restaurant", "meal"),
+            self._seg("13:00", "18:00", "在公司改 Bug、被拉去开会", office, "office", "work"),
+            self._seg("18:00", "19:00", "下班回家", "路上", "road", "commute",
+                      transit="drive", vehicle=car),
+            self._seg("19:00", "20:00", "到家吃晚饭", home, "home", "meal"),
+            self._seg("20:00", "22:00", "瘫着不想动", home, "home", "rest"),
+            self._seg("22:00", "23:00", "洗澡", home, "home", "life"),
+            self._seg("23:00", "24:00", "睡觉", home, "home", "sleep"),
+        ]
+
+    def _friend_dinner_segments(self, ctx):
+        home = ctx["home"]
+        event = ctx.get("event") or {}
+        if ctx.get("scenic") and ctx.get("good_weather"):
+            spot = ctx.get("scenic") or {}
+            name = str(spot.get("name") or "附近公园")
+            place = "贵阳·" + name
+            car = ctx["car"]
+            projects = [str(item) for item in (spot.get("projects") or []) if str(item)]
+            project_a = projects[0] if projects else "景区主景点"
+            return [
+                self._seg("00:00", "08:00", "睡觉", home, "home", "sleep"),
+                self._seg("08:00", "09:00", "起床吃早餐", home, "home", "meal"),
+                self._seg("09:00", "10:00", "收拾出门", home, "home", "life"),
+                self._seg("10:00", "11:00", "开车去" + name, "路上", "road", "commute",
+                          transit="drive", vehicle=car),
+                self._seg("11:00", "12:00", "到景区，停车买票", place, "scenic", "play",
+                          transit="drive", vehicle=car, spot=name, soothe=True),
+                self._seg("12:00", "13:00", "景区附近吃午饭", place + "·餐馆", "restaurant", "meal"),
+                self._seg("13:00", "15:00", "逛" + name + "：" + project_a, place, "scenic", "play",
+                          spot=name, soothe=True),
+                self._seg("15:00", "16:00", "喝下午茶", place + "·茶饮店", "restaurant", "rest"),
+                self._seg("16:00", "17:00", "再逛一会儿、拍照", place, "scenic", "play", spot=name, soothe=True),
+                self._seg("17:00", "18:00", "开车回家", "路上", "road", "commute",
+                          transit="drive", vehicle=car),
+                self._seg("18:00", "19:00", "回家换衣服，出门赴约", "路上", "road", "commute", transit="taxi"),
+                self._seg("19:00", "21:00", "和朋友吃饭、聊天", "贵阳·饭店", "restaurant", "social",
+                          event="friend_dinner", effects=event.get("effects") or {}, soothe=True),
+                self._seg("21:00", "22:00", "饭后散步、吹吹风", "路上", "road", "other"),
+                self._seg("22:00", "23:00", "回家洗澡", home, "home", "life"),
+                self._seg("23:00", "24:00", "睡觉", home, "home", "sleep"),
+            ]
+        return [
+            self._seg("00:00", "08:00", "睡觉", home, "home", "sleep"),
+            self._seg("08:00", "09:00", "起床吃早餐", home, "home", "meal"),
+            self._seg("09:00", "10:00", "收拾屋子", home, "home", "life"),
+            self._seg("10:00", "12:00", "在家追剧、刷手机", home, "home", "rest"),
+            self._seg("12:00", "13:00", "吃午饭", home, "home", "meal"),
+            self._seg("13:00", "16:00", "睡午觉、发呆", home, "home", "rest"),
+            self._seg("16:00", "17:00", "收拾一下准备出门", home, "home", "life"),
+            self._seg("17:00", "18:00", "出门赴约", "路上", "road", "commute", transit="taxi"),
+            self._seg("18:00", "20:00", "和朋友吃饭、聊天", "贵阳·饭店", "restaurant", "social",
+                      event="friend_dinner", effects=event.get("effects") or {}, soothe=True),
+            self._seg("20:00", "21:00", "饭后散步", "路上", "road", "other"),
+            self._seg("21:00", "22:00", "回家", home, "home", "rest"),
+            self._seg("22:00", "23:00", "洗澡护肤", home, "home", "life"),
+            self._seg("23:00", "24:00", "睡觉", home, "home", "sleep"),
+        ]
+
+    # ------------------------------------------------------------------
+    # 3. 展开成 24 个整点
+    # ------------------------------------------------------------------
+    def _expand(self, segments, ctx):
+        items = []
+        for seg in segments:
+            start = parse_hhmm(seg.get("start"), 0)
+            end = parse_hhmm(seg.get("end"), start + 60)
+            if end <= start:
+                end = start + 60
+            start = max(0, min(24 * 60, start))
+            end = max(start, min(24 * 60, end))
+            first_hour = start // 60
+            last_hour = (end + 59) // 60
+            for hour in range(first_hour, last_hour):
+                if hour >= 24:
+                    break
+                slot_start = hour * 60
+                slot_end = min(end, (hour + 1) * 60)
+                item = {
+                    "start": fmt_hhmm(slot_start),
+                    "end": fmt_hhmm(slot_end),
+                    "activity": str(seg.get("activity") or "休息"),
+                    "place": str(seg.get("place") or ctx["home"]),
+                    "zone": str(seg.get("zone") or "home"),
+                    "category": str(seg.get("category") or "rest"),
+                    "transit": str(seg.get("transit") or ""),
+                    "vehicle": str(seg.get("vehicle") or ""),
+                    "detail": str(seg.get("detail") or "") if hour == first_hour else "",
+                    "spot": str(seg.get("spot") or ""),
+                    "soothe": bool(seg.get("soothe")),
+                    "event": str(seg.get("event") or "") if hour == first_hour else "",
+                    "effects": dict(seg.get("effects") or {}) if hour == first_hour else {},
+                }
+                items.append(item)
+        # 补洞：极端情况下骨架没有覆盖完整 24 小时。
+        by_start = {}
+        for item in items:
+            by_start[parse_hhmm(item.get("start"))] = item
+        result = []
+        for hour in range(24):
+            key = hour * 60
+            item = by_start.get(key)
+            if item is None:
+                item = {
+                    "start": fmt_hhmm(key), "end": fmt_hhmm(key + 60),
+                    "activity": "睡觉" if hour < 7 or hour >= 23 else "休息",
+                    "place": ctx["home"], "zone": "home",
+                    "category": "sleep" if hour < 7 or hour >= 23 else "rest",
+                    "transit": "", "vehicle": "", "detail": "", "spot": "",
+                    "soothe": False, "event": "", "effects": {},
+                }
+            item["end"] = fmt_hhmm(key + 60)
+            result.append(item)
+        return result
+
+    # ------------------------------------------------------------------
+    # 4. 活动文案（LLM 不可用时的真人化兜底）
+    # ------------------------------------------------------------------
+    def _fill_activities(self, items, ctx):
+        rng = random.Random(int(ctx.get("seed") or 0) ^ 0x9E3779B9)
+        prev = ""
+        for item in items:
+            hour = parse_hhmm(item.get("start")) // 60
+            activity = self._activity_for(item, ctx, hour, rng, prev)
+            if activity and activity != prev:
+                item["activity"] = activity
+            if not item.get("detail"):
+                item["detail"] = self._detail_for(item, ctx, hour, rng)
+            prev = item.get("activity", "")
+        return items
+
+    def _activity_for(self, item, ctx, hour, rng, prev):
+        zone = str(item.get("zone") or "")
+        category = str(item.get("category") or "")
+        place = str(item.get("place") or "")
+        transit = str(item.get("transit") or "")
+        spot = str(item.get("spot") or "")
+        base = str(item.get("activity") or "")
+        generic = base in ("上班", "休息", "吃午饭", "吃晚饭", "睡觉", "起床吃早餐", "洗澡护肤")
+        if not generic:
+            return base
+        if category == "sleep":
+            if hour == 7 and (ctx.get("yesterday") or {}).get("late_night"):
+                return "赖床、起不来"
+            return "睡觉"
+        if zone == "road":
+            if transit == "drive":
+                bank = ROAD_BANK
+            elif transit == "taxi":
+                bank = TAXI_BANK
+            elif transit == "train":
+                return "坐高铁去" + str((ctx.get("event") or {}).get("city") or "外地")
+            elif transit == "subway":
+                bank = COMMUTE_BANK
+            else:
+                bank = ["在路上"]
+            return self._choose(bank, rng, prev)
+        if zone == "station":
+            return self._choose(STATION_BANK, rng, prev)
+        if zone == "hotel":
+            return self._choose(HOTEL_BANK, rng, prev)
+        if zone == "office":
+            if hour in (9, 10, 11, 14, 15, 16, 17):
+                return self._choose(WORK_BANK, rng, prev)
+            return "午休" if hour == 13 else self._choose(REST_BANK, rng, prev)
+        if zone == "scenic":
+            if spot:
+                projects = [str(x) for x in ((ctx.get("scenic") or {}).get("projects") or []) if str(x)]
+                if projects:
+                    project = projects[hour % len(projects)]
+                    return "逛" + spot + "：" + project
+            return self._choose(SCENIC_BANK, rng, prev)
+        if zone == "restaurant":
+            if category == "meal":
+                bank = LUNCH_BANK if 10 <= hour < 15 else DINNER_BANK
+                return self._choose(bank, rng, prev)
+            return self._choose(["喝杯东西", "坐着歇脚", "刷手机"], rng, prev)
+        if zone == "mall":
+            return self._choose(INDOOR_BANK, rng, prev)
+        if zone == "home":
+            if category == "meal":
+                bank = LUNCH_BANK if 10 <= hour < 15 else DINNER_BANK
+                return self._choose(bank, rng, prev)
+            if category == "work":
+                return self._choose(WORK_BANK, rng, prev)
+            if category == "rest":
+                return self._choose(REST_BANK, rng, prev)
+            if category == "life":
+                return self._choose(HOME_LIFE_BANK, rng, prev)
+        return base or self._choose(REST_BANK, rng, prev)
+
+    def _detail_for(self, item, ctx, hour, rng):
+        zone = str(item.get("zone") or "")
+        category = str(item.get("category") or "")
+        if zone == "scenic":
+            return self._choose([
+                "看到猴子抢游客的水", "排队买奶茶排了二十分钟", "停车位找了半小时",
+                "拍照拍到手机快没电", "被路边小吃香得走不动",
+            ], rng, "")
+        if zone == "road":
+            if item.get("vehicle"):
+                return self._choose([
+                    "导航一路飘红", "停车场绕了三圈", "被加塞了", "堵在黔灵山路上",
+                ], rng, "")
+            return self._choose(["车上人很多", "差点坐过站", "一路小跑"], rng, "")
+        if zone == "office" and category == "work":
+            return self._choose(["改到第三版", "需求又变了", "咖啡续了一杯", "被拉进临时会议"], rng, "")
+        if zone == "restaurant":
+            return self._choose(["加了折耳根", "辣得直吸气", "吃到一半才想起拍照"], rng, "")
+        if zone == "home" and category == "rest":
+            return self._choose(["沙发太舒服了", "剧追到停不下来", "刷到一个好笑的视频"], rng, "")
+        return ""
+
+    @staticmethod
+    def _choose(bank, rng, prev):
+        bank = [item for item in bank if item and item != prev]
+        if not bank:
+            return ""
+        return bank[rng.randrange(len(bank))]
+
+    # ------------------------------------------------------------------
+    # 5. 情绪连贯
+    # ------------------------------------------------------------------
+    def _smooth_moods(self, items, ctx):
+        vector = {key: clamp((ctx.get("mood") or {}).get(key, MOOD_BASE[key])) for key in MOOD_KEYS}
+        yesterday = ctx.get("yesterday") or {}
+        health = ctx.get("health") or {}
+        period = ctx.get("period") or {}
+        if yesterday.get("late_night"):
+            vector["疲惫"] = max(clamp(vector["疲惫"] + 16), 68.0)
+            vector["开心"] = clamp(vector["开心"] - 6)
+            vector["暴躁"] = clamp(vector["暴躁"] + 3)
+        if health.get("sick"):
+            vector["疲惫"] = clamp(vector["疲惫"] + 10)
+            vector["开心"] = clamp(vector["开心"] - 5)
+        if int(period.get("pain") or 0) >= 7:
+            vector["疲惫"] = clamp(vector["疲惫"] + 8)
+            vector["委屈"] = clamp(vector["委屈"] + 5)
+        prev_label = ""
+        for item in items:
+            hour = parse_hhmm(item.get("start")) // 60
+            before = dict(vector)
+            # 缓慢回落到基础值，避免情绪一条直线。
+            for key in MOOD_KEYS:
+                vector[key] = vector[key] + (MOOD_BASE[key] - vector[key]) * 0.05
+            if 0 <= hour < 6:
+                vector["疲惫"] = vector["疲惫"] + 2
+                vector["平静"] = vector["平静"] + 1
+            elif 6 <= hour < 9:
+                vector["疲惫"] = vector["疲惫"] - 2
+                vector["开心"] = vector["开心"] + 1
+            elif 12 <= hour < 14:
+                vector["开心"] = vector["开心"] + 1
+            elif 22 <= hour < 24:
+                vector["疲惫"] = vector["疲惫"] + 2
+                vector["依恋"] = vector["依恋"] + 1
+            for key, delta in (CATEGORY_MOOD.get(item.get("category"), {}) or {}).items():
+                if key in vector:
+                    vector[key] = vector[key] + delta
+            effects = item.get("effects") or {}
+            if effects:
+                for key, delta in effects.items():
+                    if key in vector:
+                        vector[key] = vector[key] + float(delta)
+            # 单小时最多变化 8 点；突发事件允许 22 点。
+            cap = 22.0 if effects else 8.0
+            for key in MOOD_KEYS:
+                vector[key] = clamp(vector[key], before[key] - cap, before[key] + cap)
+                vector[key] = clamp(vector[key])
+            if yesterday.get("late_night") and hour < 18:
+                vector["疲惫"] = max(vector["疲惫"], 64.0)
+            label = self._mood_label(vector)
+            if prev_label and not item.get("soothe") and not effects:
+                if prev_label in NEGATIVE_LABELS and label in POSITIVE_LABELS:
+                    label = prev_label
+                elif prev_label in POSITIVE_LABELS and label in NEGATIVE_LABELS:
+                    label = prev_label
+            item["mood"] = label
+            item["mood_valence"] = round(self._mood_valence(vector), 1)
+            prev_label = label
+        return items
+
+    @staticmethod
+    def _mood_label(vector):
+        if max(vector["生气"], vector["暴躁"]) >= 58:
+            return "烦躁"
+        if vector["委屈"] >= 58:
+            return "委屈"
+        if vector["郁闷"] >= 58:
+            return "低落"
+        if vector["疲惫"] >= 64:
+            return "疲惫"
+        if vector["焦虑"] >= 58:
+            return "焦虑"
+        if max(vector["开心"], vector["兴奋"]) >= 64:
+            return "开心"
+        if vector["依恋"] >= 64:
+            return "黏人"
+        return "平静"
+
+    @staticmethod
+    def _mood_valence(vector):
+        positive = (vector["开心"] + vector["兴奋"] + vector["平静"] + vector["依恋"]) / 4.0
+        negative = (vector["郁闷"] + vector["疲惫"] + vector["生气"] + vector["暴躁"] + vector["委屈"] + vector["焦虑"]) / 6.0
+        return clamp(50 + (positive - negative) * 0.8)
+
+    # ------------------------------------------------------------------
+    # 6. 物理校验：时间连续 + 不瞬移
+    # ------------------------------------------------------------------
+    def _validate(self, items, ctx):
+        for item in items:
+            item.pop("segments", None)
+            item["start"] = fmt_hhmm(parse_hhmm(item.get("start"), 0))
+            item["end"] = fmt_hhmm(parse_hhmm(item.get("end"), parse_hhmm(item.get("start"), 0) + 60))
+            if parse_hhmm(item["end"]) <= parse_hhmm(item["start"]):
+                item["end"] = fmt_hhmm(parse_hhmm(item["start"]) + 60)
+        for index, item in enumerate(items):
+            expected = fmt_hhmm(index * 60)
+            if item.get("start") != expected:
+                item["start"] = expected
+            item["end"] = fmt_hhmm((index + 1) * 60)
+        # 最后一条必须是 24:00 闭环，不能留 23:59。
+        if items:
+            items[-1]["end"] = "24:00"
+
+        direct_ok = {
+            ("office", "restaurant"), ("restaurant", "office"),
+            ("office", "mall"), ("mall", "office"),
+            ("scenic", "restaurant"), ("restaurant", "scenic"),
+            ("restaurant", "hotel"), ("hotel", "restaurant"),
+            ("restaurant", "home"), ("home", "restaurant"),
+            ("mall", "restaurant"), ("restaurant", "mall"),
+            ("station", "restaurant"), ("restaurant", "station"),
+            ("home", "home"), ("office", "office"), ("scenic", "scenic"),
+            ("restaurant", "restaurant"), ("mall", "mall"),
+        }
+        for index in range(1, len(items)):
+            prev = items[index - 1]
+            cur = items[index]
+            prev_zone = str(prev.get("zone") or "")
+            zone = str(cur.get("zone") or "")
+            if not zone or not prev_zone or zone == prev_zone:
+                continue
+            if prev_zone == "road" or zone == "road":
+                continue
+            if (prev_zone, zone) in direct_ok:
+                continue
+            # 兜底修复：把当前小时改成“在路上”，下一小时再到达。
+            original_place = str(cur.get("place") or "")
+            cur["activity"] = "从%s赶去%s" % (prev.get("place") or "上一个地方", original_place)
+            cur["place"] = "路上"
+            cur["zone"] = "road"
+            cur["category"] = "commute"
+            cur["transit"] = cur.get("transit") or ("drive" if ctx.get("car") else "taxi")
+            cur["vehicle"] = cur.get("vehicle") or (ctx.get("car") if cur["transit"] == "drive" else "")
+            cur["detail"] = "上一小时还在%s，这一小时在路上" % (prev.get("place") or "别处")
+            cur["effects"] = {}
+        # 周末景区必须体现资产绑定：开车、堵车、找停车位。
+        if (ctx.get("meta") or {}).get("rest") and ctx.get("scenic") and ctx.get("good_weather"):
+            scenic_items = [item for item in items if item.get("zone") == "scenic"]
+            if scenic_items:
+                first = scenic_items[0]
+                if not first.get("vehicle"):
+                    first["vehicle"] = ctx.get("car") or ""
+                if "停车" not in str(first.get("detail") or ""):
+                    first["detail"] = (str(first.get("detail") or "") + "；自己开车来的，停车位找了很久").strip("；")
+        return items
+
+    # ------------------------------------------------------------------
+    # 7. 让模型只改写 activity，不改物理骨架
+    # ------------------------------------------------------------------
+    async def enrich(self, umo, ctx, items, llm):
+        if not items or llm is None or not self.p.cfg_bool("schedule_llm_backbone", True):
+            return items
+        lines = []
+        for item in items:
+            lines.append("%s-%s｜%s｜%s｜%s｜%s" % (
+                item.get("start"), item.get("end"), item.get("place"),
+                item.get("category"), item.get("zone"), item.get("activity"),
+            ))
+        event = ctx.get("event") or {}
+        scenic = ctx.get("scenic") or {}
+        system = "你是角色的日程文案助手。只输出 JSON 数组，不要输出解释。"
+        prompt = (
+            "角色设定：\n" + _brief_world(ctx.get("world") or {}) + "\n"
+            "今天：%s，%s；天气：%s。\n"
+            "情绪：%s；生理期：%s；身体：%s；昨日：%s\n"
+            "突发事件：%s\n"
+            "景区：%s\n"
+            "下面是已经固定好的 24 个整点骨架（时间｜地点｜类别｜区域｜当前文案）：\n%s\n"
+            "请为每个小时写一句更真实、更有生活感的 activity（8-22字），"
+            "必须遵守：\n"
+            "1. 顺序对应，正好 24 个字符串；\n"
+            "2. 不能改时间、地点、类别；睡觉就写睡觉，在路上就写在路上；\n"
+            "3. 在景区要写具体项目；开车要体现堵车/找停车位；\n"
+            "4. 不要连续两个小时用同一句；不要写“日程”“AI”“模型”；\n"
+            "5. 只输出 JSON 数组，例如 [\"...\",\"...\"]。"
+        ) % (
+            ctx.get("day"), (ctx.get("meta") or {}).get("label") or "普通一天",
+            _weather_text(ctx.get("weather") or {}),
+            _mood_text(ctx.get("mood") or {}),
+            (ctx.get("period") or {}).get("phase", ""),
+            (ctx.get("health") or {}).get("status", "健康"),
+            (ctx.get("yesterday") or {}).get("note") or "正常",
+            event.get("note") or "无",
+            _scenic_text(scenic),
+            "\n".join(lines),
+        )
+        try:
+            raw = await asyncio.wait_for(llm.chat_raw(umo, system, prompt), timeout=15)
+        except Exception:
+            return items
+        data = json_extract(raw)
+        if isinstance(data, dict):
+            data = data.get("activities") or data.get("items") or data.get("schedule")
+        if not isinstance(data, list) or len(data) != len(items):
+            return items
+        for item, value in zip(items, data):
+            text = ""
+            detail = ""
+            if isinstance(value, dict):
+                text = str(value.get("activity") or "").strip()
+                detail = str(value.get("detail") or "").strip()
+            else:
+                text = str(value or "").strip()
+            text = re.sub(r"\s+", " ", text)
+            if 2 <= len(text) <= 30:
+                item["activity"] = text
+            if detail and len(detail) <= 40:
+                item["detail"] = detail
+        return items
+
+    # ------------------------------------------------------------------
+    # 8. 动态日记
+    # ------------------------------------------------------------------
+    async def generate_diary(self, umo, ctx, item, prev_item, next_item, llm):
+        if llm is None:
+            return {
+                "diary": self.fallback_diary(ctx, item, prev_item),
+                "mood": item.get("mood") or "平静",
+                "place": item.get("place") or "",
+                "activity": item.get("activity") or "",
+            }
+        system = "你就是这个角色本人。你在写只给自己看的第一人称小日记，只输出 JSON。"
+        prompt = self._diary_prompt(ctx, item, prev_item, next_item)
+        raw = ""
+        try:
+            raw = await asyncio.wait_for(llm.chat_raw(umo, system, prompt), timeout=60)
+        except Exception:
+            raw = ""
+        diary = ""
+        data = json_extract(raw)
+        if isinstance(data, dict):
+            diary = str(data.get("diary") or data.get("text") or "").strip()
+        elif isinstance(data, str):
+            diary = data.strip()
+        if not diary:
+            diary = str(raw or "").strip()
+        diary = self._clean_diary(diary)
+        if len(diary) < 20:
+            diary = self.fallback_diary(ctx, item, prev_item)
+        return {
+            "diary": diary,
+            "mood": item.get("mood") or "平静",
+            "place": item.get("place") or "",
+            "activity": item.get("activity") or "",
+        }
+
+    def _diary_prompt(self, ctx, item, prev_item, next_item):
+        event = ctx.get("event") or {}
+        scenic = ctx.get("scenic") or {}
+        prev_text = "无"
+        if prev_item:
+            prev_text = "%s-%s 在%s，%s，心情%s" % (
+                prev_item.get("start"), prev_item.get("end"), prev_item.get("place"),
+                prev_item.get("activity"), prev_item.get("mood") or "平静",
+            )
+        next_text = "无"
+        if next_item:
+            next_text = "%s-%s 去%s，%s" % (
+                next_item.get("start"), next_item.get("end"), next_item.get("place"),
+                next_item.get("activity"),
+            )
+        car_line = ""
+        if item.get("vehicle"):
+            car_line = "这一小时是开%s；必须写清堵车、找停车位或路上的细节。" % item.get("vehicle")
+        if item.get("detail"):
+            car_line = (car_line + " 可以用的细节：%s。" % item.get("detail")).strip()
+        return (
+            "角色设定：\n" + _brief_world(ctx.get("world") or {}) + "\n"
+            "今天：%s，%s；天气：%s；所在地：%s。\n"
+            "身体：%s；生理期：%s；昨日：%s。\n"
+            "此刻十维情绪：%s。\n"
+            "上一小时：%s\n"
+            "这一小时：%s-%s，%s，在%s（%s），心情%s。\n"
+            "下一小时：%s\n"
+            "突发事件：%s\n"
+            "景区信息：%s\n"
+            "%s\n"
+            "请写一段 120-260 字的第一人称小日记，要求：\n"
+            "1. 只写这一小时，不要提前写下一小时；\n"
+            "2. 写清交通方式（开车/打车/地铁/走路）、具体干了什么、吃了什么、遇到什么趣事；\n"
+            "3. 情绪必须从上一小时自然延续，不能无缘无故从郁闷/生气变成开心/兴奋；\n"
+            "4. 如果是周末开车出去玩，要提到车、堵车、停车位；\n"
+            "5. 口语化、生动，像真人发朋友圈，不要旁白，不要提日程/AI/模型；\n"
+            "6. 只输出 JSON：{\"diary\":\"...\"}。"
+        ) % (
+            ctx.get("day"), (ctx.get("meta") or {}).get("label") or "普通一天",
+            _weather_text(ctx.get("weather") or {}), ctx.get("location") or ctx.get("city") or "贵阳",
+            (ctx.get("health") or {}).get("status", "健康"),
+            (ctx.get("period") or {}).get("phase", ""),
+            (ctx.get("yesterday") or {}).get("note") or "正常",
+            _mood_text(ctx.get("mood") or {}),
+            prev_text,
+            item.get("start"), item.get("end"), item.get("activity"),
+            item.get("place"), item.get("zone"), item.get("mood") or "平静",
+            next_text,
+            event.get("note") or "无",
+            _scenic_text(scenic),
+            car_line,
+        )
+
+    @staticmethod
+    def _clean_diary(text):
+        text = str(text or "").strip()
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
+        text = re.sub(r"\s*```$", "", text)
+        text = text.strip().strip('"').strip("“”").strip()
+        for prefix in ("小日记：", "日记：", "今天的日记：", "今天："):
+            if text.startswith(prefix):
+                text = text[len(prefix):].strip()
+        text = re.sub(r"[ \t]+", " ", text)
+        text = text.replace("\r", "").strip()
+        return text[:600]
+
+    def fallback_diary(self, ctx, item, prev_item=None):
+        """模型不可用时的兜底日记，仍然保证交通、地点、心情和趣事。"""
+        place = str(item.get("place") or "家")
+        activity = str(item.get("activity") or "待着")
+        mood = str(item.get("mood") or "平静")
+        weather = _weather_text(ctx.get("weather") or {})
+        detail = str(item.get("detail") or "").strip()
+        zone = str(item.get("zone") or "")
+        car = str(item.get("vehicle") or "")
+        event = ctx.get("event") or {}
+        parts = []
+        if zone == "road":
+            if car:
+                parts.append("这小时我开着%s在路上，%s。" % (car, detail or "堵得我有点烦"))
+            elif item.get("transit") == "train":
+                parts.append("这小时我在高铁上，%s。" % (detail or "看着窗外的田发呆"))
+            else:
+                parts.append("这小时我在路上，%s。" % (detail or "挤得脚都没地方放"))
+        elif zone == "scenic":
+            parts.append("这小时我在%s，%s。" % (place, activity))
+            if detail:
+                parts.append(detail + "。")
+        elif zone == "office":
+            parts.append("这小时我在%s，%s。" % (place, activity))
+        elif zone == "home" and item.get("category") == "sleep":
+            parts.append("这小时我睡得迷迷糊糊的，连梦都做得断断续续。")
+        else:
+            parts.append("这小时我在%s，%s。" % (place, activity))
+        if event.get("kind") != "none" and (item.get("event") or item.get("effects")):
+            parts.append("今天这事来得太突然了，%s。" % (event.get("note") or ""))
+        parts.append("外面%s，我心情%s，%s。" % (
+            weather, mood, detail or "只想安安静静待一会儿",
+        ))
+        return "".join(parts)[:600]
+
+
+def _brief_world(world):
+    world = world or {}
+    hobbies = world.get("hobbies") or []
+    if isinstance(hobbies, list):
+        hobbies = "、".join([str(item) for item in hobbies])
+    return "\n".join([
+        "名字：%s；年龄：%s；城市：%s；职业：%s；任职：%s" % (
+            world.get("name", ""), world.get("age", ""), world.get("city", ""),
+            world.get("occupation", ""), world.get("workplace", ""),
+        ),
+        "性格：%s；爱好：%s；日常：%s" % (
+            world.get("personality", ""), hobbies, world.get("daily_life", ""),
+        ),
+    ])
+
+
+def _weather_text(weather):
+    weather = weather or {}
+    return "%s %s %s℃" % (
+        weather.get("city", ""), weather.get("text", ""), weather.get("temp", ""),
+    )
+
+
+def _mood_text(mood):
+    mood = mood or {}
+    return " ".join("%s%d" % (key, int(round(float(mood.get(key, 0) or 0)))) for key in MOOD_KEYS)
+
+
+def _scenic_text(scenic):
+    if not scenic:
+        return "无"
+    projects = scenic.get("projects") or []
+    if isinstance(projects, list):
+        projects = "、".join([str(item) for item in projects])
+    return "%s（%s·%s，%s）：%s" % (
+        scenic.get("name", ""), scenic.get("city", ""), scenic.get("area", ""),
+        scenic.get("duration", ""), projects,
+    )

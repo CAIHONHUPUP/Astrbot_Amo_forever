@@ -151,23 +151,39 @@
     .form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin: 10px 0; min-width: 0; }
     .form-grid label, .block { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); min-width: 0; }
     .block { margin: 10px 0; }
-    .schedule-groups { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+    .schedule-groups { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
     .schedule-group { border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 0 12px; }
-    .schedule-group > summary { display: flex; gap: 8px; align-items: baseline; padding: 10px 0; cursor: pointer; font-size: 13px; font-weight: 600; list-style: none; }
+    .schedule-group > summary { display: flex; gap: 8px; align-items: baseline; padding: 11px 0; cursor: pointer; font-size: 13px; font-weight: 600; list-style: none; border-bottom: 1px solid var(--line); }
     .schedule-group > summary::-webkit-details-marker { display: none; }
     .schedule-group > summary::before { content: "▸"; color: var(--muted); }
     .schedule-group[open] > summary::before { content: "▾"; }
-    .schedule-group > summary .time { color: var(--muted); font-weight: 500; min-width: 92px; font-variant-numeric: tabular-nums; }
+    .schedule-group > summary .time { color: var(--muted); font-weight: 500; min-width: 104px; font-variant-numeric: tabular-nums; }
     .schedule-group > summary .place { color: var(--muted); font-weight: 400; }
-    .schedule-hour { margin: 0 0 7px 12px; border-left: 2px solid var(--line); padding-left: 10px; }
-    .schedule-hour > summary { display: flex; gap: 8px; align-items: baseline; padding: 6px 0; font-size: 12px; cursor: pointer; list-style: none; }
-    .schedule-hour > summary::-webkit-details-marker { display: none; }
-    .schedule-hour > summary .time { color: var(--muted); min-width: 92px; font-variant-numeric: tabular-nums; }
-    .schedule-mini { list-style: none; margin: 0; padding: 0 0 6px; display: flex; flex-direction: column; gap: 3px; }
-    .schedule-mini li { display: flex; gap: 8px; font-size: 11px; color: var(--muted); }
-    .schedule-mini .t { min-width: 92px; font-variant-numeric: tabular-nums; }
-    .schedule-mini .a { color: var(--text); }
-    .schedule-group .current, .schedule-hour .current, .schedule-mini li.current { color: var(--pink); }
+    .schedule-hour { margin: 0; border-top: 1px dashed var(--line); cursor: pointer; border-radius: 8px; transition: background .15s ease; }
+    .schedule-hour:first-of-type { border-top: 0; }
+    .schedule-hour:hover, .schedule-hour:focus-visible { background: rgba(232, 72, 154, 0.06); outline: none; }
+    .schedule-hour.current .schedule-hour-row .a { color: var(--pink); font-weight: 600; }
+    .schedule-hour-row { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 2px; }
+    .schedule-hour-row .time { color: var(--muted); min-width: 104px; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .schedule-hour-row .a { flex: 1; min-width: 0; font-size: 12.5px; }
+    .schedule-hour-row .meta { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 38%; }
+    .schedule-hour-row .chev { color: var(--muted); font-size: 12px; transition: transform .15s ease; }
+    .schedule-hour.open .schedule-hour-row .chev { transform: rotate(90deg); color: var(--pink); }
+    .schedule-event-tag { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 99px; font-size: 10px; color: var(--pink); border: 1px solid rgba(232, 72, 154, .28); background: rgba(232, 72, 154, .08); white-space: nowrap; }
+    .schedule-diary { display: none; padding: 2px 2px 14px 114px; }
+    .schedule-hour.open .schedule-diary { display: block; }
+    .schedule-diary .diary-meta { color: var(--muted); font-size: 11px; margin-bottom: 6px; }
+    .schedule-diary .diary-text { font-size: 12.5px; line-height: 1.8; white-space: pre-wrap; word-break: break-word; color: var(--text); }
+    .schedule-diary .diary-loading { color: var(--muted); font-size: 12px; padding: 4px 0 10px; }
+    .schedule-diary .diary-loading::after { content: "…"; animation: diary-dots 1.2s infinite; }
+    .schedule-diary .diary-error { color: #b45309; font-size: 12px; line-height: 1.7; }
+    @keyframes diary-dots { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+    @media (max-width: 520px) {
+      .schedule-hour-row .meta { display: none; }
+      .schedule-diary { padding-left: 2px; }
+      .schedule-hour-row .time { min-width: 92px; }
+    }
+
     .memory-source { margin-top: 10px; }
     .relation-form { margin-top: 10px; }
     .relation-form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
@@ -265,17 +281,6 @@
     .world-doc p { margin: 0 0 6px; color: var(--text); }
     .world-doc h3:not(:first-child) { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 16px; }
     .schedule-group > summary { border-bottom: 1px solid var(--line); }
-    .schedule-hour { margin: 0; padding-left: 10px; }
-    .schedule-group > summary + .schedule-hour { padding-top: 0; }
-    .schedule-hour + .schedule-hour { border-top: 1px dashed var(--line); margin-top: 0; padding-top: 0; }
-    .schedule-mini { margin-left: -10px; padding: 0; }
-    .schedule-mini:not(:empty) { border-top: 1px dashed var(--line); margin-top: 0; padding-top: 0; }
-    .schedule-mini li { padding: 3px 0 3px 10px; border-bottom: 1px dashed var(--line); }
-    .schedule-mini li:last-child { border-bottom: 0; }
-    .schedule-hour > summary { height: 28px; align-items: center; padding: 0; }
-    .schedule-mini { gap: 0; }
-    .schedule-mini li { height: 28px; align-items: center; padding: 0 0 0 10px; }
-    .schedule-mini li, .schedule-mini li.current, .schedule-mini li .t, .schedule-mini li .a { font-size: 11px; line-height: 1; font-weight: 400; }
     .modal {
       position: fixed; inset: 0; z-index: 20; display: flex; align-items: center;
       justify-content: center; padding: 16px; background: rgba(34, 28, 48, 0.35);
@@ -621,7 +626,7 @@
         return new Promise((resolve, reject) => {
           const requestId = "plugin_req_" + (++counter);
           const endpoint = (payload && payload.endpoint) || "";
-          const slowRequest = /schedule(?:\/|_)regen|worldview(?:\/|_)regen|config_save|profiles_sync/.test(endpoint);
+          const slowRequest = /schedule(?:\/|_)(?:regen|detail)|worldview(?:\/|_)regen|config_save|profiles_sync/.test(endpoint);
           const timer = setTimeout(() => {
             if (pending.delete(requestId)) reject(new Error("插件桥接超时"));
           }, slowRequest ? 120000 : 20000);
@@ -659,7 +664,7 @@
     }
 
     function actionTimeout(action) {
-      const slow = ["schedule_regen", "worldview_regen", "config_save", "profiles_sync", "schedule"];
+      const slow = ["schedule_regen", "schedule_detail", "worldview_regen", "config_save", "profiles_sync", "schedule"];
       if (slow.includes(action)) return 120000;
       if (["weather", "status"].includes(action)) return 30000;
       return 20000;
@@ -679,6 +684,7 @@
       if (action === "status") list.push("get_status");
       if (action === "profiles") list.push("get_profile");
       if (action === "schedule_regen") list.push("schedule/regen");
+      if (action === "schedule_detail") list.push("schedule/detail");
       if (action === "kb_regen") list.push("kb/regen");
       if (action === "scenic_kb_regen") list.push("scenic_kb/regen");
       if (action === "worldview_regen") list.push("worldview/regen");
@@ -923,12 +929,69 @@
         "档案 " + (counts.profiles || 0) + " · 记忆 " + (counts.memories || 0) + " · 消息 " + (counts.messages || 0);
     }
 
+    let currentScheduleDay = "";
+
+    function eventTagText(kind) {
+      if (kind === "overtime") return "突发事件 · 临时加班";
+      if (kind === "friend_dinner") return "突发事件 · 朋友聚餐";
+      if (kind === "business_trip") return "突发事件 · 临时外派";
+      return "突发事件";
+    }
+
+    async function toggleHourDiary(row, hour) {
+      if (row.classList.contains("open") && row.dataset.loaded === "1") {
+        row.classList.remove("open");
+        return;
+      }
+      row.classList.add("open");
+      const box = row.querySelector(".schedule-diary");
+      if (!box || box.dataset.loaded === "1" || row.dataset.loading === "1") return;
+      row.dataset.loading = "1";
+      box.textContent = "";
+      const loading = document.createElement("div");
+      loading.className = "diary-loading";
+      loading.textContent = "这一小时的小日记正在生成";
+      box.appendChild(loading);
+      try {
+        const response = await call("schedule_detail", { date: currentScheduleDay, start: hour.start });
+        const data = objectFrom(response) || {};
+        const diary = String(data.diary || "").trim();
+        if (!diary) throw new Error("模型没有返回内容");
+        box.textContent = "";
+        const meta = document.createElement("div");
+        meta.className = "diary-meta";
+        meta.textContent = [
+          (data.start || hour.start) + "-" + (data.end || hour.end),
+          data.place || hour.place || "",
+          data.mood ? "心情 " + data.mood : "",
+        ].filter(Boolean).join(" · ");
+        const text = document.createElement("div");
+        text.className = "diary-text";
+        text.textContent = diary;
+        box.appendChild(meta);
+        box.appendChild(text);
+        box.dataset.loaded = "1";
+        delete row.dataset.loading;
+      } catch (error) {
+        delete row.dataset.loading;
+        box.textContent = "";
+        const err = document.createElement("div");
+        err.className = "diary-error";
+        err.textContent = "生成失败：" + (error && error.message ? error.message : error) + "（再点一次重试）";
+        box.appendChild(err);
+        delete box.dataset.loaded;
+      }
+    }
+
     function renderSchedule(data) {
       const box = document.getElementById("scheduleList");
       const day = document.getElementById("scheduleDay");
       box.textContent = "";
       const meta = data.meta || {};
-      day.textContent = data.day ? "日期：" + data.day + (meta.label ? " · " + meta.label : "") + (meta.rest ? " · 休息日" : "") : "";
+      currentScheduleDay = data.day || "";
+      day.textContent = data.day
+        ? "日期：" + data.day + (meta.label ? " · " + meta.label : "") + (meta.rest ? " · 休息日" : "") + " · 点开每小时卡片生成小日记"
+        : "";
       const tree = Array.isArray(data.tree) ? data.tree : (Array.isArray(data.schedule_tree) ? data.schedule_tree : []);
       if (!tree.length) {
         box.textContent = "暂无日程，点“刷新”或“重生日程”。";
@@ -944,39 +1007,58 @@
         time.textContent = (block.start || "") + "-" + (block.end || "");
         const label = document.createElement("span");
         label.textContent = block.title || block.activity || "";
+        const place = document.createElement("span");
+        place.className = "place";
+        place.textContent = block.activity && block.title && block.activity !== block.title ? " · " + block.activity : "";
         summary.appendChild(time);
         summary.appendChild(label);
+        summary.appendChild(place);
         details.appendChild(summary);
         (block.children || []).forEach((hour) => {
-          const hourBox = document.createElement("details");
-          hourBox.className = "schedule-hour";
-          hourBox.open = Boolean(hour.current);
-          const hourSummary = document.createElement("summary");
+          const hourBox = document.createElement("div");
+          hourBox.className = "schedule-hour" + (hour.current ? " current" : "");
+          hourBox.dataset.start = hour.start || "";
+          hourBox.tabIndex = 0;
+          hourBox.setAttribute("role", "button");
+          hourBox.setAttribute("aria-label", (hour.start || "") + "-" + (hour.end || "") + " " + (hour.activity || "") + "，点击生成小日记");
+          const line = document.createElement("div");
+          line.className = "schedule-hour-row";
           const hourTime = document.createElement("span");
           hourTime.className = "time";
           hourTime.textContent = (hour.start || "") + "-" + (hour.end || "");
-          const hourLabel = document.createElement("span");
-          hourLabel.textContent = hour.activity || "";
-          hourSummary.appendChild(hourTime);
-          hourSummary.appendChild(hourLabel);
-          hourBox.appendChild(hourSummary);
-          const mini = document.createElement("ul");
-          mini.className = "schedule-mini";
-          (hour.children || []).forEach((seg) => {
-            const row = document.createElement("li");
-            if (seg.current) row.className = "current";
-            const t = document.createElement("span");
-            t.className = "t";
-            t.textContent = (seg.start || "") + "-" + (seg.end || "");
-            const a = document.createElement("span");
-            a.className = "a";
-            a.textContent = seg.activity || "";
-            if (seg.detail) a.textContent += " · " + seg.detail;
-            row.appendChild(t);
-            row.appendChild(a);
-            mini.appendChild(row);
+          const activity = document.createElement("span");
+          activity.className = "a";
+          activity.textContent = hour.activity || "";
+          if (hour.event) {
+            const tag = document.createElement("span");
+            tag.className = "schedule-event-tag";
+            tag.textContent = eventTagText(hour.event);
+            activity.appendChild(tag);
+          }
+          const metaText = [hour.place || "", hour.vehicle ? "开车" : "", hour.current ? "现在" : ""].filter(Boolean).join(" · ");
+          const metaLine = document.createElement("span");
+          metaLine.className = "meta";
+          metaLine.textContent = metaText;
+          const chev = document.createElement("span");
+          chev.className = "chev";
+          chev.textContent = "›";
+          line.appendChild(hourTime);
+          line.appendChild(activity);
+          line.appendChild(metaLine);
+          line.appendChild(chev);
+          const diary = document.createElement("div");
+          diary.className = "schedule-diary";
+          diary.addEventListener("click", (event) => event.stopPropagation());
+          hourBox.appendChild(line);
+          hourBox.appendChild(diary);
+          const open = () => toggleHourDiary(hourBox, hour);
+          hourBox.addEventListener("click", open);
+          hourBox.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              open();
+            }
           });
-          hourBox.appendChild(mini);
           details.appendChild(hourBox);
         });
         box.appendChild(details);

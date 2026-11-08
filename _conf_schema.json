@@ -8,8 +8,8 @@
   "weather_city": {
     "type": "string",
     "description": "天气城市",
-    "hint": "例如：杭州、北京、上海",
-    "default": "杭州"
+    "hint": "例如：贵阳、杭州、北京；日程引擎默认按贵阳（观山湖区）生成",
+    "default": "贵阳"
   },
   "weather_host": {
     "type": "string",
@@ -1043,5 +1043,41 @@
     "description": "主动消息选边窗口（分钟）",
     "hint": "最近这么多分钟内在哪个平台说过话就发哪边，默认 30。",
     "default": 30
+  },
+  "schedule_city": {
+    "type": "string",
+    "description": "日程所在城市",
+    "hint": "默认贵阳；角色的小窝在观山湖区。",
+    "default": "贵阳"
+  },
+  "schedule_home": {
+    "type": "string",
+    "description": "角色住址",
+    "hint": "用于空间连贯校验，默认观山湖区·小窝。",
+    "default": "观山湖区·小窝"
+  },
+  "schedule_workplace": {
+    "type": "string",
+    "description": "角色公司",
+    "hint": "用于工作日主干，默认公司（贵阳·观山湖区）。",
+    "default": "公司（贵阳·观山湖区）"
+  },
+  "schedule_car": {
+    "type": "string",
+    "description": "角色资产（车）",
+    "hint": "周末开车出行会绑定这辆车，并生成堵车/找停车位细节。",
+    "default": "黑色奔驰C级"
+  },
+  "schedule_event_prob": {
+    "type": "float",
+    "description": "突发事件概率",
+    "hint": "0~0.9；按日期种子决定，同一天不会反复变。休息日：加班/聚餐；工作日：外派。",
+    "default": 0.28
+  },
+  "schedule_llm_backbone": {
+    "type": "bool",
+    "description": "用大模型润色主干文案",
+    "hint": "只改写每小时 activity，不改时间/地点/类别；关闭后使用内置真人化文案。",
+    "default": true
   }
 }
