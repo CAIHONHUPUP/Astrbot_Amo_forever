@@ -5432,8 +5432,136 @@ class HumanCorePlugin(Star):
                 break
         return items
 
-    def _external_all_memories(self, uid, query="", limit=50):
-        """只读地从已安装记忆插件取完整记忆，不创建画像。"""
+# ---------- livingmemory（只读直连） ----------
+    def _livingmem_db_path(self):
+        """找 livingmemory 的库；路径不写死，跟着 AstrBot 的数据目录走。"""
+        candidates = []
+        try:
+            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+            candidates.append(os.path.join(str(get_astrbot_data_path()), "plugin_data",
+                                           "astrbot_plugin_livingmemory", "livingmemory.db"))
+        except Exception:
+            pass
+        own = getattr(self, "plugin_dir", "") or ""
+        if own:
+            candidates.append(os.path.join(os.path.dirname(os.path.dirname(own)),
+                                           "astrbot_plugin_livingmemory", "livingmemory.db"))
+        for path in candidates:
+            if path and os.path.isfile(str(path)):
+                return str(path)
+        return ""
+
+    def _livingmem_rows(self, sql, params=()):
+        path = self._livingmem_db_path()
+        if not path:
+            return []
+        conn = None
+        try:
+            from urllib.parse import quote
+            conn = sqlite3.connect("file:" + quote(path) + "?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            return [dict(row) for row in conn.execute(sql, params).fetchall()]
+        except Exception as exc:
+            logger.debug("[amo] 读取 livingmemory 失败: %s" % exc)
+            return []
+        finally:
+            try:
+                if conn is not None:
+                    conn.close()
+            except Exception:
+                pass
+
+    def _livingmem_owner_ids(self, uid=""):
+        """认哪些 ID 算同一个人：当前 uid + 配置里的别名（跨平台用）。"""
+        ids = {str(uid or "").strip()}
+        raw = str(self.cfg_str("livingmemory_owner_ids", "") or "").replace("，", ",")
+        for item in raw.split(","):
+            item = item.strip()
+            if item:
+                ids.add(item)
+        ids.discard("")
+        return ids
+
+    def _livingmem_owned(self, metadata, uid):
+        """这段记忆是不是这个人这边的。
+
+        livingmemory 写进 documents 的归属可能是任何一种平台 ID（如飞书 openid），
+        不一定是 amo 里的 canonical uid；所以按“uid + 配置别名”的交集判断。
+        没有归属信息时按“自己的”处理（单用户部署最常见）。
+        """
+        ids = self._livingmem_owner_ids(uid)
+        try:
+            meta = json.loads(metadata or "{}")
+        except Exception:
+            meta = {}
+        owners = {str(x) for x in (meta.get("participant_uids") or [])}
+        for item in meta.get("participant_identities") or []:
+            if isinstance(item, dict) and item.get("sender_id"):
+                owners.add(str(item["sender_id"]))
+        if not owners:
+            return True
+        return bool(ids & owners)
+
+    @staticmethod
+    def _livingmem_like_escape(text):
+        """LIKE 里的 % 和 _ 要转义，否则用户搜个下划线就变成通配符。"""
+        return str(text or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    def _livingmem_all_memories(self, uid, keyword="", limit=50):
+        """livingmemory 的 documents：每条是一段对话摘要。
+
+        排序规则：
+          - 有关键词：命中次数多的优先，其次重要度高、其次新；
+          - 没关键词：按重要度、再按时间倒序。
+        和 memory_companion 那条“importance DESC, updated_at DESC”的风格保持一致。
+        """
+        if not self._livingmem_db_path():
+            return []
+        cap = max(1, min(100, int(limit or 50)))
+        keyword = str(keyword or "").strip()[:100]
+        sql = (
+            "SELECT text, created_at, metadata, "
+            "COALESCE(json_extract(metadata, '$.importance'), 0) AS imp, id "
+            "FROM documents WHERE text != ''"
+        )
+        params = []
+        if keyword:
+            sql += " AND text LIKE ? ESCAPE '\\'"
+            params.append("%" + self._livingmem_like_escape(keyword) + "%")
+        sql += " ORDER BY imp DESC, id DESC LIMIT ?"
+        params.append(max(cap * 5, 50) if keyword else cap)
+        rows = self._livingmem_rows(sql, tuple(params))
+
+        uid_s = str(uid or "")
+        items = []
+        for row in rows:
+            content = re.sub(r"\\s+", " ", str(row.get("text") or "")).strip()
+            if len(content) < 2:
+                continue
+            if not self._livingmem_owned(row.get("metadata"), uid_s):
+                continue
+            hits = content.lower().count(keyword.lower()) if keyword else 0
+            items.append({
+                "content": content[:500],
+                "tier": 1,
+                "kind": "livingmemory",
+                "source": "livingmemory",
+                "memory_type": "episodic",
+                "created_at": row.get("created_at") or "",
+                "hits": hits,
+                "expires_at": None,
+            })
+
+        if keyword:
+            items.sort(key=lambda x: (x["hits"], x["created_at"] or ""), reverse=True)
+        return items[:cap]
+
+    def _external_all_memories_legacy(self, uid, query="", limit=50):
+        """给 prompt 注入用的版本：故意不读 livingmemory。
+
+        livingmemory 自己会把检索结果注入 prompt（BM25+向量+图），
+        这里再读一遍会重复；它只负责写入和注入，amo 只负责面板展示。
+        """
         items = []
         plugin = self._companion_plugin()
         if plugin is None:
@@ -5446,11 +5574,34 @@ class HumanCorePlugin(Star):
             else:
                 items.extend(self._companion_memories(uid, query))
         except Exception as exc:
+            logger.debug("[amo] 外部完整记忆读取失败(legacy): %s" % exc)
+        return items
+
+    def _external_all_memories(self, uid, query="", limit=50):
+        """只读地从已安装记忆插件取完整记忆，不创建画像。"""
+        items = []
+        plugin = self._companion_plugin()
+        if plugin is None:
+            return items
+        try:
+            living = self._livingmem_all_memories(uid, query, limit)
+            if living:
+                return living
+            if self._is_memory_companion(plugin):
+                items.extend(self._memcomp_all_memories(uid, query, limit))
+            elif self._is_angel_memory(plugin):
+                items.extend(self._angel_all_memories(uid, query, limit))
+            else:
+                items.extend(self._companion_memories(uid, query))
+        except Exception as exc:
             logger.debug("[amo] 外部完整记忆读取失败: %s" % exc)
         return items
 
     def _external_profile_memories(self, uid, name="", alias="", limit=200):
         """按 UID 或名字/称呼从已安装记忆插件取完整记忆；只读，不建画像。"""
+        living = self._livingmem_all_memories(uid, "", limit)
+        if living:
+            return living
         plugin = self._companion_plugin()
         if plugin is None:
             return []
@@ -5813,7 +5964,11 @@ class HumanCorePlugin(Star):
             except Exception as exc:
                 logger.debug("[amo] 本地记忆检索失败: %s" % exc)
         try:
-            for item in self._external_all_memories(uid, text, self.cfg_int("memory_recall_limit", 6)):
+            _inject_lm = self.cfg_bool("memory_inject_livingmemory", False)
+            _picked = (self._external_all_memories(uid, text, self.cfg_int("memory_recall_limit", 6))
+                       if _inject_lm
+                       else self._external_all_memories_legacy(uid, text, self.cfg_int("memory_recall_limit", 6)))
+            for item in _picked:
                 item["source"] = item.get("source") or "external"
                 memories.append(item)
         except Exception as exc:
