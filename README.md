@@ -376,3 +376,10 @@ data/config/Astrbot_Amo_forever_config.json
 - 2.9.0：Amo 更名为“核心”；身份质疑不再强制回怼，先由心流判定，通过后再结合上下文判断是不是在说自己。
 - 面板优先使用 AstrBot 官方 bridge；iframe 内没有 bridge 时由面板直接走 postMessage 协议；顶层页面改用 `/api/v1/plugins/extensions/...` 读取。面板为浅色主题。
 - 内置心流逻辑来自 `astrbot_plugin_xinliuchenjinban`，内置分段逻辑来自 `astrbot_plugin_custome_segment_reply`（作者 LinJohn8）；已适配为本插件内部引擎，保留其完整功能。
+
+
+## 贡献者
+
+感谢以下同学提交的 PR：
+
+- **CAIHONHUPUP**：#27 礼物命令与逛街提示、#28 面板删除档案、#29 / #30 方言开关与普通话选项
