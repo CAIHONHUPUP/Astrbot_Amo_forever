@@ -6425,8 +6425,10 @@ class HumanCorePlugin(Star):
             if age > 6 * 3600:
                 self.db.kv_set(self._pending_key(uid), {})
                 continue
-            followup_after = max(5, self.cfg_int("proactive_followup_minutes", 30)) * 60
-            mood_after = max(followup_after + 60, self.cfg_int("proactive_no_reply_minutes", 120) * 60)
+            followup_minutes = self.cfg_int("proactive_followup_minutes", 30)
+            # 0 / 负数 = 关掉追问，只保留「心情变差」这一档
+            followup_after = 10 ** 9 if followup_minutes <= 0 else max(5, followup_minutes) * 60
+            mood_after = max(60, self.cfg_int("proactive_no_reply_minutes", 120)) * 60
             if not pending.get("followup") and age >= followup_after:
                 if not quiet_now(self.cfg_str("quiet_hours", "23:30-07:30")):
                     kind = str(pending.get("kind") or "greet")
