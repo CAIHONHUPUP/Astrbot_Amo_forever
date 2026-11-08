@@ -161,6 +161,35 @@ def _split_prefix(text: str, head) -> str | None:
     return None
 
 
+def _label(row) -> str:
+    return "%s·%s" % (_norm(row[0]) or row[0], _norm(row[1]) or row[1])
+
+
+def _mark_ambiguous(hit, rows, text) -> dict:
+    """同名多条时在结果里带上候选清单，方便面板/日志提示（默认选择不变）。"""
+    if not hit or not rows or len(rows) <= 1:
+        return hit
+    labels = []
+    for row in rows[:6]:
+        label = _label(row)
+        if label not in labels:
+            labels.append(label)
+    chosen = (_norm(hit.get("province") or ""), _norm(hit.get("city") or ""))
+    alt = next((row for row in rows if (_norm(row[0]), _norm(row[1])) != chosen), rows[0])
+    alt_city = _stem(alt[1]) or _norm(alt[1])
+    alt_name = _norm(alt[2]) or alt[2]
+    if alt_city == alt_name or _level(alt[0], alt[1], alt[2]) == 1:
+        example = (_stem(alt[0]) or _norm(alt[0])) + alt_city
+    else:
+        example = alt_city + alt_name
+    hit["ambiguous"] = len(rows)
+    hit["candidates"] = labels
+    hit["note"] = "「%s」有 %d 个同名，默认用了 %s；要换成 %s 就写「%s」" % (
+        hit.get("match") or str(text or ""), len(rows), hit.get("label", ""), _label(alt), example,
+    )
+    return hit
+
+
 def resolve_city(text):
     """把中文地名解析成 LocationID；解析不了返回 None。数字原样返回。"""
     raw = str(text or "").strip()
@@ -211,7 +240,8 @@ def resolve_city(text):
     # 2) 只写市名：「深圳」（写了「区/县」后缀就不当市名）
     stem = _stem(norm)
     if not norm.endswith(("区", "县", "镇", "乡")) and stem in _cities:
-        return _hit(_best(_cities[stem]))
+        rows = _cities[stem]
+        return _mark_ambiguous(_hit(_best(rows)), rows, raw)
 
     # 3) 只写区县名：「朝阳」「朝阳区」（重名按级别挑，写清后缀则优先同名后缀）
     if stem in _names:
@@ -231,7 +261,7 @@ def resolve_city(text):
                 subset = [row for row in rows if row[4] == 1]
                 if subset:
                     rows = subset
-            return _hit(_best(rows))
+            return _mark_ambiguous(_hit(_best(rows)), rows, raw)
 
     # 4) 市 + 区县，不带省：「深圳南山」「东莞市莞城区」
     fallback = None
