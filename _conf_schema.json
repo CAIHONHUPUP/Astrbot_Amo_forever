@@ -170,18 +170,6 @@
     "default": "",
     "hint": "跨平台用：QQ 号 + 飞书 openid 等。留空时只按当前 uid 匹配"
   },
-  "memory_inject_livingmemory": {
-    "type": "bool",
-    "description": "把 livingmemory 的记忆也注入提示词",
-    "default": false,
-    "hint": "默认关闭：livingmemory 自己会把检索结果注入（BM25+向量+图），再注入一次会重复；只有把 livingmemory 当纯存储用时才打开"
-  },
-  "livingmemory_owner_ids": {
-    "type": "string",
-    "description": "livingmemory 里算作本人的 ID（逗号分隔）",
-    "default": "",
-    "hint": "跨平台用：QQ 号 + 飞书 openid 等。留空时只按当前 uid 匹配"
-  },
   "memory_source": {
     "type": "string",
     "description": "记忆来源",
