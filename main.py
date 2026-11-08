@@ -2378,6 +2378,81 @@ class HumanState:
             logger.warning("[amo] 和风天气接口失败: %s" % exc)
             return None
 
+    async def _qweather_get(self, url, params):
+        """和风请求：用系统网络栈（线程里 urllib），避免 aiohttp 在部分环境超时。"""
+        import urllib.parse
+        import urllib.request
+
+        key = self.p.cfg_str("hefeng_key", "")
+        query = dict(params or {})
+        query["key"] = key
+        full = url + ("&" if "?" in url else "?") + urllib.parse.urlencode(query)
+
+        def _do():
+            req = urllib.request.Request(
+                full, headers={"X-QW-Api-Key": key, "Accept-Encoding": "identity"}
+            )
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                raw = resp.read()
+            if raw[:2] == b"\x1f\x8b":
+                import gzip
+                raw = gzip.decompress(raw)
+            return json.loads(raw.decode("utf-8"))
+
+        return await asyncio.to_thread(_do)
+
+    async def _fetch_qweather(self, key, city):
+        host = (self.p.cfg_str("weather_host", "") or "").strip().rstrip("/")
+        if not host:
+            return None
+        legacy_hosts = {"https://devapi.qweather.com", "https://api.qweather.com"}
+        if host in legacy_hosts:
+            logger.warning("[amo] 和风天气公共 API 域名已停服，请在配置里填写控制台的 API Host")
+        geo_raw = (self.p.cfg_str("weather_geo_host", "") or "").strip().rstrip("/")
+        if geo_raw and not geo_raw.startswith(("http://", "https://")):
+            geo_raw = "https://" + geo_raw
+        if geo_raw:
+            geo_base = geo_raw
+            if geo_base.endswith("/city/lookup"):
+                geo_base = geo_base[: -len("/city/lookup")]
+            if not geo_base.endswith(("/geo/v2", "/v2")):
+                geo_base += "/geo/v2"
+        else:
+            geo_base = host + "/geo/v2"
+        location = str(city)
+        try:
+            if not location.isdigit():
+                geo = await self._qweather_get(
+                    geo_base + "/city/lookup", {"location": location, "number": 1}
+                )
+                if str(geo.get("code") or "") != "200" or not isinstance(geo.get("location"), list):
+                    return None
+                first = geo["location"][0] if geo["location"] else None
+                if not isinstance(first, dict) or not first.get("id"):
+                    return None
+                location = str(first["id"])
+            data = await self._qweather_get(host + "/v7/weather/now", {"location": location})
+            if not isinstance(data, dict) or str(data.get("code") or "") != "200":
+                logger.warning("[amo] 和风天气 now 返回异常: %s" % str(data)[:160])
+                return None
+            now = data.get("now")
+            if not isinstance(now, dict):
+                logger.warning("[amo] 和风天气 now 字段缺失或格式异常")
+                return None
+            text = str(now.get("text") or "多云")
+            city_name = (self.p.cfg_str("weather_city_name", "") or "").strip() or city
+            return {
+                "city": city_name, "text": text, "tag": self._weather_tag(text),
+                "temp": to_int(now.get("temp")), "humidity": to_int(now.get("humidity")),
+                "wind": str(now.get("windDir", "")) + str(now.get("windScale", "")) + "级",
+                "ts": now_ts(), "source": "qweather", "ok": True, "error": "",
+                "key_set": True,
+                "host": host,
+            }
+        except Exception as exc:
+            logger.warning("[amo] 和风天气接口失败: %s %r" % (type(exc).__name__, exc))
+            return None
+
     async def _fetch_qweather_daily(self, key, city, days=3):
         """明天/后天的预报；缓存 3 小时，避免后台循环反复打接口。"""
         cache = self.db.kv_get("weather_daily", {}) or {}
@@ -2405,34 +2480,25 @@ class HumanState:
                 geo_base += "/geo/v2"
         else:
             geo_base = host + "/geo/v2"
-        headers = {"X-QW-Api-Key": key}
-        timeout = aiohttp.ClientTimeout(total=8)
         location = str(city)
         try:
-            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-                if not location.isdigit():
-                    async with session.get(
-                        geo_base + "/city/lookup",
-                        params={"location": location, "key": key, "number": 1},
-                    ) as response:
-                        geo = await self._qweather_payload(response, "geo")
-                    if str(geo.get("code") or "") != "200" or not isinstance(geo.get("location"), list):
-                        return []
-                    first = geo["location"][0] if geo["location"] else None
-                    if not isinstance(first, dict) or not first.get("id"):
-                        return []
-                    location = str(first["id"])
-                async with session.get(
-                    host + "/v7/weather/%dd" % int(days),
-                    params={"location": location, "key": key},
-                ) as response:
-                    data = await self._qweather_payload(response, "daily")
-                if str(data.get("code") or "") != "200":
-                    logger.warning("[amo] 和风天气预报返回异常: %s" % data.get("code"))
+            if not location.isdigit():
+                geo = await self._qweather_get(
+                    geo_base + "/city/lookup", {"location": location, "number": 1}
+                )
+                if str(geo.get("code") or "") != "200" or not isinstance(geo.get("location"), list):
                     return []
-                items = parse_weather_daily(data)
+                first = geo["location"][0] if geo["location"] else None
+                if not isinstance(first, dict) or not first.get("id"):
+                    return []
+                location = str(first["id"])
+            data = await self._qweather_get(host + "/v7/weather/%dd" % int(days), {"location": location})
+            if not isinstance(data, dict) or str(data.get("code") or "") != "200":
+                logger.warning("[amo] 和风天气预报返回异常: %s" % str(data)[:160])
+                return []
+            items = parse_weather_daily(data)
         except Exception as exc:
-            logger.warning("[amo] 和风天气预报接口失败: %s" % exc)
+            logger.warning("[amo] 和风天气预报接口失败: %s %r" % (type(exc).__name__, exc))
             return []
         self.db.kv_set("weather_daily", {"ts": now_ts(), "city": city, "days": int(days), "items": items})
         return items
@@ -6664,6 +6730,31 @@ class HumanCorePlugin(Star):
                 )
         except Exception:
             pass
+        try:
+            merged_count = int(event.get_extra("amo_debounce_count") or 0)
+        except Exception:
+            merged_count = 0
+        if merged_count > 1:
+            logger.info("[amo] 连发合并提示已注入 | %d 条" % merged_count)
+            parts.append(
+                "【连发合并】对方在几秒内连发了 %d 条，用「｜」隔开，合起来当一句话看。"
+                "其中问到你的（回不回家、吃没吃），先答你自己的安排和情况，再顺手接他的话题、给建议；"
+                "不要理解成他在纠结什么，也不要替他说“你还没进店/你还在排队”。" % merged_count
+            )
+        try:
+            last_at = to_float(self._last_reply_at.get(event.unified_msg_origin), 0)
+        except Exception:
+            last_at = 0.0
+        try:
+            is_private = bool(event.is_private_chat())
+        except Exception:
+            is_private = False
+        if is_private and last_at and now_ts() - last_at <= 120:
+            parts.append(
+                "【刚答过】你 %d 秒前刚回过他这件事。如果他现在说的还是同一件事，"
+                "不要把刚才的话换个说法再说一遍：最多补一句新的，或者一句带过（“嗯，就这么办”）。"
+                % int(max(1, now_ts() - last_at))
+            )
         parts.append("以上是你的内在状态，不要直接复述，只影响语气、长度和是否愿意说话。")
         return "\n".join(parts)
 
