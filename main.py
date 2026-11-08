@@ -5254,6 +5254,116 @@ class HumanCorePlugin(Star):
             })
         return items
 
+    # ---------- 外挂记忆插件（牢记等）检索桥 ----------
+    MEMORY_RECALL_METHODS = ("search_for_event", "recall_for_event")
+
+    def _memory_plugin_target(self):
+        """能提供检索的对象：优先插件的 service，其次插件本身。"""
+        plugin = self._companion_plugin()
+        if plugin is None:
+            return None
+        service = getattr(plugin, "service", None)
+        return service if service is not None else plugin
+
+    @staticmethod
+    def _memory_hit_item(hit):
+        """把插件返回的一条命中转成 amo 的记忆条目；不认识的结构返回 None。"""
+        memory = getattr(hit, "memory", None)
+        if memory is not None:
+            content = str(getattr(memory, "content", "") or "")
+            importance = to_float(getattr(memory, "importance", 0.0), 0.0)
+            memory_type = str(getattr(memory, "memory_type", "") or "")
+        elif isinstance(hit, dict):
+            content = str(hit.get("content") or "")
+            importance = to_float(hit.get("importance"), 0.0)
+            memory_type = str(hit.get("memory_type") or "")
+        else:
+            return None
+        content = re.sub(r"\s+", " ", content).strip()
+        if len(content) < 2:
+            return None
+        return {
+            "content": content[:500],
+            "tier": 2 if importance >= 0.72 else (1 if importance >= 0.42 else 0),
+            "kind": "memory_companion",
+            "source": "memory_companion",
+            "memory_type": memory_type,
+        }
+
+    async def _external_memory_recall(self, event, query, limit=6):
+        """用记忆插件自己的检索（BM25/向量/可见性）；不可用或超时就返回空，交给兜底。"""
+        if event is None:
+            return []
+        target = self._memory_plugin_target()
+        run = None
+        for name in self.MEMORY_RECALL_METHODS:
+            candidate = getattr(target, name, None) if target is not None else None
+            if callable(candidate):
+                run = candidate
+                break
+        if run is None:
+            return []
+        budget = max(0.5, self.cfg_float("memory_bridge_timeout_seconds", 3.0))
+        try:
+            hits = await asyncio.wait_for(
+                run(event, str(query or ""), top_k=max(1, int(limit or 6))),
+                timeout=budget,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("[amo] 记忆插件检索超时（%.1fs），本轮退回兜底", budget)
+            return []
+        except Exception as exc:
+            logger.warning("[amo] 记忆插件检索失败: %s", exc)
+            return []
+        items = []
+        for hit in hits or []:
+            item = self._memory_hit_item(hit)
+            if item is not None:
+                items.append(item)
+        return items
+
+    def _external_memory_fallback(self, uid, text, limit):
+        """插件没提供检索接口时的兜底：直接读它的库（旧的 LIKE / 重要性路径）。"""
+        try:
+            inject_lm = self.cfg_bool("memory_inject_livingmemory", False)
+            picked = (
+                self._external_all_memories(uid, text, limit)
+                if inject_lm
+                else self._external_all_memories_legacy(uid, text, limit)
+            )
+        except Exception as exc:
+            logger.debug("[amo] 外部记忆兜底读取失败: %s", exc)
+            return []
+        items = []
+        for item in picked:
+            item["source"] = item.get("source") or "external"
+            items.append(item)
+        return items
+
+    def _local_memory_recall(self, uid, text, limit):
+        """兼容旧配置：amo 自己的记忆（陪伴插件 data + 本地表），enable_memory 控制。"""
+        items = []
+        source = self.cfg_str("memory_source", "auto").strip().lower()
+        if source in ("auto", "companion"):
+            try:
+                items.extend(self._companion_memories(uid, text))
+            except Exception as exc:
+                logger.debug("[amo] 陪伴插件记忆读取失败: %s", exc)
+        if source in ("auto", "local") or not items:
+            try:
+                for item in self.db.search_memories(
+                    uid,
+                    text,
+                    limit=limit,
+                    normal_days=self.cfg_int("mem_days_normal", 7),
+                    important_days=self.cfg_int("mem_days_important", 14),
+                ):
+                    item["source"] = "local"
+                    items.append(item)
+            except Exception as exc:
+                logger.debug("[amo] 本地记忆检索失败: %s", exc)
+        return items
+
     def _memcomp_all_memories(self, uid, keyword="", limit=50):
         """完整记忆：不限制 memory_type，用于“查看记忆”和召回。"""
         plugin = self._companion_plugin()
@@ -6179,39 +6289,14 @@ class HumanCorePlugin(Star):
         if fields:
             self.db.update_profile(uid, **fields)
 
-    def _recall(self, uid, text):
-        if not self.cfg_bool("enable_memory", True):
-            return [], ""
-        source = self.cfg_str("memory_source", "auto").strip().lower()
-        memories = []
-        if source in ("auto", "companion"):
-            try:
-                memories.extend(self._companion_memories(uid, text))
-            except Exception as exc:
-                logger.debug("[amo] 陪伴插件记忆读取失败: %s" % exc)
-        if source in ("auto", "local") or not memories:
-            try:
-                local = self.db.search_memories(
-                    uid, text,
-                    limit=self.cfg_int("memory_recall_limit", 6),
-                    normal_days=self.cfg_int("mem_days_normal", 7),
-                    important_days=self.cfg_int("mem_days_important", 14),
-                )
-                for item in local:
-                    item["source"] = "local"
-                    memories.append(item)
-            except Exception as exc:
-                logger.debug("[amo] 本地记忆检索失败: %s" % exc)
-        try:
-            _inject_lm = self.cfg_bool("memory_inject_livingmemory", False)
-            _picked = (self._external_all_memories(uid, text, self.cfg_int("memory_recall_limit", 6))
-                       if _inject_lm
-                       else self._external_all_memories_legacy(uid, text, self.cfg_int("memory_recall_limit", 6)))
-            for item in _picked:
-                item["source"] = item.get("source") or "external"
-                memories.append(item)
-        except Exception as exc:
-            logger.debug("[amo] 外部记忆检索失败: %s" % exc)
+    async def _recall(self, uid, text, event=None):
+        """记忆来自外挂记忆插件（牢记等）；amo 自己的本地记忆只在 enable_memory=true 时参与。"""
+        limit = self.cfg_int("memory_recall_limit", 6)
+        memories = await self._external_memory_recall(event, text, limit)
+        if not memories:
+            memories = self._external_memory_fallback(uid, text, limit)
+        if self.cfg_bool("enable_memory", True):
+            memories.extend(self._local_memory_recall(uid, text, limit))
 
         unique = []
         seen = set()
@@ -6571,7 +6656,7 @@ class HumanCorePlugin(Star):
             logger.debug("[amo] 群聊插话判定: %s" % json.dumps(result, ensure_ascii=False))
         if not result["reply"]:
             return
-        memories, memory_text = self._recall(self._canonical_uid(event), text)
+        memories, memory_text = await self._recall(self._canonical_uid(event), text, event)
         reply = await self._compose_reply(event, text, snap, profile, memories, memory_text, True)
         if not reply:
             return
@@ -7050,7 +7135,7 @@ class HumanCorePlugin(Star):
         profile = self.db.get_profile(uid)
         relation = profile.get("relation", "普通")
         snap = self.state.snapshot()
-        _, memory_text = self._recall(uid, event.message_str or "")
+        _, memory_text = await self._recall(uid, event.message_str or "", event)
         self_name, self_uid, self_qq_nick, self_display = await self._self_identity(event)
         alias = str(profile.get("alias") or "").strip()
         sender_nick = str(event.get_sender_name() or profile.get("name") or uid).strip()

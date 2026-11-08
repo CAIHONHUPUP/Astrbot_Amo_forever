@@ -167,7 +167,8 @@
   },
   "enable_memory": {
     "type": "bool",
-    "description": "长期记忆",
+    "description": "amo 自己的长期记忆（读+写）",
+    "hint": "关闭后 amo 不读也不写自己的记忆库；外挂记忆插件（牢记等）的检索仍然生效。想让记忆只由外挂插件负责就关掉它。",
     "default": true
   },
   "mem_days_normal": {
@@ -184,6 +185,12 @@
     "type": "int",
     "description": "每次最多注入几条记忆",
     "default": 6
+  },
+  "memory_bridge_timeout_seconds": {
+    "type": "float",
+    "description": "外挂记忆插件检索超时（秒）",
+    "hint": "调用牢记等插件的检索接口时的上限；超时自动退回旧的库内检索，不会卡住回复。",
+    "default": 3.0
   },
   "memory_inject_livingmemory": {
     "type": "bool",
