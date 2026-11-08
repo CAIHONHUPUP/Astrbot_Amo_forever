@@ -133,7 +133,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.8.0"
+PLUGIN_VERSION = "5.8.2"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -7850,6 +7850,10 @@ class HumanCorePlugin(Star):
     async def _tick(self):
         if not self._ready or self.state is None:
             return
+        # 数据插件可能在陪伴之后才装：每 5 分钟重新探测一次，装上就自动接管/迁移
+        if self._data_mem() is None and now_ts() - to_float(getattr(self, "_last_data_probe", 0), 0) > 300:
+            self._last_data_probe = now_ts()
+            self._spawn(self._sync_with_data_plugin())
         self.state.decay_mood()
         if self.state.last_daily != today_str():
             self.state.daily_tick()
