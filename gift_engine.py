@@ -885,6 +885,37 @@ class GiftEngine:
             data = self._load()
             return {"wishes": len(data["wishes"]), "gifts": len(data["gifts"]), "path": self.path}
 
+    def purge_user(self, uid="", umos=()):
+        """删掉某个人的心愿和礼物（按 uid 或会话地址匹配），返回删除条数。"""
+        uid = str(uid or "").strip()
+        umos = {str(item) for item in (umos or ()) if item}
+        if not uid and not umos:
+            return 0
+        with self._lock:
+            data = self._load()
+
+            def _keep(entry):
+                if uid and str(entry.get("uid") or "") == uid:
+                    return False
+                if umos and str(entry.get("umo") or "") in umos:
+                    return False
+                return True
+
+            before = len(data["wishes"]) + len(data["gifts"])
+            data["wishes"] = [item for item in data["wishes"] if _keep(item)]
+            data["gifts"] = [item for item in data["gifts"] if _keep(item)]
+            removed = before - (len(data["wishes"]) + len(data["gifts"]))
+            if removed:
+                self._save()
+            for umo in umos:  # 顺手清掉按会话缓存的临时数据
+                for cache in (self._bot_tail, self._user_tail, self._just_gifted,
+                              self._seen_gift, self._last_shop_hint):
+                    try:
+                        cache.pop(umo, None)
+                    except Exception:
+                        pass
+        return max(0, removed)
+
     def panel_data(self):
         """给 Web 面板用的礼物墙数据。"""
         now = time.time()

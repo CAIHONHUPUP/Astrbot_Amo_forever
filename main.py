@@ -8874,6 +8874,8 @@ class HumanCorePlugin(Star):
             ("/relations", self.api_relations, ["GET", "POST"]),
             ("/relation/save", self.api_relation_save, ["GET", "POST"]),
             ("/relation_save", self.api_relation_save, ["GET", "POST"]),
+            ("/profile/delete", self.api_profile_delete, ["GET", "POST"]),
+            ("/profile_delete", self.api_profile_delete, ["GET", "POST"]),
             ("/relation/delete", self.api_relation_delete, ["GET", "POST"]),
             ("/relation_delete", self.api_relation_delete, ["GET", "POST"]),
             ("/memory/candidates", self.api_memory_candidates, ["GET"]),
@@ -9514,6 +9516,112 @@ class HumanCorePlugin(Star):
         logger.debug("[amo] 关系网更新: %s <-> %s = %s" % (a_uid, b_uid, relation))
         return await self.api_relations()
 
+    async def api_profile_delete(self):
+        """面板用：删掉一个人的档案，并把 amo 本地跟他有关的引用一起清干净。
+
+        清掉：profiles / memories / messages / proactive_log / relation_network、
+              他专属的 kv（channels:、last_channel:、节流、主动消息、纪念日…）、
+              礼物心愿与礼物墙、内存里的临时缓存。
+        不清（属于别处、要单独处理）：AstrBot 核心会话库 data_v4.db、牢记/livingmemory 的库。
+        """
+        await self._ensure_ready()
+        data = await self._body()
+        data = data if isinstance(data, dict) else {}
+        uid = str(data.get("uid") or self._q("uid", "") or "").strip()
+        confirm = str(data.get("confirm") or self._q("confirm", "") or "").strip().lower()
+        if not uid:
+            return {"code": 1, "msg": "缺少 uid"}
+        if confirm not in ("1", "true", "yes", "on"):
+            return {"code": 1, "msg": "删除档案需要确认：再带一次 confirm=1"}
+        profile = {}
+        try:
+            profile = self.db.get_profile(uid) or {}
+        except Exception:
+            profile = {}
+        umos = set()
+        for value in (profile.get("private_umo"), profile.get("last_group")):
+            if value:
+                umos.add(str(value))
+        try:
+            channels = self.db.kv_get("channels:%s" % uid, {}) or {}
+            if isinstance(channels, dict):
+                for entry in channels.values():
+                    if isinstance(entry, dict) and entry.get("umo"):
+                        umos.add(str(entry["umo"]))
+        except Exception:
+            pass
+        counts = {}
+        try:
+            for table in ("profiles", "memories", "messages", "proactive_log"):
+                try:
+                    cur = self.db.conn.execute("DELETE FROM %s WHERE uid=?" % table, (uid,))
+                    counts[table] = max(0, cur.rowcount or 0)
+                except Exception as exc:
+                    logger.debug("[amo] 删除档案时清理 %s 失败: %s" % (table, exc))
+            try:
+                cur = self.db.conn.execute(
+                    "DELETE FROM relation_network WHERE a_uid=? OR b_uid=?", (uid, uid)
+                )
+                counts["relation_network"] = max(0, cur.rowcount or 0)
+            except Exception as exc:
+                logger.debug("[amo] 删除档案时清理关系网失败: %s" % exc)
+            counts["kv"] = self._purge_profile_kv(uid)
+            try:
+                self.db.conn.commit()
+            except Exception:
+                pass
+        except Exception as exc:
+            return {"code": 1, "msg": "删除失败：%s" % exc}
+        gift = getattr(self, "gift", None)
+        if gift is not None:
+            try:
+                removed = gift.purge_user(uid, umos)
+                if removed:
+                    counts["gifts"] = removed
+            except Exception as exc:
+                logger.debug("[amo] 删除档案时清理礼物失败: %s" % exc)
+        try:
+            if str(getattr(self, "_last_umo", "") or "") in umos:
+                self._last_umo = ""
+            cache = getattr(self, "_last_reply_at", None)
+            if isinstance(cache, dict):
+                for umo in umos:
+                    cache.pop(umo, None)
+        except Exception:
+            pass
+        logger.info("[amo] 已删除档案 %s（清理 %s）" % (uid, counts))
+        return {"code": 0, "msg": "已删除", "data": {"uid": uid, "counts": counts}}
+
+    def _purge_profile_kv(self, uid):
+        """删掉这个 uid 专属的 kv（渠道/节流/主动消息/纪念日…），返回删除条数。"""
+        prefixes = (
+            "channels:", "last_channel:", "lover_uid_", "auto_learn_",
+            "angel_profile_sync_", "companion_profile_sync_", "memcomp_profile_sync_",
+            "proactive_ignored_", "proactive_depressed_until_",
+            "proactive_followup_last_", "proactive_forced_hour_", "proactive_pending_",
+        )
+        try:
+            rows = self.db.conn.execute("SELECT key FROM kv").fetchall()
+        except Exception:
+            return 0
+        keys = []
+        for row in rows:
+            try:
+                key = str(row["key"] if hasattr(row, "keys") else row[0])
+            except Exception:
+                continue
+            if any(key == prefix + uid for prefix in prefixes):
+                keys.append(key)
+            elif key.startswith("ritual_") and ("_" + uid + "_") in key:
+                keys.append(key)
+        if not keys:
+            return 0
+        try:
+            self.db.conn.executemany("DELETE FROM kv WHERE key=?", [(k,) for k in keys])
+        except Exception:
+            return 0
+        return len(keys)
+
     async def api_relation_delete(self):
         await self._ensure_ready()
         data = await self._body()
@@ -9534,6 +9642,8 @@ class HumanCorePlugin(Star):
                 return await self.api_profiles()
             if name in ("profile_save", "save_profile"):
                 return await self.api_profile_save()
+            if name in ("profile_delete", "delete_profile"):
+                return await self.api_profile_delete()
             if name in ("memories", "memory_list"):
                 return await self.api_memories()
             if name in ("memory_add", "add_memory"):

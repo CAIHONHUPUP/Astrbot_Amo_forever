@@ -474,6 +474,19 @@ class ManualGiftTests(unittest.TestCase):
         self.assertEqual(self.engine.manual_gift(FakeEvent(""), "围巾"), "")
         self.assertEqual(self.engine.stats()["gifts"], 0)
 
+    def test_purge_user_removes_wishes_and_gifts(self):
+        self.engine.manual_gift(FakeEvent(""), "围巾")
+        self.engine.add_wish("口红", "好想要那支口红", umo="u", uid=OWNER)
+        removed = self.engine.purge_user(OWNER)
+        self.assertEqual(removed, 2)
+        self.assertEqual(self.engine.stats()["gifts"], 0)
+        self.assertEqual(self.engine.recent_wishes(), [])
+
+    def test_purge_user_by_umo(self):
+        self.engine.add_wish("帽子", "好想要顶帽子", umo="chat:1", uid="")
+        self.assertEqual(self.engine.purge_user("", {"chat:1"}), 1)
+        self.assertEqual(self.engine.recent_wishes(), [])
+
     def test_manual_gift_bad_usage(self):
         self.assertIn("用法", self.engine.manual_gift(FakeEvent(""), ""))
 
