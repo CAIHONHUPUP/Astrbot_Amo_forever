@@ -2507,6 +2507,10 @@ class HumanState:
         else:
             geo_base = host + "/geo/v2"
         location = str(city)
+        if not location.isdigit():
+            hit = self._city_lookup(location)
+            if hit:
+                location = str(hit["id"])
         try:
             if not location.isdigit():
                 geo = await self._qweather_get(
@@ -2570,6 +2574,10 @@ class HumanState:
         else:
             geo_base = host + "/geo/v2"
         location = str(city)
+        if not location.isdigit():
+            hit = self._city_lookup(location)
+            if hit:
+                location = str(hit["id"])
         try:
             if not location.isdigit():
                 geo = await self._qweather_get(
@@ -2595,6 +2603,10 @@ class HumanState:
     async def refresh_weather(self, force=False):
         try:
             self.p._reload_config_if_changed()
+        except Exception:
+            pass
+        try:
+            self._sync_weather_city_config()
         except Exception:
             pass
         current = self.weather or {}
@@ -2645,7 +2657,8 @@ class HumanState:
             "name": self.p.persona_name or self.p.cfg_str("bot_name", "") or "陪伴",
             "age": 22,
             "city": (
-                self.p.cfg_str("weather_city", "").strip()
+                self.p.cfg_str("weather_city_name", "").strip()
+                or self.p.cfg_str("weather_city", "").strip()
                 or str((getattr(self, "schedule_profile", {}) or {}).get("city") or "").strip()
                 or "贵阳"
             ),
@@ -3447,7 +3460,11 @@ class LLMService:
         return {
             "name": str(data.get("name") or self.p.bot_name),
             "age": to_int(data.get("age"), 22),
-            "city": str(data.get("city") or self.p.cfg_str("weather_city", "贵阳")),
+            "city": str(
+                data.get("city")
+                or self.p.cfg_str("weather_city_name", "")
+                or self.p.cfg_str("weather_city", "贵阳")
+            ),
             "occupation": str(data.get("occupation") or "普通上班族"),
             "workplace": str(data.get("workplace") or "公司"),
             "personality": str(data.get("personality") or "温柔敏感"),
@@ -4117,7 +4134,11 @@ class HumanCorePlugin(Star):
             pass
         if not city:
             try:
-                city = str(self.cfg_str("weather_city", "") or "")
+                city = str(
+                    self.cfg_str("weather_city_name", "")
+                    or self.cfg_str("weather_city", "")
+                    or ""
+                )
             except Exception:
                 pass
         return dialect_for_city(city)
@@ -4376,6 +4397,10 @@ class HumanCorePlugin(Star):
                     self.state.set_period_start(start)
                 except Exception:
                     pass
+            try:
+                self._sync_weather_city_config()
+            except Exception:
+                pass
             logger.debug("[amo] 检测到插件配置变更，已重新加载")
         except Exception as exc:
             logger.debug("[amo] 重新加载插件配置失败: %s" % exc)
@@ -8284,7 +8309,8 @@ class HumanCorePlugin(Star):
         if not self.state.weather:
             self.state.weather = self.state._simulate_weather()
         desired_city = (
-            self.cfg_str("weather_city", "").strip()
+            self.cfg_str("weather_city_name", "").strip()
+            or self.cfg_str("weather_city", "").strip()
             or str((getattr(self.state, "schedule_profile", {}) or {}).get("city") or "").strip()
             or "贵阳"
         )
@@ -8804,6 +8830,8 @@ class HumanCorePlugin(Star):
             ("/memory_candidates", self.api_memory_candidates, ["GET"]),
             ("/profiles_sync", self.api_profiles_sync, ["GET", "POST"]),
             ("/config", self.api_config, ["GET"]),
+            ("/city/search", self.api_city_search, ["GET", "POST"]),
+            ("/city/set", self.api_city_set, ["GET", "POST"]),
             ("/usage", self.api_usage, ["GET"]),
             ("/providers", self.api_providers, ["GET"]),
             ("/providers_list", self.api_providers, ["GET"]),
@@ -9001,6 +9029,118 @@ class HumanCorePlugin(Star):
                 self.segment_engine = SegmentEngine(self.context, seg_config, plugin=self)
             except Exception as exc:
                 logger.error("[amo] 应用分段配置失败: %s" % exc)
+
+    # ---- 中文城市名 → LocationID（离线表，见 amo_city_index.py） ----
+    def _city_lookup(self, text):
+        """把「东莞」「北京朝阳」解析成 LocationID；失败返回 None。"""
+        try:
+            try:
+                from .amo_city_index import resolve_city
+            except Exception:
+                from amo_city_index import resolve_city
+            return resolve_city(text)
+        except Exception as exc:
+            logger.debug("[amo] 城市名解析失败: %s" % exc)
+            return None
+
+    def _sync_weather_city_config(self):
+        """配置里填了中文城市名时，自动换算并回填 LocationID（幂等）。"""
+        raw = self.cfg_str("weather_city", "").strip()
+        if not raw or raw.isdigit():
+            return False
+        hit = self._city_lookup(raw)
+        if not hit:
+            # 同一个错城市名每小时只提醒一次，避免后台 30 秒一轮刷日志
+            cache = getattr(self, "_city_warn_cache", None)
+            if not isinstance(cache, dict):
+                cache = {}
+                self._city_warn_cache = cache
+            now = time.time()
+            if now - to_float(cache.get(raw), 0) > 3600:
+                cache[raw] = now
+                logger.warning(
+                    "[amo] 城市名「%s」不在离线城市表里，天气会退回模拟数据；"
+                    "可以写「省+市」或直接填 LocationID" % raw
+                )
+            return False
+        changed = False
+        if str(hit["id"]) != raw:
+            self.config["weather_city"] = str(hit["id"])
+            changed = True
+        if not self.cfg_str("weather_city_name", "").strip():
+            self.config["weather_city_name"] = hit["name"]
+            changed = True
+        if changed:
+            try:
+                if hasattr(self.config, "save_config"):
+                    self.config.save_config()
+                logger.info("[amo] 城市「%s」→ LocationID %s（已回填）" % (raw, hit["id"]))
+            except Exception as exc:
+                logger.error("[amo] 回填城市配置失败: %s" % exc)
+        return changed
+
+    async def api_city_search(self):
+        """面板用：中文城市名候选。"""
+        await self._ensure_ready()
+        query = str(self._q("q", "") or "").strip()
+        if not query:
+            data = await self._body()
+            if isinstance(data, dict):
+                query = str(data.get("q") or "").strip()
+        if not query:
+            return {"code": 0, "data": {"items": [], "query": ""}}
+        try:
+            try:
+                from .amo_city_index import search_city
+            except Exception:
+                from amo_city_index import search_city
+            items = search_city(query, 20)
+        except Exception as exc:
+            return {"code": 1, "msg": "城市表读取失败：%s" % exc}
+        return {"code": 0, "data": {"items": items, "query": query}}
+
+    async def api_city_set(self):
+        """面板用：中文城市名 → 写入 weather_city(LocationID) + 城市显示名。"""
+        await self._ensure_ready()
+        data = await self._body()
+        data = data if isinstance(data, dict) else {}
+        text = str(data.get("city") or data.get("q") or "").strip()
+        if not text:
+            text = str(self._q("city", "") or "").strip()
+        if not text:
+            return {"code": 1, "msg": "请填写城市名"}
+        hit = self._city_lookup(text)
+        if not hit:
+            return {
+                "code": 1,
+                "msg": "没找到「%s」；重名或冷门地方请写「省+市」，例如「广东东莞」「北京朝阳」" % text,
+            }
+        save = False
+        if str(self.config.get("weather_city") or "") != str(hit["id"]):
+            self.config["weather_city"] = str(hit["id"])
+            save = True
+        if not data.get("keep_name"):
+            if self.cfg_str("weather_city_name", "").strip() != hit["name"]:
+                self.config["weather_city_name"] = hit["name"]
+                save = True
+        if save:
+            try:
+                if hasattr(self.config, "save_config"):
+                    self.config.save_config()
+            except Exception as exc:
+                return {"code": 1, "msg": "保存配置失败：%s" % exc}
+        weather = None
+        try:
+            weather = await self.state.refresh_weather(force=True)
+        except Exception as exc:
+            logger.debug("[amo] 切换城市后刷新天气失败: %s" % exc)
+        return {
+            "code": 0,
+            "data": {
+                "id": hit["id"], "name": hit["name"],
+                "label": hit["label"], "weather": weather or {},
+            },
+        }
 
     async def api_config(self):
         await self._ensure_ready()

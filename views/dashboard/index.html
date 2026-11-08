@@ -2059,6 +2059,88 @@
       return wrap;
     }
 
+    // ---- 天气城市：填中文，自动写入 LocationID ----
+    let citySearchTimer = null;
+    async function searchCityOptions(query) {
+      const list = document.getElementById("amoCityOptions");
+      if (!list) return;
+      list.textContent = "";
+      if (!query) return;
+      try {
+        const result = objectFrom(await call("city/search", { q: query })) || {};
+        (Array.isArray(result.items) ? result.items : []).slice(0, 20).forEach((item) => {
+          const option = document.createElement("option");
+          option.value = item.id;
+          option.label = (item.label || "") + " " + (item.name || "");
+          list.appendChild(option);
+        });
+      } catch (error) {}
+    }
+
+    function buildCityRow() {
+      const row = document.createElement("div");
+      row.className = "setting-row";
+      const left = document.createElement("div");
+      const name = document.createElement("div");
+      name.className = "name";
+      name.textContent = "天气城市（中文）";
+      const current = configItems.find((item) => item.key === "weather_city") || {};
+      const currentName = configItems.find((item) => item.key === "weather_city_name") || {};
+      const hint = document.createElement("div");
+      hint.className = "hint";
+      hint.textContent = "填「东莞」点设置，自动写成 LocationID 并回填城市显示名；重名写「北京朝阳」。当前："
+        + (current.value
+          ? (currentName.value ? currentName.value + "（" + current.value + "）" : current.value)
+          : "跟随日程城市");
+      left.appendChild(name);
+      left.appendChild(hint);
+      row.appendChild(left);
+
+      const control = document.createElement("div");
+      control.className = "control";
+      const input = document.createElement("input");
+      input.className = "input";
+      input.style.flex = "1";
+      input.style.minWidth = "0";
+      input.placeholder = "东莞 / 北京朝阳 / 深圳南山";
+      input.setAttribute("list", "amoCityOptions");
+      const list = document.createElement("datalist");
+      list.id = "amoCityOptions";
+      const button = document.createElement("button");
+      button.textContent = "设置";
+      button.style.marginLeft = "6px";
+      const apply = async () => {
+        const value = (input.value || "").trim();
+        if (!value) { toast("先填城市名", true); return; }
+        try {
+          const result = objectFrom(await call("city/set", { city: value })) || {};
+          configItems.forEach((item) => {
+            if (item.key === "weather_city") item.value = result.id;
+            if (item.key === "weather_city_name") item.value = result.name;
+          });
+          input.value = "";
+          toast("已切到 " + (result.name || result.id) + "（" + result.id + "）");
+          renderSettings();
+        } catch (error) {
+          toast(error.message || "设置失败", true);
+        }
+      };
+      input.addEventListener("input", () => {
+        clearTimeout(citySearchTimer);
+        const value = (input.value || "").trim();
+        citySearchTimer = setTimeout(() => searchCityOptions(value), 220);
+      });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") { event.preventDefault(); apply(); }
+      });
+      button.addEventListener("click", apply);
+      control.appendChild(input);
+      control.appendChild(button);
+      control.appendChild(list);
+      row.appendChild(control);
+      return row;
+    }
+
     function renderSettings() {
       const box = document.getElementById("settingsList");
       box.textContent = "";
@@ -2106,6 +2188,7 @@
         themeRow.appendChild(control);
         box.appendChild(themeRow);
       }
+      if (activeGroup === "基础" && !term) box.appendChild(buildCityRow());
       if (!items.length) {
         if (activeGroup !== "基础") box.textContent = "这个分组没有匹配的配置";
         return;
