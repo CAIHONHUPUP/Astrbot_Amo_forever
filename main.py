@@ -131,6 +131,14 @@ except Exception:
         first_person_experience = attribution_leak = leak_tokens = None
 
 try:
+    from .relation_learn import parse_relations
+except Exception:
+    try:
+        from relation_learn import parse_relations
+    except Exception:
+        parse_relations = None
+
+try:
     from .schedule_engine import ScheduleEngine
 except Exception:
     try:
@@ -149,7 +157,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.9.8"
+PLUGIN_VERSION = "6.0.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -4698,6 +4706,11 @@ class HumanCorePlugin(Star):
             profile["is_admin"] = 1
 
         self.state.observe(text)
+        if self.cfg_bool("auto_relation", True):
+            try:
+                await self._learn_relations(event, text, uid)
+            except Exception as exc:
+                logger.debug("[amo] 关系自动识别失败: %s" % exc)
         # 上下文先进内存；本地缓存默认关掉，原始聊天交给记忆终端
         self._ctx_remember(umo, uid, name, "user", text)
         if self.cfg_bool("local_chat_cache", False):
@@ -7279,6 +7292,58 @@ class HumanCorePlugin(Star):
             await self._handle_message(event)
         except Exception:
             logger.exception("[amo] 消息处理异常")
+
+    async def _learn_relations(self, event, text, uid):
+        """从对话里认关系：他说「小明是我同事」就记一条边。
+
+        只认明确陈述 + 能在画像里唯一定位到人；管理员手动设过的不覆盖。
+        """
+        if parse_relations is None or not text or not uid:
+            return
+        try:
+            pairs = parse_relations(text)
+        except Exception:
+            return
+        if not pairs:
+            return
+        name_map = {}
+        try:
+            for item in self.db.list_profiles(limit=500):
+                for key in ("name", "alias"):
+                    raw = str(item.get(key) or "").strip()
+                    if not raw:
+                        continue
+                    for piece in re.split(r"[;；,，、/|]", raw):
+                        name = piece.strip()
+                        if len(name) >= 2:
+                            name_map.setdefault(name, set()).add(str(item.get("uid") or ""))
+        except Exception:
+            return
+        try:
+            existing = {}
+            for edge in self.db.list_relations():
+                pair = tuple(sorted([str(edge.get("a_uid") or ""), str(edge.get("b_uid") or "")]))
+                existing[pair] = str(edge.get("note") or "")
+        except Exception:
+            existing = {}
+        for who, relation, evidence in pairs:
+            targets = [item for item in name_map.get(who, set()) if item and item != str(uid)]
+            if len(targets) != 1:
+                continue
+            target = targets[0]
+            pair = tuple(sorted([str(uid), target]))
+            old_note = existing.get(pair, "")
+            if old_note and not old_note.startswith("对话："):
+                # 管理员手动设过的关系，不拿聊天内容覆盖
+                continue
+            note = "对话：" + truncate(evidence, 24)
+            try:
+                if not self.db.upsert_relation(uid, target, relation, note):
+                    continue
+                logger.info("[amo] 关系网自动记录: %s --%s--> %s" % (uid, relation, target))
+                await self._push_relation_to_data(uid, target, relation, note)
+            except Exception as exc:
+                logger.debug("[amo] 自动关系写入失败: %s" % exc)
 
     def _relation_network_text(self, uid):
         """给当前用户生成两跳内的关系网摘要；只读。"""
