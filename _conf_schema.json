@@ -1019,5 +1019,29 @@
     "type": "float",
     "description": "输出单价（空闲）",
     "default": 4
+  },
+  "uid_merge_enabled": {
+    "type": "bool",
+    "description": "跨平台账号合并（飞书/QQ 认成同一个人）",
+    "hint": "开启后按 uid_alias_map / uid_map.json 把其它平台账号并到主 uid；开启瞬间会把旧档案、记忆、关系、称呼一次性并过来。关掉即恢复原生行为。",
+    "default": true
+  },
+  "uid_alias_map": {
+    "type": "string",
+    "description": "跨平台账号映射（JSON）",
+    "hint": "例如 {\"ou_cec66ea605ad17f62632fb044bc5f6ac\": \"302578963\"}；留空则读数据目录下的 uid_map.json。改完即时生效，无需重启。",
+    "default": ""
+  },
+  "proactive_rotate_enabled": {
+    "type": "bool",
+    "description": "主动消息跨平台轮换",
+    "hint": "开启后按最近说话的平台选边，都冷了就轮流；发送失败会自动改发另一个平台。关掉则只发最后说话的那个平台。",
+    "default": true
+  },
+  "proactive_recent_minutes": {
+    "type": "int",
+    "description": "主动消息选边窗口（分钟）",
+    "hint": "最近这么多分钟内在哪个平台说过话就发哪边，默认 30。",
+    "default": 30
   }
 }
