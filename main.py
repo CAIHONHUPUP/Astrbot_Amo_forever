@@ -133,7 +133,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.8.2"
+PLUGIN_VERSION = "5.8.4"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -5302,23 +5302,32 @@ class HumanCorePlugin(Star):
     # ---------- 配套数据插件（Astr_Amo_data / 我想永远记住你） ----------
     DATA_PLUGIN_NAMES = ("Astr_Amo_data", "astrbot_plugin_amo_data", "AstrAmoData")
 
+    @staticmethod
+    def _star_instance(meta):
+        """AstrBot 不同版本把实例放在 star_cls / instance / star 上，挨个试。"""
+        if meta is None:
+            return None
+        for attr in ("star_cls", "instance", "star", "plugin"):
+            value = getattr(meta, attr, None)
+            if value is not None and hasattr(value, "mem"):
+                return value
+        return None
+
     def _data_plugin(self):
         """找「我想永远记住你」插件实例；没装就返回 None。"""
         try:
             for name in self.DATA_PLUGIN_NAMES:
-                meta = self.context.get_registered_star(name)
-                star = getattr(meta, "star_cls", None) if meta is not None else None
-                if star is not None and getattr(star, "mem", None) is not None:
+                star = self._star_instance(self.context.get_registered_star(name))
+                if star is not None:
                     return star
         except Exception:
             pass
         try:
             for meta in self.context.get_all_stars():
-                star = getattr(meta, "star_cls", None)
-                if star is not None and getattr(star, "mem", None) is not None:
-                    marker = (getattr(meta, "name", "") or "") + " " + (getattr(meta, "module_path", "") or "")
-                    if "amo_data" in marker.lower():
-                        return star
+                marker = (getattr(meta, "name", "") or "") + " " + (getattr(meta, "module_path", "") or "")
+                star = self._star_instance(meta)
+                if star is not None and "amo_data" in marker.lower():
+                    return star
         except Exception:
             pass
         return None
@@ -5370,7 +5379,13 @@ class HumanCorePlugin(Star):
         """启动时双向同步：首次把本地画像/关系/日程缓存推过去，之后以插件为准补齐本地。"""
         mem = self._data_mem()
         if mem is None:
+            if not getattr(self, "_data_missing_logged", False):
+                self._data_missing_logged = True
+                logger.info("[amo] 未检测到数据插件 Astr_Amo_data，继续用本地库（装好后面板数据为空是正常的）")
             return
+        if not getattr(self, "_data_found_logged", False):
+            self._data_found_logged = True
+            logger.info("[amo] 已连接数据插件 Astr_Amo_data，开始同步")
         bot_id = self._data_bot_id()
         marker = "data_plugin_migrated_" + bot_id
         migrated = bool(self.db.kv_get(marker, False))
