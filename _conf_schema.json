@@ -16,6 +16,12 @@
     "description": "提醒时间（HH:MM）",
     "default": "20:00"
   },
+  "weather_alert_morning_time": {
+    "type": "string",
+    "description": "早上的判断时间（HH:MM，留空就不做早上那次判断）",
+    "hint": "一天只在早上和晚上各判断一次：早上只判断、不发消息；晚上 weather_alert_time 到了才真的发预报（跳过缓存用最新一份）。",
+    "default": "08:00"
+  },
   "weather_alert_temp_drop": {
     "type": "int",
     "description": "降温多少度算变坏",
@@ -25,6 +31,12 @@
     "type": "bool",
     "description": "天气提醒只写日志不发送（调试用）",
     "default": false
+  },
+  "weather_query_enabled": {
+    "type": "bool",
+    "description": "他问天气时如实读天气",
+    "hint": "开：他问“现在天气/明天要带伞吗/降温没”时，用缓存里的现在天气（30 分钟）和明天预报（3 小时）答，不会额外浪费和风额度。",
+    "default": true
   },
   "hefeng_key": {
     "type": "string",
