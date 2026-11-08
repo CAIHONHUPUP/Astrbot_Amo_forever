@@ -6502,12 +6502,13 @@ class HumanCorePlugin(Star):
 
     async def _dynamic_context(self, event):
         await self._sync_persona_name(event)
+        umo = event.unified_msg_origin
         uid = self._canonical_uid(event)
         profile = self.db.get_profile(uid)
         relation = profile.get("relation", "普通")
         snap = self.state.snapshot()
         _, memory_text = self._recall(uid, event.message_str or "")
-        self_name, self_uid, self_qq_nick = await self._self_identity(event)
+        self_name, self_uid, self_qq_nick, self_display = await self._self_identity(event)
         alias = str(profile.get("alias") or "").strip()
         sender_nick = str(event.get_sender_name() or profile.get("name") or uid).strip()
         parts = [
