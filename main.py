@@ -4176,6 +4176,9 @@ class HumanCorePlugin(Star):
             return ""
 
     async def _dialect_kb_context(self, query):
+        # 关掉方言就别再检索方言库：不查不注入，省一次 embedding 查询和一段提示词
+        if not self.cfg_bool("dialect_enabled", True):
+            return ""
         try:
             manager = getattr(self.context, "kb_manager", None)
             if manager is None or not str(query or "").strip():
