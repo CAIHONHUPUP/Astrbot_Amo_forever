@@ -5633,7 +5633,6 @@ class HumanCorePlugin(Star):
                 )
                 if reply:
                     await self._send_to_umo(umo, reply)
-                    self.db.add_message(umo, str(event.get_self_id()), self.bot_name, "bot", reply)
             except asyncio.CancelledError:
                 return
             except Exception as exc:
@@ -5927,6 +5926,15 @@ class HumanCorePlugin(Star):
                 await self.context.send_message(umo, MessageChain(chain))
             except Exception as exc:
                 logger.warning("[amo] 主动发送失败: %s" % exc)
+                if index > 0:
+                    # 前面的分段已经发出去了，返回 True，别让换边逻辑整段重发
+                    partial = "\n".join(segments[:index])
+                    try:
+                        self.db.add_message(umo, "bot", self.bot_name, "bot", partial)
+                    except Exception:
+                        pass
+                    self._last_reply_at[umo] = now_ts()
+                    return True
                 return False
             last_sent_at = time.monotonic()
         self._last_reply_at[umo] = now_ts()
@@ -6536,10 +6544,6 @@ class HumanCorePlugin(Star):
                     self._mark_bot_initiated(umo)
                     self.db.kv_set(daily_key, True)
                     self.db.log_proactive(uid, kind, text)
-                    try:
-                        self.db.add_message(umo, "bot", self.bot_name, "bot", text)
-                    except Exception:
-                        pass
                     logger.info("[amo] 每日问候(%s) -> %s: %s" % (kind, name, text[:200]))
                     break
 
@@ -6633,10 +6637,6 @@ class HumanCorePlugin(Star):
                 self.db.log_proactive(profile["uid"], kind, text)
                 self._set_proactive_pending(profile["uid"], kind, text)
                 self._last_proactive_activity[str(profile.get("uid"))] = today_str() + ":" + str(datetime.now().hour)
-                self.db.add_message(
-                    profile["private_umo"], str(self.context.get_config().get("bot_id", "bot")),
-                    self.bot_name, "bot", text,
-                )
                 logger.debug("[amo] 主动私聊 -> %s (%s)" % (profile.get("name", ""), kind))
 
     # ---------- 指令 ----------
