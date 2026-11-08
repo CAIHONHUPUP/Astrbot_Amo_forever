@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import os
 import re
 import threading
@@ -467,6 +468,15 @@ class GiftEngine:
         except Exception:
             return default
 
+    def _float(self, key, default=0.0):
+        try:
+            fn = getattr(self.plugin, "cfg_float", None)
+            if callable(fn):
+                return float(fn(key, default))
+            return float(self.plugin.cfg_str(key, default) or default)
+        except Exception:
+            return float(default)
+
     def _str(self, key, default=""):
         try:
             return str(self.plugin.cfg_str(key, default))
@@ -504,11 +514,12 @@ class GiftEngine:
         return "valuable"
 
     def asset_text(self, limit=6):
+        """他送的大件：车、房，以及其他奢侈品（字画/首饰/包表）。"""
         if not self.big_allowed:
             return ""
         goods = [
             gift for gift in self.recent_gifts(limit=50)
-            if gift.get("kind") in ("vehicle", "home")
+            if gift.get("kind") in ("vehicle", "home", "luxury")
         ]
         return "、".join(str(gift.get("item") or "") for gift in goods[:max(1, int(limit))] if gift.get("item"))
 
@@ -699,6 +710,8 @@ class GiftEngine:
             data = {}
         data.setdefault("wishes", [])
         data.setdefault("gifts", [])
+        if not isinstance(data.get("meta"), dict):
+            data["meta"] = {}
         self._data = data
         return data
 
@@ -922,35 +935,93 @@ class GiftEngine:
                     return hint
             except Exception as exc:
                 logger.debug("[amo] 礼物识别失败: %s" % exc)
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
         parts = []
-        self._maybe_shop_hint(str(getattr(event, "unified_msg_origin", "") or ""), parts)
-        if self._asks_about_wishes(text):
-            wishes = self._wish_list_text()
-            if wishes:
-                parts.append(WISH_HINT.format(items=wishes))
-        if self._wall_topic(text):
-            wall = self._wall_text()
-            if wall:
-                parts.append(GIFT_WALL_HINT.format(items=wall))
-        if self._asset_topic(text):
-            parts.append(GIFT_BOUNDARY_HINT)
-            assets = self.asset_text()
-            if assets:
-                parts.append(ASSET_HINT.format(items=assets))
-        affordance = self._affordance_hint(text)
-        if affordance:
-            parts.append(affordance)
-        return "\n\n".join(parts)
+
+        def _add(piece):
+            piece = (piece or "").strip()
+            if piece and piece not in parts:
+                parts.append(piece)
+
+        # 每块单独兜异常：某一块挂了不影响其它块，也不至于整段礼物提示丢掉
+        try:
+            shop = []
+            self._maybe_shop_hint(umo, shop)
+            for piece in shop:
+                _add(piece)
+        except Exception as exc:
+            logger.debug("[amo] 逛街提示失败: %s" % exc)
+        try:
+            if self._asks_about_wishes(text):
+                wishes = self._wish_list_text()
+                if wishes:
+                    _add(WISH_HINT.format(items=wishes))
+        except Exception as exc:
+            logger.debug("[amo] 心愿提示失败: %s" % exc)
+        try:
+            if self._wall_topic(text):
+                wall = self._wall_text()
+                if wall:
+                    _add(GIFT_WALL_HINT.format(items=wall))
+        except Exception as exc:
+            logger.debug("[amo] 礼物墙提示失败: %s" % exc)
+        try:
+            if self._asset_topic(text):
+                _add(GIFT_BOUNDARY_HINT)
+                assets = self.asset_text()
+                if assets:
+                    _add(ASSET_HINT.format(items=assets))
+        except Exception as exc:
+            logger.debug("[amo] 大件提示失败: %s" % exc)
+        try:
+            _add(self._affordance_hint(text))
+        except Exception as exc:
+            logger.debug("[amo] 礼物具现化提示失败: %s" % exc)
+        joined = "\n\n".join(parts)
+        if len(joined) > 600:
+            joined = joined[:600].rstrip() + "…"
+        return joined
 
     def _maybe_shop_hint(self, umo, parts):
-        """逛街时偶尔提醒她可以提一句看到的小东西；有未完成心愿就不提。"""
+        """逛街时**偶尔**才提醒一句：不是每次逛街都有看中的东西。
+
+        - 按 gift_shop_hint_chance（默认 0.35）抽，抽不中不吃冷却；
+        - 两次至少隔 gift_shop_hint_gap_hours（默认 6 小时）；
+        - 每天最多 gift_shop_hint_max_per_day（默认 1 次）；
+        - 有没送出去的心愿就不提；状态写进 gifts.json 的 meta，重载不重置。
+        """
         if not self._bool("gift_only_shopping", True):
             return
-        if not self.is_shopping() or self.recent_wishes(limit=1):
+        if not self.is_shopping():
+            return
+        try:
+            if self.recent_wishes(limit=1):
+                return
+        except Exception:
             return
         now = time.time()
-        if now - float(self._last_shop_hint.get(umo, 0) or 0) < 3600:
-            return
+        with self._lock:
+            meta = self._load().setdefault("meta", {})
+            shop = meta.get("shop_hint")
+            if not isinstance(shop, dict):
+                shop = {}
+                meta["shop_hint"] = shop
+            day = time.strftime("%Y-%m-%d", time.localtime(now))
+            if str(shop.get("day") or "") != day:
+                shop["day"] = day
+                shop["count"] = 0
+            gap = max(0.25, float(self._int("gift_shop_hint_gap_hours", 6))) * 3600.0
+            if now - float(shop.get("ts") or 0) < gap:
+                return
+            cap = max(0, self._int("gift_shop_hint_max_per_day", 1))
+            if cap and int(shop.get("count") or 0) >= cap:
+                return
+            chance = min(1.0, max(0.0, self._float("gift_shop_hint_chance", 0.35)))
+            if chance < 1.0 and random.random() >= chance:
+                return
+            shop["ts"] = now
+            shop["count"] = int(shop.get("count") or 0) + 1
+            self._save()
         self._last_shop_hint[umo] = now
         parts.append(SHOPPING_HINT)
 
@@ -1276,17 +1347,65 @@ class GiftEngine:
         return "\n".join(lines)
 
     def manual_gift(self, event, item):
+        """命令/面板手动送礼：走和聊天送礼同一套检查（开关/大件/吃的/拿不到/送过的）。"""
+        if not self.enabled:
+            return ""
         item = clean_item(item or "")
         if not valid_item(item):
             return "用法：/送礼 一条围巾"
-        gift = self.add_gift(
-            item=item, raw="命令送礼",
-            umo=str(getattr(event, "unified_msg_origin", "") or ""),
-            uid=self._uid(event), source="command",
-        )
+        kind = self.classify(item)
+        if any(word in item for word in FOOD_WORDS):
+            return GIFT_FOOD_HINT.format(raw=item[:120], item=item)
+        if any(word in item for word in IMPOSSIBLE_WORDS):
+            return GIFT_IMPOSSIBLE_HINT.format(raw=item[:120], item=item)
+        if kind in ("vehicle", "home", "luxury") and not self.big_allowed:
+            logger.info("[amo] 命令送礼：大件默认不收: %s" % item)
+            return GIFT_TOO_EXPENSIVE_HINT.format(raw=item[:120], item=item)
+        similar = self._recent_gift_like(item)
+        if similar:
+            return GIFT_ALREADY_HINT.format(item=similar.get("item") or item)
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        uid = self._uid(event)
+        gift = self.add_gift(item=item, raw="命令送礼", umo=umo, uid=uid, source="command")
         if not gift:
             return "这个没记住（名字太短或者不像个东西）。"
+        self._just_gifted[umo] = time.time()
+        kind = gift.get("kind") or kind
+        self._nudge_mood(kind)
+        self._remember_gift(uid, gift.get("item") or item, kind)
+        logger.info("[amo] 记下礼物（命令）: %s（%s）" % (gift.get("item"), kind))
         return "记下了：她收到了「%s」。下次聊天她会知道是你送的。" % gift.get("item", item)
+
+    def purge_user(self, uid="", umos=()):
+        """删掉某个人的心愿和礼物（按 uid 或会话地址匹配），返回删除条数。"""
+        uid = str(uid or "").strip()
+        umos = {str(item) for item in (umos or ()) if item}
+        if not uid and not umos:
+            return 0
+        with self._lock:
+            data = self._load()
+
+            def _keep(entry):
+                if uid and str(entry.get("uid") or "") == uid:
+                    return False
+                if umos and str(entry.get("umo") or "") in umos:
+                    return False
+                return True
+
+            before = len(data["wishes"]) + len(data["gifts"])
+            data["wishes"] = [item for item in data["wishes"] if _keep(item)]
+            data["gifts"] = [item for item in data["gifts"] if _keep(item)]
+            removed = before - (len(data["wishes"]) + len(data["gifts"]))
+            if removed:
+                self._save()
+            for umo in umos:
+                for cache in (self._bot_tail, self._user_tail, self._just_gifted,
+                              self._seen_gift, self._last_shop_hint):
+                    try:
+                        cache.pop(umo, None)
+                    except Exception:
+                        pass
+        return max(0, removed)
 
     # ---------- 任务 ----------
     def _spawn(self, coro):

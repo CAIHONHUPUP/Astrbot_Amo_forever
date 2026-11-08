@@ -195,7 +195,9 @@
     .relation-form .input { width: 100%; }
     .relation-form button { width: 100%; }
     .stack-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
-    .stack-actions button { width: 100%; font-size: 12px; padding: 9px 10px; }
+    .stack-actions button { width: 100%; font-size: 12px; padding: 9px 10px; text-align: left; min-height: 36px; line-height: 1.2; }
+    .stack-actions .danger, .stack-actions .danger:focus { background: var(--card); border-color: var(--line); color: var(--pink2); }
+    .stack-actions .danger:hover { background: var(--hover); border-color: var(--line); color: var(--pink2); }
     .template-list { display: flex; flex-direction: column; gap: 8px; }
     .template-card { border: 1px solid var(--line); border-radius: 10px; padding: 9px; display: flex; flex-direction: column; gap: 7px; }
     .template-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text); }
@@ -436,6 +438,7 @@
         <div class="stack-actions">
           <button id="btnSaveProfile">保存画像</button>
           <button id="btnLoadMemories">聊天记录</button>
+          <button id="btnDeleteProfile" class="danger">删除画像</button>
         </div>
         <div id="profileMemories" class="memory-list"></div>
       </section>
@@ -553,6 +556,7 @@
         <div class="row" style="gap:8px;align-items:center;">
           <span class="label">语种</span>
           <select id="worldDialect" class="input grow">
+            <option value="普通话">普通话（关闭方言）</option>
             <option value="贵州话">贵州话</option>
             <option value="东北话">东北话</option>
             <option value="四川话">四川话</option>
@@ -1230,11 +1234,15 @@
     document.getElementById("worldDialect").addEventListener("change", async (event) => {
       const select = event.currentTarget;
       const value = select.value;
+      const plain = value === "普通话";
       select.disabled = true;
       try {
-        const result = await call("config_save", { changes: { dialect_style: value } });
+        const changes = plain
+          ? { dialect_style: "普通话", dialect_enabled: false, create_dialect_kb: false }
+          : { dialect_style: value, dialect_enabled: true, create_dialect_kb: true };
+        const result = await call("config_save", { changes });
         if (result && result.code && result.code !== 0) throw new Error(result.msg || "切换失败");
-        toast("语种已切换：" + value + "，建议重建语种库");
+        toast(plain ? "已切到普通话：方言已关闭（不再查方言库）" : "语种已切换：" + value);
       } catch (error) {
         toast("切换失败：" + (error.message || error), true);
       } finally {
@@ -1245,11 +1253,15 @@
       const button = event.currentTarget;
       const select = document.getElementById("worldDialect");
       const style = select ? select.value : "贵州话";
+      if (style === "普通话") {
+        toast("普通话不需要方言库：已保持关闭");
+        return;
+      }
       const old = button.textContent;
       button.disabled = true;
       button.textContent = "重建中…";
       try {
-        const saved = await call("config_save", { changes: { dialect_style: style } });
+        const saved = await call("config_save", { changes: { dialect_style: style, dialect_enabled: true } });
         if (saved && saved.code && saved.code !== 0) throw new Error(saved.msg || "保存语种失败");
         const result = await call("kb_regen", { dialect_style: style });
         if (result && result.code && result.code !== 0) throw new Error(result.msg || "重建失败");
@@ -1709,6 +1721,7 @@
       document.getElementById("profileMemories").textContent = "";
       document.getElementById("profileListCard").hidden = true;
       document.getElementById("profileEditor").hidden = false;
+      document.getElementById("btnDeleteProfile").hidden = !profile.uid;
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
 
@@ -1725,6 +1738,7 @@
       document.getElementById("profileMemories").textContent = "";
       document.getElementById("profileListCard").hidden = true;
       document.getElementById("profileEditor").hidden = false;
+      document.getElementById("btnDeleteProfile").hidden = true;
       window.scrollTo({ top: 0, behavior: "smooth" });
     });
 
@@ -1752,6 +1766,24 @@
         await loadProfiles();
       } catch (error) {
         toast("保存失败：" + (error.message || error), true);
+      }
+    });
+
+    document.getElementById("btnDeleteProfile").addEventListener("click", async () => {
+      const uid = (currentProfileUid || document.getElementById("pUid").value || "").trim();
+      if (!uid) { toast("还没有选中档案", true); return; }
+      const name = document.getElementById("pName").value || uid;
+      if (!window.confirm("删除画像「" + name + "」？\n会一起删掉他的档案、消息、主动消息记录、渠道标记和礼物心愿，不可恢复。")) return;
+      try {
+        const result = await call("profile_delete", { uid, confirm: 1 });
+        const counts = (result && result.data && result.data.counts) || {};
+        toast("已删除（清理 " + Object.entries(counts).map(([k, v]) => k + " " + v).join("、") + "）");
+        currentProfileUid = "";
+        document.getElementById("profileEditor").hidden = true;
+        document.getElementById("profileMemories").textContent = "";
+        loadProfiles();
+      } catch (error) {
+        toast("删除失败：" + (error.message || error), true);
       }
     });
 
@@ -1884,7 +1916,6 @@
 
     const OPTION_LABELS = {
       reply_style: { soft: "温柔", cool: "清冷", lively: "活泼", mature: "成熟" },
-      memory_source: { auto: "自动（自动检测记忆插件）", companion: "只用选定的记忆插件" },
       seg_delay_type: {
         dynamic: "按字数动态", smart: "智能（动态+标点）",
         per_char: "按字数", random: "区间随机", fixed: "固定间隔",
@@ -2089,6 +2120,35 @@
           const missing = document.createElement("option");
           missing.value = current;
           missing.textContent = current + "（已配置但未检测到）";
+          input.appendChild(missing);
+        }
+        input.value = current;
+      } else if (item.special === "select_memory_plugin") {
+        input = document.createElement("select");
+        input.className = "input";
+        const auto = document.createElement("option");
+        auto.value = "auto";
+        auto.textContent = "自动检测（优先可用的记忆插件）";
+        input.appendChild(auto);
+        memoryCandidates.forEach((plugin) => {
+          const name = String(plugin.name || "");
+          if (!name) return;
+          const node = document.createElement("option");
+          node.value = name;
+          const label = plugin.display_name && plugin.display_name !== name
+            ? plugin.display_name + "（" + name + "）"
+            : name;
+          node.textContent = label
+            + (plugin.ready ? " · 可读记忆" : "")
+            + (plugin.activated === false ? " · 未启用" : "")
+            + (plugin.users ? " · " + plugin.users + " 人" : "");
+          input.appendChild(node);
+        });
+        const current = String(item.value || "auto");
+        if (current !== "auto" && !Array.from(input.options).some((node) => node.value === current)) {
+          const missing = document.createElement("option");
+          missing.value = current;
+          missing.textContent = current + "（已配置但未安装）";
           input.appendChild(missing);
         }
         input.value = current;
@@ -2298,6 +2358,20 @@
       });
     }
 
+    let memoryPluginsLoaded = false;
+
+    async function ensureMemoryPlugins(force) {
+      if (memoryPluginsLoaded && !force) return memoryCandidates;
+      try {
+        const result = objectFrom(await call("memory_candidates")) || {};
+        memoryCandidates = Array.isArray(result.items) ? result.items : [];
+      } catch (error) {
+        memoryCandidates = [];
+      }
+      memoryPluginsLoaded = true;
+      return memoryCandidates;
+    }
+
     let providersCache = [];
 
     async function ensureProviders(force) {
@@ -2317,6 +2391,7 @@
         const data = objectFrom(result);
         configItems = Array.isArray(data.items) ? data.items : [];
         if (configItems.some((item) => item.special === "select_provider")) await ensureProviders();
+        if (configItems.some((item) => item.special === "select_memory_plugin")) await ensureMemoryPlugins();
         renderSettings();
       } catch (error) {
         document.getElementById("settingsList").textContent = "读取配置失败：" + (error.message || error);

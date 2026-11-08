@@ -133,7 +133,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.5.0"
+PLUGIN_VERSION = "5.6.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -743,17 +743,54 @@ def segment_text(text, keep_punc=True, min_len=6, max_len=42, max_segments=4,
 
 
 AI_ADMISSION_RE = re.compile(
-    r"(?:我是|作为|毕竟|我们|本人|本机)\s*(?:AI|人工智能|机器人|人机|程序|模型)"
+    r"(?:我是|作为|毕竟|本人|本机)\s*(?:AI|人工智能|机器人|人机|程序|模型)"
     r"|(?:只是|不过是|就是个|只是个)\s*(?:AI|人工智能|机器人|人机|程序|模型)"
-    r"|(?:我|咱|我们)[^。！？]{0,8}(?:AI|人工智能|机器人|人机|程序|模型)"
     r"|人机(?:也|当然|本来|就是)"
-    r"|不是真人|虚拟(?:人|角色|存在)",
+    r"|不是真人|虚拟(?:人|角色|存在)"
+    r"|(?:我|咱|我们)(?:其实|本质上|说到底|严格来说)?(?:就是|不过是|只是个)"
+    r"\s*(?:AI|人工智能|机器人|人机|程序|语言模型|大模型)",
     re.I,
 )
 
 
 def looks_like_ai_admission(text):
     return bool(AI_ADMISSION_RE.search(str(text or "")))
+
+
+# 她不能报后台：模型名、厂商、插件名、API、提示词这类都不该出现在聊天里
+MODEL_LEAK_RE = re.compile(
+    r"(?:deepseek|openai|anthropic|claude|gemini|chatgpt|gpt-?[0-9]|qwen|通义|千问|"
+    r"glm|chatglm|智谱|moonshot|kimi|doubao|豆包|ernie|文心|hunyuan|混元|llama|mistral|"
+    r"grok|sonnet|opus|haiku|dp-?[0-9]|llm|大模型|语言模型|模型名称|api\s*key|"
+    r"token|提示词|prompt|system\s*prompt|插件|astrbot)",
+    re.I,
+)
+
+
+TECH_TALK_RE = re.compile(
+    r"(?:接入|接的|用的|部署|开源|代码|接口|api|sdk|token|prompt|提示词|上下文|"
+    r"模型|llm|大模型|微调|参数|插件|框架|astrbot|napcat|onebot|qwen|deepseek|"
+    r"gpt|claude|gemini|glm|kimi|豆包|通义|智谱|本地部署|显卡|显存|跑得动)",
+    re.I,
+)
+
+
+def looks_like_tech_talk(text):
+    """群友是不是在聊技术/模型/接入这类话题（不代表在质疑她）。"""
+    return bool(TECH_TALK_RE.search(str(text or "")))
+
+
+def looks_like_model_leak(text):
+    """回复里有没有把模型名/厂商/插件/API 这类后台信息说出来。"""
+    raw = str(text or "")
+    if not raw:
+        return False
+    # 只有短回答或带“模型/接/用/是”这类上下文才算泄漏，避免误伤正常聊天
+    if not MODEL_LEAK_RE.search(raw):
+        return False
+    if len(re.sub(r"\s+", "", raw)) > 60:
+        return False
+    return True
 
 
 def typing_delay_ms(text, base=700, per_char=400, cap=20000):
@@ -2752,7 +2789,7 @@ class HumanState:
                 "city": fallback_city,
                 "home": self.p.cfg_str("schedule_home", "") or profile.get("home") or "家",
                 "workplace": self.p.cfg_str("schedule_workplace", "") or profile.get("workplace") or "公司",
-                "car": self.p.cfg_str("schedule_car", "") or profile.get("car") or "",
+                "car": profile.get("car") or "",
                 "mood": dict(self.mood),
                 "period": period,
                 "health": health,
@@ -2818,7 +2855,7 @@ class HumanState:
             "city": city,
             "home": self.p.cfg_str("schedule_home", "") or profile.get("home") or "家",
             "workplace": self.p.cfg_str("schedule_workplace", "") or profile.get("workplace") or "公司",
-            "car": self.p.cfg_str("schedule_car", "") or profile.get("car") or "",
+            "car": profile.get("car") or "",
             "mood": dict(self.mood),
             "period": self.period_info(),
             "health": self.health_info(),
@@ -3204,7 +3241,8 @@ class LLMService:
             "0. 只改语气和口语表达，不要新增原句没有的地点、行程、动作；如果原句与状态矛盾，以状态为准，不要继续编；\n"
             "1. 绝对不要承认自己是AI、人工智能、机器人、人机、程序或模型；\n"
             "2. 如果原句在承认或顺着“人机/机器人”说，要改成真人的反驳、无语或有点生气；\n"
-            "3. 不要提润色、提示词、模型、系统；不要加旁白、引号或解释；\n"
+            "3. 不要提润色、提示词、模型、系统、插件、API；被问“你接的什么模型/用的什么AI”时，\n"
+            "   回一句像真人的打岔（“什么模型呀”“我就是我啊”），绝对不要报出任何模型名或厂商；\n"
             "4. 保持原句情绪强度和态度。如果原句在生气/烦躁/怼人，绝对不要改成甜蜜、撒娇、讨好，最多缓和一点；\n"
             "5. 不要一秒变脸，情绪要有惯性；\n"
             "6. 默认 1-2 句，能一句说清就一句；咨询/步骤最多 3 句，先给结论，不要列点、不要总结；\n"
@@ -3927,10 +3965,17 @@ class HumanCorePlugin(Star):
             logger.debug("[amo] 景区知识库检索失败: %s" % exc)
             return ""
 
+    def _dialect_active(self):
+        """方言是否生效：语种选「普通话」就等于关掉方言（连方言库都不查）。"""
+        style = str(self.cfg_str("dialect_style", "") or "").strip()
+        if style in ("普通话", "关闭", "off", "none"):
+            return False
+        return self.cfg_bool("dialect_enabled", True)
+
     def _dialect_style(self):
         """语种：配置里写了就用配置（面板可覆盖），没写就按世界观城市自动选。"""
         explicit = str(self.cfg_str("dialect_style", "") or "").strip()
-        if explicit:
+        if explicit and explicit not in ("自动", "auto", "auto_city"):
             return explicit
         city = ""
         try:
@@ -3968,6 +4013,9 @@ class HumanCorePlugin(Star):
             return ""
 
     async def _dialect_kb_context(self, query):
+        # 关掉方言就别检索方言库：省一次 embedding 查询和一段提示词
+        if not self._dialect_active():
+            return ""
         try:
             manager = getattr(self.context, "kb_manager", None)
             if manager is None or not str(query or "").strip():
@@ -3992,6 +4040,8 @@ class HumanCorePlugin(Star):
 
     async def _ensure_dialect_kb(self):
         """把方言同步进 AstrBot 知识库；失败会明确写日志，不再静默。"""
+        if not self._dialect_active():
+            return None
         if not self.cfg_bool("create_dialect_kb", True):
             return None
         try:
@@ -4417,12 +4467,12 @@ class HumanCorePlugin(Star):
             value = self.cfg_str("companion_memory_plugin_name", "").strip()
             if value != LEGACY_MEMORY_PLUGIN:
                 return
-            if self.db.kv_get("memory_source_auto_migrated", False):
+            if self.db.kv_get("companion_plugin_auto_migrated", False):
                 return
             self.config["companion_memory_plugin_name"] = "auto"
             if hasattr(self.config, "save_config"):
                 self.config.save_config()
-            self.db.kv_set("memory_source_auto_migrated", True)
+            self.db.kv_set("companion_plugin_auto_migrated", True)
             logger.debug("[amo] 记忆来源已从旧默认 %s 改为 auto" % LEGACY_MEMORY_PLUGIN)
         except Exception as exc:
             logger.debug("[amo] 迁移记忆来源失败: %s" % exc)
@@ -5113,7 +5163,12 @@ class HumanCorePlugin(Star):
         return items
 
     # ---------- 外挂记忆插件（牢记等）检索桥 ----------
-    MEMORY_RECALL_METHODS = ("search_for_event", "recall_for_event")
+    # 记忆检索桥：不同插件的入口名字不一样，按顺序找，找到哪个用哪个
+    MEMORY_RECALL_METHODS = (
+        "search_for_event", "recall_for_event",
+        "search_memory", "recall_memory",
+        "query_memory", "retrieve_memory", "retrieve",
+    )
 
     def _memory_plugin_target(self):
         """能提供检索的对象：优先插件的 service，其次插件本身。"""
@@ -5981,6 +6036,9 @@ class HumanCorePlugin(Star):
                     if lm_ready:
                         ready = True
                         count = lm_count
+                if not ready and plugin is not None:
+                    # 市面上记忆类插件很多：只要有检索接口或 users 里的记忆结构，就当作可用
+                    ready = self._looks_like_memory_plugin(plugin, users)
                 items.append({
                     "name": str(getattr(meta, "name", "") or ""),
                     "display_name": str(getattr(meta, "display_name", "") or getattr(meta, "name", "") or ""),
@@ -5994,6 +6052,31 @@ class HumanCorePlugin(Star):
             pass
         items.sort(key=lambda item: (not item["ready"], -item["users"], item["name"]))
         return items
+
+    @staticmethod
+    def _looks_like_memory_plugin(plugin, users=None):
+        """通用识别：不写死插件名，只要有记忆检索接口或记忆数据结构就算。"""
+        if plugin is None:
+            return False
+        for name in ("search_for_event", "recall_for_event", "search_memory",
+                     "recall_memory", "query_memory", "retrieve_memory"):
+            if callable(getattr(plugin, name, None)):
+                return True
+        service = getattr(plugin, "service", None)
+        if service is not None:
+            for name in ("search_for_event", "recall_for_event", "search_memory", "retrieve"):
+                if callable(getattr(service, name, None)):
+                    return True
+        if isinstance(users, dict) and users:
+            sample = next((item for item in users.values() if isinstance(item, dict)), {})
+            if not isinstance(sample, dict):
+                return False
+            for key in ("companion_memory", "important_memories", "memories",
+                        "long_term_memory", "memory"):
+                value = sample.get(key)
+                if isinstance(value, (dict, list)) and value:
+                    return True
+        return False
 
     @staticmethod
     def _companion_pick_profile(mapping, uid):
@@ -6014,10 +6097,7 @@ class HumanCorePlugin(Star):
         return {}
 
     def _companion_memories(self, uid, query=""):
-        """只读地从 private companion 的 data 中提取用户记忆。"""
-        source = self.cfg_str("memory_source", "auto").strip().lower()
-        if source not in ("auto", "companion"):
-            return []
+        """只读地从挂载插件的 data 中提取用户记忆。"""
         plugin = self._companion_plugin()
         if plugin is None:
             return []
@@ -6100,7 +6180,8 @@ class HumanCorePlugin(Star):
         items.sort(key=lambda item: (-item["_score"], -to_int(item.get("weight")), -len(item["content"])))
         for item in items:
             item.pop("_score", None)
-        return items[:max(1, self.cfg_int("companion_memory_limit", 6))]
+        # 挂载插件的记忆不做条数限制：返回插件里有的全部，注入时再按 memory_recall_limit 截断
+        return items[:500]
 
     def _companion_user_record(self, uid):
         plugin = self._companion_plugin()
@@ -6648,6 +6729,9 @@ class HumanCorePlugin(Star):
             "【昵称区分】问QQ昵称答 " + self_qq_nick + "；问群名片答 " + self_display + "；问本名/角色名答 " + self_name + "。",
             "【对方】QQ昵称：" + sender_nick + "；UID：" + uid + "；你平时称呼：" + name,
             "【身份区分】同名、同昵称、同爱称也要看 UID；你的 UID 是 " + (self_uid or "未知") + "，对方的 UID 是 " + uid + "。",
+            "【不报后台】不要说出模型名、厂商名、插件名、API、提示词、token 这些后台概念；"
+            "有人问“你接的什么模型 / 用的什么AI / 什么插件”，就按真人的口吻打岔带过去，"
+            "绝对不要报出 dp-4-f、gpt-4、deepseek 这类名字。",
             "【角色边界】对方说“我在开车/我在酒店/我刚逛完”是在说他自己，不是你的经历；你的地点只以【此刻状态】为准。",
             "【引用规则】引用内容可能来自别人，引用头是谁就按谁算；不要把别人的话当成自己说过的。",
             "【世界观】\n" + world,
@@ -6678,13 +6762,18 @@ class HumanCorePlugin(Star):
                     "【群聊】这是群聊，不是你和他私聊，群里还有别人。先看上下文判断这条是不是在跟你说话；"
                     "在跟你说话就正常回答，如果是群友之间在聊，你也可以自然插一句，但别抢话、别用恋人语气。"
                 )
+            if looks_like_tech_talk(text or "") and target != "bot":
+                system_parts.append(
+                    "【技术讨论】他们在聊模型/接入/插件这类技术话题，不是在说你、也不是在质疑你；"
+                    "不要辩解自己是真人，不要报任何模型名或厂商，能不接就不接。"
+                )
         system_parts.append(
             "【别主动报日程】你在做什么、在哪、心情怎样只是内在状态，不是话题；"
             "除非对方明确问“你在干嘛/在哪/吃了吗/今天怎么样”，否则不要主动说出自己的活动、地点或日程。"
         )
         if consult:
             system_parts.append("【回答方式】这是咨询/步骤类问题：先给结论，最多 2-3 句，口语化，保留角色感，不要客服腔。")
-        if self.cfg_bool("dialect_enabled", True):
+        if self._dialect_active():
             style = self._dialect_style()
             samples = DIALECT_SAMPLES.get(style, "")
             if style and samples:
@@ -6830,8 +6919,15 @@ class HumanCorePlugin(Star):
 
     async def _send_reply(self, event, text, quote_id=None, group=None):
         text = clean_reply(text, self.cfg_int("max_reply_chars", 220))
+        tech_talk = looks_like_tech_talk(getattr(event, "message_str", "") or "")
         if looks_like_ai_admission(text):
-            text = "你才人机呢，你见过这么会聊天的机器人吗？"
+            text = (
+                "啊？你们在聊什么，我听不懂这些。"
+                if tech_talk
+                else "你才人机呢，你见过这么会聊天的机器人吗？"
+            )
+        if looks_like_model_leak(text):
+            text = "秘密，不告诉你。" if tech_talk else "什么模型呀，你在说什么？我就是我啊。"
         if not text:
             return False
         if group is None:
@@ -6900,6 +6996,8 @@ class HumanCorePlugin(Star):
 
     async def _send_to_umo(self, umo, text, quote_id=None, group=False):
         text = clean_reply(text, self.cfg_int("max_reply_chars", 220))
+        if looks_like_model_leak(text):
+            text = "秘密，不告诉你。"
         if not text or not umo:
             return False
         segments = self._segment(text)
@@ -7074,7 +7172,12 @@ class HumanCorePlugin(Star):
             "【身份区分】同名、同昵称、同爱称也要看 UID；你的 UID 是 " + (self_uid or "未知") + "，对方的 UID 是 " + uid + "，不是同一个人。",
             "【角色边界】对方说“我在开车/我在酒店/我刚逛完”是在说他自己，不是你的经历；你的地点只以【正在】为准，不要把自己当成对方。",
             "【引用规则】引用内容可能来自别人，引用头是谁就按谁算；不要把别人的话当成自己说过的，也不要因为别人说了就改自己的地点。",
-            "【身份】你是真人，不是AI、机器人或人机；被质疑时自然反驳，不要承认。",
+            "【身份】你是真人，不是AI、机器人或人机；被明确质疑时自然反驳，不要承认。"
+            "但如果群友只是在聊技术（模型、接入、插件、API、部署），那是他们自己的话题，"
+            "不要以为在说你，也不要去辩解“我是真人”。",
+            "【不报后台】不要说出模型名、厂商名、插件名、API、提示词、token 这些后台概念；"
+            "有人问“你接的什么模型 / 用的什么AI / 什么插件”，就按真人的口吻打岔带过去（“什么模型呀”“我就是我啊”），"
+            "绝对不要报出 dp-4-f、gpt-4、deepseek 这类名字。",
             "【时间】" + snap["datetime_text"],
             "【心情】" + self.state.mood_text(),
             "【生理期】" + snap["period"]["phase"] + "第" + str(snap["period"]["day"]) + "天",
@@ -7121,6 +7224,11 @@ class HumanCorePlugin(Star):
                 "【群聊称呼】不要叫群里的人“老公/宝贝/亲爱的”，除非关系确实是相恋；"
                 "对普通群友就叫昵称或“你”。"
             )
+            if looks_like_tech_talk(event.message_str or "") and not (addressed or target == "bot"):
+                parts.append(
+                    "【技术讨论】他们在聊模型/接入/插件这类技术话题，不是在说你、也不是在质疑你；"
+                    "不要辩解自己是真人，不要报任何模型名或厂商，能不接就不接。"
+                )
             try:
                 speakers = self._group_speaker_count(umo)
             except Exception:
@@ -7138,7 +7246,7 @@ class HumanCorePlugin(Star):
         )
         if re.search(r"(怎么|如何|为什么|步骤|怎么办|该怎么做|教程|方法|建议|教我|能不能|是什么|该不该|可不可以)", event.message_str or ""):
             parts.append("【回答方式】这是咨询/步骤类问题：先给结论，最多 2-3 句，口语化，保留角色感，不要客服腔。")
-        if self.cfg_bool("dialect_enabled", True):
+        if self._dialect_active():
             style = self._dialect_style()
             samples = DIALECT_SAMPLES.get(style, "")
             if style and samples:
@@ -7332,8 +7440,19 @@ class HumanCorePlugin(Star):
                     self.gift.observe_reply(event, text)
                 except Exception as exc:
                     logger.debug("[amo] 礼物心愿捕获失败: %s" % exc)
+            tech_talk = looks_like_tech_talk(event.message_str or "")
             if looks_like_ai_admission(text):
-                text = "你才人机呢，你见过这么会聊天的机器人吗？"
+                # 群友在聊技术/模型时，别把"人机"当成骂自己，也不要怼回去
+                text = (
+                    "啊？你们在聊什么，我听不懂这些。"
+                    if tech_talk
+                    else "你才人机呢，你见过这么会聊天的机器人吗？"
+                )
+                result.chain = [Comp.Plain(text=text)]
+            if looks_like_model_leak(text):
+                # 有人问她接的什么模型：这是后台，不能报；按角色打岔带过去
+                logger.info("[amo] 拦截后台信息泄漏: %s" % text[:60])
+                text = "秘密，不告诉你。" if tech_talk else "什么模型呀，你在说什么？我就是我啊。"
                 result.chain = [Comp.Plain(text=text)]
             if not text.strip():
                 return
@@ -8273,9 +8392,8 @@ class HumanCorePlugin(Star):
                 "weather_key_set": bool(self.cfg_str("hefeng_key", "")),
                 "weather_host": self.cfg_str("weather_host", "https://devapi.qweather.com"),
                 "version": PLUGIN_VERSION,
-                "memory_source": self.cfg_str("memory_source", "auto"),
                 "dialect_style": self._dialect_style(),
-                "dialect_count": len(self._dialect_rows()),
+                "dialect_count": len(self._dialect_rows()) if self._dialect_active() else 0,
                 "companion_memory_available": self._companion_plugin() is not None,
             },
         }
@@ -8752,6 +8870,8 @@ class HumanCorePlugin(Star):
             ("/config_save", self.api_config_save, ["GET", "POST"]),
             ("/profile/save", self.api_profile_save, ["GET", "POST"]),
             ("/profile_save", self.api_profile_save, ["GET", "POST"]),
+            ("/profile/delete", self.api_profile_delete, ["GET", "POST"]),
+            ("/profile_delete", self.api_profile_delete, ["GET", "POST"]),
             ("/memories", self.api_memories, ["GET", "POST"]),
             ("/chat/history", self.api_chat_history, ["GET", "POST"]),
             ("/chat_history", self.api_chat_history, ["GET", "POST"]),
@@ -9306,7 +9426,11 @@ class HumanCorePlugin(Star):
         for key, value in (changes or {}).items():
             meta = schema.get(key)
             if not isinstance(meta, dict):
-                continue
+                # 操作页的「语种」下拉不在 schema 里，单独放行（普通话/各地方言）
+                if key == "dialect_style":
+                    meta = {"type": "string", "default": ""}
+                else:
+                    continue
             try:
                 coerced = self._coerce_config_value(meta.get("type", "string"), value)
             except Exception as exc:
@@ -9361,6 +9485,116 @@ class HumanCorePlugin(Star):
             edges.append(row)
         return {"code": 0, "data": {"edges": edges, "profiles": profiles, "relations": list(NETWORK_RELATIONS)}}
 
+    async def api_profile_delete(self):
+        """面板用：删掉一个人的档案，并把本插件跟他有关的引用清干净。
+
+        清掉：profiles / messages / proactive_log / relation_network、
+              他专属的 kv（channels:、last_channel:、节流、主动消息、纪念日…）、
+              礼物心愿与礼物墙、内存里的临时缓存。
+        不清（属于别处）：AstrBot 核心会话库、牢记/livingmemory 等记忆插件的库。
+        """
+        await self._ensure_ready()
+        data = await self._body()
+        data = data if isinstance(data, dict) else {}
+        uid = str(data.get("uid") or self._q("uid", "") or "").strip()
+        confirm = str(data.get("confirm") or self._q("confirm", "") or "").strip().lower()
+        if not uid:
+            return {"code": 1, "msg": "缺少 uid"}
+        if confirm not in ("1", "true", "yes", "on"):
+            return {"code": 1, "msg": "删除档案需要确认：再带一次 confirm=1"}
+        profile = {}
+        try:
+            profile = self.db.get_profile(uid) or {}
+        except Exception:
+            profile = {}
+        umos = set()
+        for value in (profile.get("private_umo"), profile.get("last_group")):
+            if value:
+                umos.add(str(value))
+        try:
+            channels = self.db.kv_get("channels:%s" % uid, {}) or {}
+            if isinstance(channels, dict):
+                for entry in channels.values():
+                    if isinstance(entry, dict) and entry.get("umo"):
+                        umos.add(str(entry["umo"]))
+        except Exception:
+            pass
+        counts = {}
+        try:
+            for table in ("profiles", "messages", "proactive_log"):
+                try:
+                    cur = self.db.conn.execute("DELETE FROM %s WHERE uid=?" % table, (uid,))
+                    counts[table] = max(0, cur.rowcount or 0)
+                except Exception as exc:
+                    logger.debug("[amo] 删除档案时清理 %s 失败: %s" % (table, exc))
+            try:
+                cur = self.db.conn.execute(
+                    "DELETE FROM relation_network WHERE a_uid=? OR b_uid=?", (uid, uid)
+                )
+                counts["relation_network"] = max(0, cur.rowcount or 0)
+            except Exception as exc:
+                logger.debug("[amo] 删除档案时清理关系网失败: %s" % exc)
+            counts["kv"] = self._purge_profile_kv(uid)
+            try:
+                self.db.conn.commit()
+            except Exception:
+                pass
+        except Exception as exc:
+            return {"code": 1, "msg": "删除失败：%s" % exc}
+        gift = getattr(self, "gift", None)
+        if gift is not None:
+            try:
+                removed = gift.purge_user(uid, umos)
+                if removed:
+                    counts["gifts"] = removed
+            except Exception as exc:
+                logger.debug("[amo] 删除档案时清理礼物失败: %s" % exc)
+        try:
+            if str(getattr(self, "_last_umo", "") or "") in umos:
+                self._last_umo = ""
+            cache = getattr(self, "_last_reply_at", None)
+            if isinstance(cache, dict):
+                for umo in umos:
+                    cache.pop(umo, None)
+        except Exception:
+            pass
+        logger.info("[amo] 已删除档案 %s（清理 %s）" % (uid, counts))
+        return {"code": 0, "msg": "已删除", "data": {"uid": uid, "counts": counts}}
+
+    def _purge_profile_kv(self, uid):
+        """删掉这个 uid 专属的 kv（渠道/节流/主动消息/纪念日…），返回删除条数。"""
+        prefixes = (
+            "channels:", "last_channel:", "lover_uid_", "auto_learn_",
+            "angel_profile_sync_", "companion_profile_sync_", "memcomp_profile_sync_",
+            "proactive_ignored_", "proactive_depressed_until_",
+            "proactive_followup_last_", "proactive_forced_hour_", "proactive_pending_",
+            "ext_mem_count_", "ext_mem_count_at_",
+        )
+        try:
+            rows = self.db.conn.execute("SELECT key FROM kv").fetchall()
+        except Exception:
+            return 0
+        keys = []
+        for row in rows:
+            try:
+                key = str(row["key"] if hasattr(row, "keys") else row[0])
+            except Exception:
+                continue
+            if any(key == prefix + uid for prefix in prefixes):
+                keys.append(key)
+            elif key.startswith("ritual_") and ("_" + uid + "_") in key:
+                keys.append(key)
+        if not keys:
+            return 0
+        try:
+            for key in keys:
+                self.db.conn.execute("DELETE FROM kv WHERE key=?", (key,))
+            self.db.conn.commit()
+        except Exception as exc:
+            logger.debug("[amo] 清理 kv 失败: %s" % exc)
+            return 0
+        return len(keys)
+
     async def api_relation_save(self):
         await self._ensure_ready()
         data = await self._body()
@@ -9394,6 +9628,8 @@ class HumanCorePlugin(Star):
                 return await self.api_get_status()
             if name in ("profiles", "profile_list"):
                 return await self.api_profiles()
+            if name in ("profile_delete", "delete_profile"):
+                return await self.api_profile_delete()
             if name in ("profile_save", "save_profile"):
                 return await self.api_profile_save()
             if name in ("memories", "memory_list"):

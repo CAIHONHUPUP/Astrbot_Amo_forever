@@ -90,6 +90,12 @@ class FakePlugin:
     def cfg_str(self, key, default=""):
         return str(self.config.get(key, default) or "")
 
+    def cfg_float(self, key, default=0.0):
+        try:
+            return float(self.config.get(key, default))
+        except Exception:
+            return float(default)
+
     def _external_memory_write(self, uid, content, kind="fact", tier=1):
         """真实插件把记忆写进外挂记忆模块；测试里记到 FakeDB 上方便断言。"""
         return self.db.add_memory(uid, content, kind, tier)
@@ -427,6 +433,105 @@ class EngineTests(unittest.TestCase):
         self.engine.add_wish("口红", "好喜欢", uid=OWNER)
         self.assertIn("口红", self.engine.command_text())
         self.assertIn("记下了", self.engine.manual_gift(FakeEvent(""), "包"))
+
+
+class ManualGiftTests(unittest.TestCase):
+    """命令送礼（/送礼、面板）要和聊天送礼一样：大件拒收、吃的说吃不到、送过要提。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.plugin = FakePlugin(self.tmp)
+        self.engine = GiftEngine(self.plugin)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_manual_gift_records_nudges_and_memory(self):
+        text = self.engine.manual_gift(FakeEvent(""), "羊毛围巾")
+        self.assertIn("记下了", text)
+        self.assertEqual(self.engine.stats()["gifts"], 1)
+        self.assertEqual(self.plugin.state.nudged, {"开心": 6, "兴奋": 4, "依恋": 3})
+        self.assertTrue(any("羊毛围巾" in m["content"] for m in self.plugin.db.memories))
+
+    def test_manual_gift_refuses_big_item(self):
+        text = self.engine.manual_gift(FakeEvent(""), "车")
+        self.assertIn("太贵", text)
+        self.assertEqual(self.engine.stats()["gifts"], 0)
+
+    def test_manual_gift_food_says_cannot_eat(self):
+        text = self.engine.manual_gift(FakeEvent(""), "奶茶")
+        self.assertIn("吃不到", text)
+        self.assertEqual(self.engine.stats()["gifts"], 0)
+
+    def test_manual_gift_reminds_already_received(self):
+        self.engine.manual_gift(FakeEvent(""), "挂件")
+        text = self.engine.manual_gift(FakeEvent(""), "小挂件")
+        self.assertIn("送过", text)
+        self.assertEqual(self.engine.stats()["gifts"], 1)
+
+    def test_manual_gift_disabled_does_nothing(self):
+        self.plugin.config["gift_enable"] = False
+        self.assertEqual(self.engine.manual_gift(FakeEvent(""), "围巾"), "")
+        self.assertEqual(self.engine.stats()["gifts"], 0)
+
+    def test_manual_gift_bad_usage(self):
+        self.assertIn("用法", self.engine.manual_gift(FakeEvent(""), ""))
+
+
+class ShopHintTests(unittest.TestCase):
+    """逛街提示：不是每次逛街都提；有概率、有间隔、有每日上限，重载也不重置。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.plugin = FakePlugin(self.tmp)
+        self.plugin.state.activity = {"activity": "逛街", "place": "东莞·商场", "zone": "mall"}
+        self.engine = GiftEngine(self.plugin)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _hint(self, text="今天好热", mid="shop"):
+        return asyncio.run(self.engine.build_hint(FakeEvent(text, mid=mid)))
+
+    def test_chance_zero_never_hints(self):
+        self.plugin.config["gift_shop_hint_chance"] = 0.0
+        for i in range(5):
+            self.assertNotIn("【逛街】", self._hint(mid="s%d" % i))
+
+    def test_chance_one_hints_once_per_gap(self):
+        self.plugin.config["gift_shop_hint_chance"] = 1.0
+        self.plugin.config["gift_shop_hint_gap_hours"] = 6
+        self.assertEqual(self._hint(mid="a").count("【逛街】"), 1)
+        self.assertNotIn("【逛街】", self._hint(mid="b"))
+
+    def test_daily_cap(self):
+        self.plugin.config["gift_shop_hint_chance"] = 1.0
+        self.plugin.config["gift_shop_hint_max_per_day"] = 1
+        self.assertEqual(self._hint(mid="c").count("【逛街】"), 1)
+        meta = self.engine._load()["meta"]["shop_hint"]
+        meta["ts"] = time.time() - 10 * 3600
+        self.engine._save()
+        self.assertNotIn("【逛街】", self._hint(mid="d"))
+
+    def test_new_day_allows_again(self):
+        self.plugin.config["gift_shop_hint_chance"] = 1.0
+        self.assertEqual(self._hint(mid="e").count("【逛街】"), 1)
+        meta = self.engine._load()["meta"]["shop_hint"]
+        meta["day"] = "2020-01-01"
+        meta["ts"] = time.time() - 10 * 3600
+        self.engine._save()
+        self.assertEqual(self._hint(mid="f").count("【逛街】"), 1)
+
+    def test_reload_does_not_reset(self):
+        self.plugin.config["gift_shop_hint_chance"] = 1.0
+        self.assertEqual(self._hint(mid="g").count("【逛街】"), 1)
+        again = GiftEngine(self.plugin)
+        self.assertNotIn("【逛街】", asyncio.run(again.build_hint(FakeEvent("今天好热", mid="h"))))
+
+    def test_purge_user_clears_gifts(self):
+        self.engine.add_gift(item="挂件", raw="送你", umo="u1", uid=OWNER, source="chat")
+        self.assertEqual(self.engine.purge_user(OWNER), 1)
+        self.assertEqual(self.engine.stats()["gifts"], 0)
 
 
 if __name__ == "__main__":

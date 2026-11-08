@@ -4,6 +4,15 @@
 >
 > 反馈、Bug、建议请加 QQ 群：**1055679275**
 
+## 5.6.0 记忆只认挂载插件 + 角色资产
+
+- 记忆插件下拉动态列出已安装的所有插件（显示插件名 + 可读记忆 + 人数），不再写死四个；
+- 删掉重复的「外部记忆来源」，统一叫「挂载的记忆插件」；读取挂载插件记忆/画像/自动补全；
+- 挂载插件记忆不再限制条数；
+- 「角色资产（车）」改成「角色资产」：车 / 房 / 奢侈品都能写，送礼收到的大件会自动覆盖；
+- 合并 PR #27（礼物命令与逛街提示）、#28（面板删除档案）、#29/#30（普通话=关闭方言）；
+- 群里聊技术（模型/接入/插件/API）不再被当成在质疑她，也不再报出模型名。
+
 ## 5.5.0 记忆改为外挂模块
 
 - 插件不再自带记忆库：删掉本地 memories 表与事实提取，记忆只读写外挂记忆插件；
@@ -187,26 +196,30 @@ data/plugins/Astrbot_Amo_forever/
 
 > 分段是**符号列表**方案，不是正则。需要调断句符就改 `seg_split_symbols`；成对符号保护默认开启。
 
-## 兼容 private companion 记忆
+## 挂载记忆插件
 
-如果你同时装了 `astrbot_plugin_private_companion`（我会永远陪着你），可以把它的记忆作为本插件的记忆源：
+本插件不带记忆库，记忆来自你装的其他插件。市面上记忆类插件很多，**面板会直接列出你已安装的所有插件**，
+选哪个就用哪个的记忆和画像，不用改代码：
 
 | 配置 | 说明 |
 |---|---|
-| `memory_source` | `auto`（默认，自动检测已装的记忆插件）/ `companion`（只用设置里选定的记忆插件） |
-| `companion_memory_plugin_name` | 陪伴插件名，默认 `astrbot_plugin_private_companion` |
-| `companion_memory_limit` | 最多读取几条陪伴记忆 |
-| `companion_memory_include_profile` | 读取 `companion_memory.profile`（强记忆、边界、表达习惯、偏好、兴趣） |
-| `companion_memory_include_important` | 读取 `worldbook_member_profiles.important_memories` |
+| `companion_memory_plugin_name` | 挂载的记忆插件；留 `auto` 自动检测，面板下拉列出已安装插件 |
+| `companion_memory_include_profile` | 读取挂载插件的画像（强记忆、边界、表达习惯、偏好、兴趣） |
+| `companion_memory_include_important` | 读取挂载插件的长期记忆（不限条数） |
+| `companion_profile_sync` | 从挂载插件自动补全用户画像（只补名字/生日/关系） |
 
-读取范围：
+**检索是按 `uid` 查的**（QQ 号 / 平台用户 ID）：召回时带着当前说话人的 uid 去插件里查，
+查不到再按名字/称呼兜底；画像也以 uid 为主键（同名不同号不会串）。
 
-- `data["users"][uid]["companion_memory"]["items"]` 的 `text` / `weight`；
+能自动读取的结构（有哪个读哪个，都不限制条数）：
+
+- `users[uid]["companion_memory"]["items"]` 的 `text` / `weight`；
 - `companion_memory["profile"]` 里的 `strong_memories`、`boundaries`、`speaking_style`、`weak_preferences`、`interests`；
-- `data["users"][uid]["important_memories"]`；
-- `data["worldbook_member_profiles"][uid]["important_memories"]`。
+- `users[uid]["important_memories"]`；
+- `worldbook_member_profiles[uid]["important_memories"]`；
+- 实现了 `search_for_event` / `recall_for_event` / `search_memory` 等检索接口的插件（直接调用它的检索）。
 
-只读，不修改陪伴插件的数据；没有可用的记忆插件时就不注入记忆（本插件不再自带记忆库）。
+只读，不修改挂载插件的数据；没有可用的记忆插件时就不注入记忆（本插件不再自带记忆库）。
 
 > 注意：陪伴插件本身也会回复消息。如果两个插件同时接管聊天，可能出现双回复；建议只保留一个负责回复，另一个作为记忆源。
 

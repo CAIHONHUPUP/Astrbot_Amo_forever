@@ -200,50 +200,32 @@
     "default": "",
     "hint": "跨平台用：QQ 号 + 飞书 openid 等。留空时只按当前 uid 匹配"
   },
-  "memory_source": {
-    "type": "string",
-    "description": "外部记忆来源",
-    "options": [
-      "auto",
-      "companion"
-    ],
-    "default": "auto",
-    "hint": "本插件不再自带记忆库，只读外挂记忆插件；auto=自动检测，companion=只用选定的记忆插件。"
-  },
   "companion_memory_plugin_name": {
     "type": "string",
-    "description": "记忆来源插件",
+    "description": "挂载的记忆插件",
     "options": [
-      "auto",
-      "astrbot_plugin_livingmemory",
-      "astrbot_plugin_memory_companion",
-      "astrbot_plugin_private_companion",
-      "astrbot_plugin_angel_memory"
+      "auto"
     ],
     "default": "auto",
-    "hint": "auto=自动检测（优先 livingmemory，其次记忆陪伴类插件）。面板「记忆」页只是只读展示，注入由 livingmemory 自己负责。"
+    "hint": "auto=自动检测已安装的插件；面板会列出你装的所有插件，选哪个就用哪个的记忆和画像。",
+    "_special": "select_memory_plugin"
   },
   "companion_profile_sync": {
     "type": "bool",
-    "description": "从陪伴插件自动补全用户画像",
+    "description": "从挂载插件自动补全用户画像",
     "hint": "只补名字/生日/关系，不覆盖你手动设置的关系",
     "default": true
   },
-  "companion_memory_limit": {
-    "type": "int",
-    "description": "陪伴记忆条数上限",
-    "default": 6
-  },
   "companion_memory_include_profile": {
     "type": "bool",
-    "description": "读取陪伴插件的用户画像",
+    "description": "读取挂载插件画像",
     "hint": "strong_memories / boundaries / speaking_style 等",
     "default": true
   },
   "companion_memory_include_important": {
     "type": "bool",
-    "description": "读取陪伴插件的重要记忆",
-    "hint": "worldbook_member_profiles.important_memories",
+    "description": "读取挂载插件记忆",
+    "hint": "worldbook_member_profiles.important_memories 等长期记忆，不限条数",
     "default": true
   },
   "chat_log_days": {
@@ -1112,8 +1094,8 @@
   },
   "schedule_car": {
     "type": "string",
-    "description": "角色资产（车）",
-    "hint": "留空则从人格提示词提取车；没有就自动随机一辆，并用于周末堵车/停车细节。",
+    "description": "角色资产",
+    "hint": "车/房/奢侈品都能写（可留空）：留空就从人格提示词里提取，没有就自动随机一辆车；送礼系统收到的大件也会自动替换这里。",
     "default": ""
   },
   "schedule_event_prob": {
@@ -1223,5 +1205,21 @@
     "description": "【礼物】每次最多提醒几件",
     "default": 8,
     "hint": "太多会让她每句话都想提礼物，建议 5-8。"
+  },
+  "gift_shop_hint_chance": {
+    "type": "float",
+    "description": "【礼物】逛街时提一句的概率",
+    "hint": "0~1，默认 0.35：不是每次逛街都会想到小东西，抽中了才提一句。",
+    "default": 0.35
+  },
+  "gift_shop_hint_gap_hours": {
+    "type": "int",
+    "description": "【礼物】逛街提示最短间隔（小时）",
+    "default": 6
+  },
+  "gift_shop_hint_max_per_day": {
+    "type": "int",
+    "description": "【礼物】逛街提示每天最多几次",
+    "default": 1
   }
 }

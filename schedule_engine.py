@@ -267,13 +267,18 @@ class ScheduleEngine:
         if not workplace:
             workplace = self._random_workplace(city, seed)
 
-        car = str(self.p.cfg_str("schedule_car", "") or "").strip()
+        # 角色资产：一个字段同时认车/房/奢侈品。车用来开，房用来住，其余当"他送的东西"。
+        assets_cfg = str(self.p.cfg_str("schedule_car", "") or "").strip()
+        cfg_car, cfg_home, cfg_assets = self._split_assets(assets_cfg)
+        car = cfg_car
         if not car:
             car = self._extract_car(text)
         if not car:
             car = str(cached.get("car") or "").strip()
         if not car:
             car = CAR_POOL[md5_int(str(world.get("name") or "") + "|car") % len(CAR_POOL)]
+        if cfg_home:
+            home = cfg_home
 
         base = {
             "city": city,
@@ -304,6 +309,27 @@ class ScheduleEngine:
         except Exception:
             pass
         return profile
+
+    @staticmethod
+    def _split_assets(value):
+        """把「角色资产」拆成 车 / 房 / 其他；支持顿号、逗号、分号分隔。"""
+        text = str(value or "").strip()
+        if not text:
+            return "", "", ""
+        parts = [p.strip() for p in re.split(r"[、,，;；/|]+", text) if p.strip()]
+        car_words = ("奔驰", "宝马", "奥迪", "大众", "丰田", "本田", "保时捷", "特斯拉",
+                     "比亚迪", "凯迪拉克", "沃尔沃", "路虎", "捷豹", "雷克萨斯", "蔚来",
+                     "理想", "小鹏", "吉利", "五菱", "车")
+        home_words = ("房", "别墅", "公寓", "住宅", "大平层", "洋房", "小区", "楼")
+        cars, homes, others = [], [], []
+        for part in parts:
+            if any(word in part for word in home_words):
+                homes.append(part)
+            elif any(word in part for word in car_words):
+                cars.append(part)
+            else:
+                others.append(part)
+        return "、".join(cars), "、".join(homes), "、".join(others)
 
     @staticmethod
     def _extract_city(text):
@@ -375,6 +401,7 @@ class ScheduleEngine:
         home = profile["home"]
         workplace = profile["workplace"]
         car = profile["car"]
+        _, _, cfg_assets = self._split_assets(self.p.cfg_str("schedule_car", "") or "")
         yesterday = self.yesterday_summary(day)
         good_weather = self._good_weather(weather)
         event = self._pick_event(day, meta, weather, health, period, seed)
@@ -393,7 +420,7 @@ class ScheduleEngine:
             "car": car,
             "has_gift_car": bool(profile.get("has_gift_car")),
             "has_gift_home": bool(profile.get("has_gift_home")),
-            "assets": self._gift_assets(),
+            "assets": self._gift_assets(cfg_assets),
             "worn": self._gift_worn(),
             "gift_log": self._gift_log(),
             "mood": mood_now,
@@ -409,15 +436,21 @@ class ScheduleEngine:
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
 
-    def _gift_assets(self):
-        """他送的大件（车/房/贵重），写进日程上下文，让日记自然带出来。"""
+    def _gift_assets(self, extra=""):
+        """他送的大件（车/房/贵重）+ 配置里的角色资产，写进日程上下文。"""
+        items = []
+        extra = str(extra or "").strip()
+        if extra:
+            items.append(extra)
         try:
             gift = getattr(self.p, "gift", None)
             if gift is not None:
-                return gift.asset_text()
+                text = gift.asset_text()
+                if text:
+                    items.append(text)
         except Exception:
             pass
-        return ""
+        return "、".join([item for item in items if item])
 
     def _gift_worn(self):
         """他送的小件里能穿戴的（手表/围巾/包/口红），写进日程上下文。"""
