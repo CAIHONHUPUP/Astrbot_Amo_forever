@@ -256,6 +256,19 @@
     .world-doc h3 { margin: 12px 0 4px; font-size: 14px; color: var(--pink); }
     .world-doc h3:first-child { margin-top: 0; }
     .world-doc p { margin: 0 0 6px; color: var(--text); }
+    .world-doc h3:not(:first-child) { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 16px; }
+    .schedule-group > summary { border-bottom: 1px solid var(--line); }
+    .schedule-hour { margin: 0; padding-left: 10px; }
+    .schedule-group > summary + .schedule-hour { padding-top: 0; }
+    .schedule-hour + .schedule-hour { border-top: 1px dashed var(--line); margin-top: 0; padding-top: 0; }
+    .schedule-mini { margin-left: -10px; padding: 0; }
+    .schedule-mini:not(:empty) { border-top: 1px dashed var(--line); margin-top: 0; padding-top: 0; }
+    .schedule-mini li { padding: 3px 0 3px 10px; border-bottom: 1px dashed var(--line); }
+    .schedule-mini li:last-child { border-bottom: 0; }
+    .schedule-hour > summary { height: 28px; align-items: center; padding: 0; }
+    .schedule-mini { gap: 0; }
+    .schedule-mini li { height: 28px; align-items: center; padding: 0 0 0 10px; }
+    .schedule-mini li, .schedule-mini li.current, .schedule-mini li .t, .schedule-mini li .a { font-size: 11px; line-height: 1; font-weight: 400; }
     .modal {
       position: fixed; inset: 0; z-index: 20; display: flex; align-items: center;
       justify-content: center; padding: 16px; background: rgba(34, 28, 48, 0.35);
