@@ -9067,9 +9067,19 @@ class HumanCorePlugin(Star):
                     return {"code": 403, "msg": "该操作只接受 POST"}
                 if origin and host:
                     from urllib.parse import urlparse
-                    if urlparse(origin).netloc and urlparse(origin).netloc != host:
+                    origin_host = (urlparse(origin).hostname or "").lower()
+                    # 反向代理 / 内网穿透会把 Host 改成内网地址，这里把转发头也算进来
+                    allowed_hosts = {(host.split(":")[0] or "").strip().lower()}
+                    if headers is not None:
+                        for key in ("x-forwarded-host", "x-real-host"):
+                            value = str(headers.get(key) or "").split(",")[0].strip()
+                            if value:
+                                allowed_hosts.add(value.split(":")[0].strip().lower())
+                    allowed_hosts.discard("")
+                    if origin_host and allowed_hosts and origin_host not in allowed_hosts:
                         logger.warning("[amo] 拒绝跨站 Web 写操作: %s -> %s" % (origin, host))
                         return {"code": 403, "msg": "forbidden"}
+
             except Exception as exc:
                 logger.debug("[amo] Web 守卫检查失败（放行）: %s" % exc)
             return await handler(*args, **kwargs)
