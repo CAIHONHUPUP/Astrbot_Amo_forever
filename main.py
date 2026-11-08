@@ -115,6 +115,14 @@ except Exception:
         _pg_analyze_rows = _pg_compose_task = _pg_near_duplicate = None
 
 try:
+    from .memory_hooks import MemoryHub
+except Exception:
+    try:
+        from memory_hooks import MemoryHub
+    except Exception:
+        MemoryHub = None
+
+try:
     from .schedule_engine import ScheduleEngine
 except Exception:
     try:
@@ -133,7 +141,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.9.4"
+PLUGIN_VERSION = "5.9.6"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -4900,6 +4908,17 @@ class HumanCorePlugin(Star):
         text = str(content or "").strip()
         if not umo or not text:
             return
+        hub = self._memory_hub()
+        if hub is not None:
+            try:
+                hub.buffer.add(umo, uid, name, role, text)
+            except Exception:
+                pass
+        try:
+            if hub is not None and str(role) != "bot":
+                hub.next_turn()
+        except Exception:
+            pass
         buf = getattr(self, "_ctx_buffer", None)
         if buf is None:
             buf = {}
@@ -4920,12 +4939,20 @@ class HumanCorePlugin(Star):
             del rows[:len(rows) - self.CONTEXT_BUFFER_LIMIT]
 
     def _recent(self, umo, limit=10):
-        """近聊上下文钩子：内存缓冲优先，没有再读本地缓存表。"""
+        """近聊上下文钩子：能力层缓冲优先，没有再读本地缓存表。"""
         size = max(1, int(limit or 10))
-        try:
-            rows = list((getattr(self, "_ctx_buffer", {}) or {}).get(str(umo), []))
-        except Exception:
-            rows = []
+        rows = []
+        hub = self._memory_hub()
+        if hub is not None:
+            try:
+                rows = hub.buffer.recent(umo, size)
+            except Exception:
+                rows = []
+        if not rows:
+            try:
+                rows = list((getattr(self, "_ctx_buffer", {}) or {}).get(str(umo), []))
+            except Exception:
+                rows = []
         if len(rows) >= size:
             return rows[-size:]
         try:
@@ -4959,8 +4986,15 @@ class HumanCorePlugin(Star):
             if rows:
                 return sorted(rows, key=lambda item: to_float(item.get("created_at"), 0))[-size:]
         merged = []
-        for rows in list((getattr(self, "_ctx_buffer", {}) or {}).values()):
-            merged.extend([row for row in rows if str(row.get("uid") or "") == uid])
+        hub = self._memory_hub()
+        if hub is not None:
+            try:
+                merged = hub.buffer.by_uid(uid, size)
+            except Exception:
+                merged = []
+        if not merged:
+            for rows in list((getattr(self, "_ctx_buffer", {}) or {}).values()):
+                merged.extend([row for row in rows if str(row.get("uid") or "") == uid])
         if merged:
             return sorted(merged, key=lambda item: to_float(item.get("created_at"), 0))[-size:]
         try:
@@ -4975,15 +5009,23 @@ class HumanCorePlugin(Star):
             return
         if str(umo) in getattr(self, "_ctx_hydrated", set()):
             return
-        mem = self._data_mem()
-        lister = getattr(mem, "list_messages", None) if mem is not None else None
         rows = []
-        if callable(lister):
+        hub = self._memory_hub()
+        if hub is not None:
             try:
-                rows = await lister(self._data_bot_id(), umo, max(1, int(limit))) or []
+                rows = await hub.recent(umo, "", max(1, int(limit))) or []
             except Exception as exc:
-                logger.debug("[amo] 从记忆终端取上下文失败: %s" % exc)
+                logger.debug("[amo] 能力层取上下文失败: %s" % exc)
                 rows = []
+        if not rows:
+            mem = self._data_mem()
+            lister = getattr(mem, "list_messages", None) if mem is not None else None
+            if callable(lister):
+                try:
+                    rows = await lister(self._data_bot_id(), umo, max(1, int(limit))) or []
+                except Exception as exc:
+                    logger.debug("[amo] 从记忆终端取上下文失败: %s" % exc)
+                    rows = []
         if not rows:
             try:
                 rows = self.db.recent_messages(umo, max(1, int(limit)))
@@ -5454,6 +5496,109 @@ class HumanCorePlugin(Star):
     def _data_mem(self):
         plugin = self._data_plugin()
         return getattr(plugin, "mem", None) if plugin is not None else None
+
+    # ---------- 记忆能力层（memory_hooks）：陪伴只判定，数据交给挂载插件 ----------
+    def _memory_hub(self):
+        hub = getattr(self, "_mem_hub", None)
+        if hub is not None:
+            return hub
+        if MemoryHub is None:
+            return None
+        try:
+            hub = MemoryHub(
+                self._memory_runtime(),
+                buffer_size=max(8, self.cfg_int("ctx_window", 48)),
+            )
+        except Exception as exc:
+            logger.warning("[amo] 记忆能力层初始化失败: %s" % exc)
+            return None
+        self._mem_hub = hub
+        return hub
+
+    def _memory_runtime(self):
+        star = self
+
+        class _Runtime:
+            logger = logger
+
+            @staticmethod
+            def cfg(key, default=None):
+                try:
+                    data = star.config
+                    if isinstance(data, dict):
+                        return data.get(key, default)
+                except Exception:
+                    pass
+                return default
+
+            @staticmethod
+            def bot_id():
+                return star._data_bot_id()
+
+            @staticmethod
+            def get_plugin(names):
+                return star._plugin_by_names(names)
+
+            @staticmethod
+            def normalize_memories(rows):
+                return star._normalize_memories(rows)
+
+        return _Runtime()
+
+    def _plugin_by_names(self, names):
+        """按插件名找实例；不缓存，reload 之后拿到的是新实例。"""
+        for name in names:
+            try:
+                meta = self.context.get_registered_star(name)
+            except Exception:
+                meta = None
+            star = self._star_instance(meta)
+            if star is not None:
+                return star
+        try:
+            wanted = [str(item).lower() for item in names]
+            for meta in self.context.get_all_stars():
+                module = str(getattr(meta, "module_path", "") or "").lower()
+                label = str(getattr(meta, "name", "") or "").lower()
+                if any(word in module or word in label for word in wanted):
+                    star = self._star_instance(meta)
+                    if star is not None:
+                        return star
+        except Exception:
+            pass
+        return None
+
+    def _normalize_memories(self, rows):
+        """把各家插件返回的记忆统一成 {content, tier, name, kind, ...}。"""
+        items = []
+        for row in rows or []:
+            if isinstance(row, dict):
+                content = str(row.get("content") or row.get("memory") or "").strip()
+                importance = to_float(row.get("importance"), 0.5)
+                name = str(row.get("name") or row.get("who") or "").strip()
+                kind = str(row.get("kind") or row.get("memory_type") or "fact")
+                created_at = row.get("created_at", 0)
+            else:
+                memory = getattr(row, "memory", None) or row
+                content = str(getattr(memory, "content", "") or "").strip()
+                importance = to_float(getattr(memory, "importance", 0.5), 0.5)
+                name = str(getattr(memory, "name", "") or "").strip()
+                kind = str(getattr(memory, "memory_type", "") or "fact")
+                created_at = getattr(memory, "created_at", 0)
+            if len(content) < 2:
+                continue
+            items.append({
+                "content": content[:500],
+                "tier": 2 if importance >= 0.72 else (1 if importance >= 0.42 else 0),
+                "importance": importance,
+                "kind": kind,
+                "name": name,
+                "source": "hub",
+                "created_at": created_at,
+                "hits": 0,
+                "expires_at": None,
+            })
+        return items
 
     def _data_store(self):
         """兜底：直接拿数据插件的 DataStore（mem 门面缺失/旧版时用）。"""
@@ -5964,6 +6109,16 @@ class HumanCorePlugin(Star):
         content = re.sub(r"\s+", " ", str(content or "")).strip()
         if not content:
             return False
+        hub = self._memory_hub()
+        if hub is not None and hub.writable():
+            level = to_int(tier, 1)
+            importance = 0.75 if level >= 2 else (0.55 if level == 1 else 0.35)
+            try:
+                self._spawn(hub.remember(uid, content, str(kind or "fact"), importance))
+                logger.debug("[amo] 记忆已交给能力层: %s" % content[:40])
+                return True
+            except Exception as exc:
+                logger.debug("[amo] 能力层写入失败，退回旧路径: %s" % exc)
         if self._data_mem() is not None and callable(getattr(self._data_mem(), "remember", None)):
             coro = None
             try:
@@ -7043,10 +7198,32 @@ class HumanCorePlugin(Star):
         """
         limit = self.cfg_int("memory_recall_limit", 6)
         memories = []
-        try:
-            memories = await self._data_memory_recall(uid, text, limit, event)
-        except Exception as exc:
-            logger.debug("[amo] 记忆终端召回异常: %s" % exc)
+        hub = self._memory_hub()
+        if hub is not None:
+            try:
+                private = True
+                try:
+                    private = bool(event.is_private_chat()) if event is not None else True
+                except Exception:
+                    private = True
+                if hub.should_recall(text, private):
+                    scope = "private"
+                    group_id = ""
+                    if event is not None and not private:
+                        scope = "group"
+                        try:
+                            group_id = str(event.get_group_id() or "")
+                        except Exception:
+                            group_id = ""
+                    memories = await hub.recall(uid, text, limit, scope, group_id)
+            except Exception as exc:
+                logger.debug("[amo] 能力层召回失败: %s" % exc)
+                memories = []
+        if not memories:
+            try:
+                memories = await self._data_memory_recall(uid, text, limit, event)
+            except Exception as exc:
+                logger.debug("[amo] 记忆终端召回异常: %s" % exc)
         if not memories:
             memories = await self._external_memory_recall(event, text, limit)
         if not memories:
@@ -7074,7 +7251,9 @@ class HumanCorePlugin(Star):
             else:
                 tier = to_int(item.get("tier"))
                 label = "珍贵" if tier >= 2 else ("重要" if tier == 1 else "普通")
-            lines.append("· " + str(item.get("content", "")) + "（" + label + "）")
+            who = str(item.get("name") or "").strip()
+            prefix = (who + "：") if (who and source in ("hub", "amo_data")) else ""
+            lines.append("· " + prefix + str(item.get("content", "")) + "（" + label + "）")
         return memories, "\n".join(lines)
 
     # ---------- 消息入口 ----------

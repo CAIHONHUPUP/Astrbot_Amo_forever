@@ -183,6 +183,24 @@
     "hint": "默认关闭：原始聊天只写进「我想永远记住你」，陪伴用内存缓冲 + 记忆终端钩子取上下文，不再占本地库；关掉后重启会自动从终端把最近 30 条捞回来。",
     "default": false
   },
+  "memory_provider": {
+    "type": "string",
+    "description": "记忆能力来源",
+    "hint": "auto：自动选可用的（优先「我想永远记住你」）；也可以填 amo_data / memory_companion / livingmemory 强制指定。",
+    "default": "auto"
+  },
+  "ctx_window": {
+    "type": "int",
+    "description": "近聊上下文缓冲条数",
+    "hint": "只在内存里，不落盘；默认 48。太小会让群聊人数、连环消息判定算不准。",
+    "default": 48
+  },
+  "recall_sample_every": {
+    "type": "int",
+    "description": "群聊里每几轮召回一次记忆",
+    "hint": "私聊每轮都召回；群聊按这个间隔抽样，1 表示每轮都召回。",
+    "default": 8
+  },
   "memory_recall_limit": {
     "type": "int",
     "description": "每次最多注入几条记忆",

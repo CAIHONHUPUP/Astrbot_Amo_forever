@@ -4,6 +4,13 @@
 >
 > 反馈、Bug、建议请加 QQ 群：**1055679275**
 
+## 5.9.6 记忆能力层（memory_hooks）
+
+- 能力声明式 Provider：数据插件 / memory_companion / livingmemory，按能力调度；
+- 缓冲区只在内存，probe 60 秒、不缓存插件实例；
+- 召回分档：显式 → 关键词 → 私聊每轮 → 群聊抽样；
+- 旧函数保留兜底，不删代码也能平滑回滚。
+
 ## 5.9.4 本地不再缓存聊天
 
 - 新增 `local_chat_cache`（默认关）：聊天只写进记忆终端，陪伴本地不存；
@@ -285,6 +292,20 @@ data/plugins/Astrbot_Amo_forever/
 “设置”页会加载完整配置 schema，所有开关和参数都在里面；保存后写入插件配置并重建心流/分段引擎，立即生效。
 
 > 不再内置默认管理员。请在 `admin_uids` 填自己的 QQ，或使用 AstrBot 全局 `admins_id`；留空则聊天指令没有管理员。
+
+
+## 特别鸣谢
+
+感谢这些人和项目，让「我想永远陪伴你」能走到今天：
+
+- **[@CAIHONHUPUP](https://github.com/CAIHONHUPUP)**：11 个 PR 已合并，跨平台账号合并、面板用量页、主动消息节流、私聊连发合并、方言/城市修复等；
+- **QQ 群 1055679275** 的各位：帮忙测试、抓日志、提 issue，很多 bug 是你们先发现的；
+- **开发者群的同学们**：指出群聊判定、记忆架构上的问题，让我们把「陪伴只做判定、数据交给挂载插件」这条路走通了。
+
+设计上参考了 **memory_companion**（astrbot_plugin_private_companion）与 **LivingMemory** 的公开接口约定与交互方式；
+本项目为独立实现，**未复制其源码**，接口保持兼容只是为了让用户平滑迁移。
+
+完整名单见 [CONTRIBUTORS.md](CONTRIBUTORS.md)。
 
 ## 版本号规则
 
