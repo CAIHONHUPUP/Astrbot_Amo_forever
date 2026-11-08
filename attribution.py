@@ -41,7 +41,7 @@ def _tokens(text):
     for pattern in (_FOOD, _PLACE):
         for match in pattern.finditer(body):
             token = match.group(1).strip()
-            token = re.sub(r"^(个|碗|份|杯|家|间|点|了)", "", token)
+            token = re.sub(r"^(个|了)", "", token)
             if len(token) >= 2 and token not in _STOPWORDS:
                 out.add(token)
     return out
