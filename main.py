@@ -2286,10 +2286,19 @@ class HumanState:
             {"start": "22:00", "end": "23:00", "activity": "洗澡、护肤", "place": "家", "category": "life"},
             {"start": "23:00", "end": "23:59", "activity": "睡觉", "place": "家", "category": "sleep"},
         ]
-        if day_meta()["rest"] and random.random() < 0.18:
+        if day_meta()["rest"] and random.random() < 0.2:
+            overtime_plan = {
+                "09:00": {"activity": "接到临时加班的消息，说得去一趟", "place": "家", "category": "life"},
+                "10:00": {"activity": "赶去公司处理临时加班", "place": "地铁上", "category": "commute"},
+                "11:00": {"activity": "在公司处理临时加班", "place": "公司", "category": "work"},
+                "12:00": {"activity": "加班完顺路买午饭回家", "place": "路上", "category": "meal"},
+                "13:00": {"activity": "回家躺着歇一会儿", "place": "家", "category": "rest"},
+                "17:00": {"activity": "下楼走走、买点水果", "place": "小区门口", "category": "play"},
+            }
             for item in items:
-                if item.get("start") in ("10:00", "11:00"):
-                    item.update(activity="临时加班处理点事", place="家", category="work")
+                plan = overtime_plan.get(item.get("start"))
+                if plan:
+                    item.update(plan)
         return self._with_daily_events(items)
 
     def _with_daily_events(self, items):
@@ -2319,6 +2328,10 @@ class HumanState:
         today = today_str()
         meta = day_meta()
         existing = None if force else self.schedule.get(today)
+        day_type = "rest" if meta["rest"] else "work"
+        stored_type = self.db.kv_get("schedule_type_" + today, "")
+        if existing and stored_type and stored_type != day_type:
+            existing = None
         if existing and self.db.kv_get("schedule_version", "") != SCHEDULE_VERSION:
             existing = self._fallback_schedule()
             self.schedule[today] = existing
@@ -2327,13 +2340,37 @@ class HumanState:
             return existing
         if existing and meta["rest"]:
             activities = " ".join(str(item.get("activity") or "") for item in existing)
+
+            def _text_of(item):
+                return str(item.get("activity") or "") + " " + str(item.get("detail") or "")
+
+            def _is_temp_overtime(item):
+                return any(word in _text_of(item) for word in ("加班", "临时", "紧急", "线上问题", "改方案"))
+
+            def _is_home_commute(item):
+                return "回家" in _text_of(item) or "到家" in _text_of(item)
+
+            work_like = [
+                item for item in existing
+                if str(item.get("category") or "") in ("work", "study", "commute")
+                or any(word in str(item.get("activity") or "") for word in ("上班", "通勤", "打卡", "工位", "开电脑"))
+            ]
+            bad_work = [
+                item for item in work_like
+                if not _is_temp_overtime(item) and not _is_home_commute(item)
+            ]
+            overtime = [item for item in work_like if _is_temp_overtime(item)]
             if (
-                any(str(item.get("category") or "") in ("work", "study") for item in existing)
+                bad_work
+                or len(overtime) > 4
+                or (overtime and not any("公司" in _text_of(item) for item in overtime))
                 or (meta["holiday_days"] >= 4 and not any(word in activities for word in ("景区", "古城", "洱海", "夜市", "漓江", "兵马俑")))
-                or (meta["holiday_days"] < 4 and not any(word in activities for word in ("公园", "附近", "商场", "咖啡")))
+                or (meta["holiday_days"] < 4 and not any(word in activities for word in ("公园", "附近", "商场", "咖啡", "家")))
             ):
                 existing = None
         if existing:
+            if stored_type != day_type:
+                self.db.kv_set("schedule_type_" + today, day_type)
             hourly = self._hourly_schedule(existing)
             if hourly != existing:
                 self.schedule[today] = hourly
@@ -2354,6 +2391,7 @@ class HumanState:
         items = self._with_daily_events(items)
         items = self._hourly_schedule(items)
         self.schedule[today] = items
+        self.db.kv_set("schedule_type_" + today, day_type)
         self.db.kv_set("schedule_version", SCHEDULE_VERSION)
         self.db.kv_set("schedule", self.schedule)
         self.db.save_schedule(today, items)
@@ -2775,7 +2813,7 @@ class LLMService:
             "天气：" + str(weather.get("text", "")) + " " + str(weather.get("temp", "")) + "℃。\n"
             "身体：" + str(health.get("status", "健康")) + "；生理期：" + str(period.get("phase", "")) + "。\n"
             "请生成角色今天 00:00-24:00 的日程，共 24 条，每小时一条。"
-            + ("休息日安排：睡懒觉、收拾屋子、追剧、看漫画、逛菜市场/商场、朋友聚会、散步等，不要出现上班/通勤/公司。\n" if (meta or {}).get("rest") else "工作日安排：通勤、到公司、开电脑、开会、下午茶、上厕所、摸鱼、午饭、午休、下班通勤都要有，不要连续几个小时都只写“上班”。可以加入熬夜、精神恍惚、工作失误、被老板骂、扣工资、和同事聊天/闹脾气等事件，用 detail 字段标注。\n")
+            + ("休息日安排：以休息为主（睡懒觉、收拾屋子、追剧、逛菜市场/商场、朋友聚会、散步等），不要安排常规上班。如果安排临时加班，最多一段，并且要写清“接到消息 → 赶去公司 → 处理完 → 回家”的完整过程，活动里带上“临时加班”字样。\n" if (meta or {}).get("rest") else "工作日安排：按真实作息排（起床 → 通勤 → 到公司开电脑 → 上午工作 → 午饭 → 午休 → 下午工作 → 下班通勤 → 晚饭 → 放松 → 睡觉），不要连续多个小时都只写“上班”，可以加入开会、被老板催、同事聊天、摸鱼、下午茶等。\n")
             + "JSON 数组，每项包含："
             "start(HH:MM)、end(HH:MM)、activity(在做什么)、place(地点)、"
             "category(只能是 sleep/work/study/commute/meal/rest/play/social/life)。"
