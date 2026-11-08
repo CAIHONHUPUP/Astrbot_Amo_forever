@@ -765,9 +765,9 @@
     }
 
     async function httpCall(action, payload) {
-      if (window.parent && window.parent !== window) {
-        throw new Error("未检测到 AstrBot 页面桥接，请关闭后从 插件详情→查看页面 重新打开");
-      }
+      // 以前在 iframe 里直接抛错；现在 AstrBot 面板本身和插件页同源，
+      // 桥接没有 apiPost（老版本）时仍然可以用 fetch 直接发 POST 兜底。
+      const inFrame = window.parent && window.parent !== window;
       const errors = [];
       const headers = {};
       if (payload) headers["Content-Type"] = "application/json";
