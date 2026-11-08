@@ -133,7 +133,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.6.0"
+PLUGIN_VERSION = "5.6.1"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -767,17 +767,16 @@ MODEL_LEAK_RE = re.compile(
 )
 
 
-TECH_TALK_RE = re.compile(
-    r"(?:接入|接的|用的|部署|开源|代码|接口|api|sdk|token|prompt|提示词|上下文|"
-    r"模型|llm|大模型|微调|参数|插件|框架|astrbot|napcat|onebot|qwen|deepseek|"
-    r"gpt|claude|gemini|glm|kimi|豆包|通义|智谱|本地部署|显卡|显存|跑得动)",
+DEFENSIVE_REPLY_RE = re.compile(
+    r"(?:你才|你才是|谁家|哪有|我才不是)[^。！？]{0,12}(?:人机|机器人|AI|人工智能)"
+    r"|(?:人机|机器人)(?:才|也|怎么|哪有)",
     re.I,
 )
 
 
-def looks_like_tech_talk(text):
-    """群友是不是在聊技术/模型/接入这类话题（不代表在质疑她）。"""
-    return bool(TECH_TALK_RE.search(str(text or "")))
+def looks_like_defensive_reply(text):
+    """是不是在跟人争“我不是人机”——技术讨论里这种话很突兀。"""
+    return bool(DEFENSIVE_REPLY_RE.search(str(text or "")))
 
 
 def looks_like_model_leak(text):
@@ -4863,6 +4862,107 @@ class HumanCorePlugin(Star):
         except Exception:
             return []
 
+    def _is_talking_to_me(self, event):
+        """这句是不是冲她来的：私聊、被 @ / 叫名字、或心流判定对象是 bot。"""
+        try:
+            if event.is_private_chat():
+                return True
+        except Exception:
+            return True
+        target = str(getattr(event, "heartflow_target", "") or "")
+        if target == "bot":
+            return True
+        if str(getattr(event, "heartflow_mode_hint", "") or "") == "interject":
+            return False
+        try:
+            if getattr(event, "is_at_or_wake_command", False):
+                return True
+        except Exception:
+            pass
+        try:
+            if self.heartflow is not None and self.heartflow._addresses_bot(event.message_str or ""):
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _group_roster(self, umo, current_uid="", limit=8):
+        """群里最近说过话的人：uid → 称呼 / 关系 / 聊过多少句。
+
+        让她在群里先认人：谁在说话、和她什么关系、该用什么语气，而不是把所有人都当同一个人。
+        """
+        roster = []
+        seen = set()
+        try:
+            rows = self._recent(umo, 40)
+        except Exception:
+            return roster
+        for row in rows:
+            if str(row.get("role") or "") != "user":
+                continue
+            uid = str(row.get("uid") or "")
+            if not uid or uid in seen:
+                continue
+            seen.add(uid)
+            profile = {}
+            try:
+                profile = self.db.get_profile(uid) or {}
+            except Exception:
+                profile = {}
+            name = (
+                str(profile.get("alias") or "").strip()
+                or str(profile.get("name") or "").strip()
+                or str(row.get("name") or "").strip()
+                or uid
+            )
+            relation = str(profile.get("relation") or "普通")
+            msg_count = to_int(profile.get("msg_count"), 0)
+            roster.append({
+                "uid": uid,
+                "name": name,
+                "relation": relation,
+                "msg_count": msg_count,
+                "current": bool(current_uid) and uid == str(current_uid),
+            })
+            if len(roster) >= max(1, int(limit)):
+                break
+        roster.sort(key=lambda item: (not item["current"], -item["msg_count"]))
+        return roster
+
+    def _group_roster_text(self, umo, current_uid="", limit=8):
+        roster = self._group_roster(umo, current_uid, limit)
+        if not roster:
+            return ""
+        lines = []
+        for item in roster:
+            tag = "（现在这句就是ta说的）" if item["current"] else ""
+            if item["msg_count"] >= 200:
+                familiar = "很熟"
+            elif item["msg_count"] >= 30:
+                familiar = "熟识"
+            elif item["msg_count"] >= 1:
+                familiar = "刚认识"
+            else:
+                familiar = "陌生"
+            lines.append(
+                "· %s（UID %s）：和你关系「%s」，%s%s"
+                % (item["name"], item["uid"], item["relation"], familiar, tag)
+            )
+        return "\n".join(lines)
+
+    def _group_reply_guide(self, relation, name):
+        """按关系给一句“该怎么回”的指引。"""
+        relation = str(relation or "普通")
+        if relation == "相恋":
+            return "对" + name + "可以亲近、撒娇、用昵称，但别在群里太露骨。"
+        if relation == "熟识":
+            return "对" + name + "像老朋友一样随便聊，可以开玩笑，但不用恋人语气。"
+        if relation == "抵触":
+            return "对" + name + "有点距离感，句子短，不主动热络。"
+        if relation == "仇恨":
+            return "对" + name + "很冷淡，不接他的茬，也不解释。"
+        return "对" + name + "客气一点、像普通群友，不要叫老公/宝贝，也别装得很熟。"
+
     def _group_speaker_count(self, umo, limit=20, window=600):
         """最近一段时间内群聊里的不同发言人数。"""
         try:
@@ -6762,10 +6862,16 @@ class HumanCorePlugin(Star):
                     "【群聊】这是群聊，不是你和他私聊，群里还有别人。先看上下文判断这条是不是在跟你说话；"
                     "在跟你说话就正常回答，如果是群友之间在聊，你也可以自然插一句，但别抢话、别用恋人语气。"
                 )
-            if looks_like_tech_talk(text or "") and target != "bot":
+            roster_text = self._group_roster_text(umo, uid)
+            if roster_text:
                 system_parts.append(
-                    "【技术讨论】他们在聊模型/接入/插件这类技术话题，不是在说你、也不是在质疑你；"
-                    "不要辩解自己是真人，不要报任何模型名或厂商，能不接就不接。"
+                    "【群里的人】（按 UID 认人，同名不同号不是一个人）\n" + roster_text
+                )
+            system_parts.append("【怎么回】" + self._group_reply_guide(relation, name))
+            if target != "bot":
+                system_parts.append(
+                    "【先想再回】这段话不一定是在跟你说话：叫了别人名字、@了别人、或他们在聊自己的事，"
+                    "都当普通群聊，可以插一句但别当成在问你，也别辩解、别怼。"
                 )
         system_parts.append(
             "【别主动报日程】你在做什么、在哪、心情怎样只是内在状态，不是话题；"
@@ -6919,15 +7025,15 @@ class HumanCorePlugin(Star):
 
     async def _send_reply(self, event, text, quote_id=None, group=None):
         text = clean_reply(text, self.cfg_int("max_reply_chars", 220))
-        tech_talk = looks_like_tech_talk(getattr(event, "message_str", "") or "")
-        if looks_like_ai_admission(text):
-            text = (
-                "啊？你们在聊什么，我听不懂这些。"
-                if tech_talk
-                else "你才人机呢，你见过这么会聊天的机器人吗？"
-            )
+        addressed_to_me = self._is_talking_to_me(event)
+        if not addressed_to_me and (
+            looks_like_defensive_reply(text) or looks_like_ai_admission(text)
+        ):
+            text = "你们聊你们的，我不抢话。"
+        elif looks_like_ai_admission(text):
+            text = "你才人机呢，你见过这么会聊天的机器人吗？"
         if looks_like_model_leak(text):
-            text = "秘密，不告诉你。" if tech_talk else "什么模型呀，你在说什么？我就是我啊。"
+            text = "秘密，不告诉你。"
         if not text:
             return False
         if group is None:
@@ -7224,10 +7330,18 @@ class HumanCorePlugin(Star):
                 "【群聊称呼】不要叫群里的人“老公/宝贝/亲爱的”，除非关系确实是相恋；"
                 "对普通群友就叫昵称或“你”。"
             )
-            if looks_like_tech_talk(event.message_str or "") and not (addressed or target == "bot"):
+            roster_text = self._group_roster_text(umo, uid)
+            if roster_text:
                 parts.append(
-                    "【技术讨论】他们在聊模型/接入/插件这类技术话题，不是在说你、也不是在质疑你；"
-                    "不要辩解自己是真人，不要报任何模型名或厂商，能不接就不接。"
+                    "【群里的人】（按 UID 认人，同名不同号不是一个人）\n" + roster_text
+                )
+            parts.append("【怎么回】" + self._group_reply_guide(relation, sender_nick))
+            # 用上下文判断“是不是在说她”：已经点了名才按指名处理，否则先看话题和在场的人
+            if not (addressed or target == "bot"):
+                parts.append(
+                    "【先想再回】群里好几个人在说话，先看清这句话是在跟谁说的："
+                    "叫了别人名字、@了别人、两个人一问一答、或者在聊他们自己的事（工作/游戏/技术），"
+                    "都不是在跟你说话——这种时候可以插一句，但别当成在问你，也别辩解、别怼。"
                 )
             try:
                 speakers = self._group_speaker_count(umo)
@@ -7440,19 +7554,23 @@ class HumanCorePlugin(Star):
                     self.gift.observe_reply(event, text)
                 except Exception as exc:
                     logger.debug("[amo] 礼物心愿捕获失败: %s" % exc)
-            tech_talk = looks_like_tech_talk(event.message_str or "")
-            if looks_like_ai_admission(text):
-                # 群友在聊技术/模型时，别把"人机"当成骂自己，也不要怼回去
-                text = (
-                    "啊？你们在聊什么，我听不懂这些。"
-                    if tech_talk
-                    else "你才人机呢，你见过这么会聊天的机器人吗？"
-                )
+            # 用上下文判断“这句是不是在跟她说”，而不是靠关键词猜
+            addressed_to_me = self._is_talking_to_me(event)
+            if not addressed_to_me and (
+                looks_like_defensive_reply(text) or looks_like_ai_admission(text)
+            ):
+                # 他们在聊自己的事，她冒出一句“你才人机”很突兀：不接这茬
+                logger.info("[amo] 非指名对话里拦下防御话术: %s" % text[:60])
+                text = "你们聊你们的，我不抢话。"
+                result.chain = [Comp.Plain(text=text)]
+            elif looks_like_ai_admission(text):
+                text = "你才人机呢，你见过这么会聊天的机器人吗？"
                 result.chain = [Comp.Plain(text=text)]
             if looks_like_model_leak(text):
-                # 有人问她接的什么模型：这是后台，不能报；按角色打岔带过去
+                # 模型名/厂商是后台信息，不能报；按角色打岔带过去
                 logger.info("[amo] 拦截后台信息泄漏: %s" % text[:60])
-                text = "秘密，不告诉你。" if tech_talk else "什么模型呀，你在说什么？我就是我啊。"
+                text = "秘密，不告诉你。"
+                result.chain = [Comp.Plain(text=text)]
                 result.chain = [Comp.Plain(text=text)]
             if not text.strip():
                 return
