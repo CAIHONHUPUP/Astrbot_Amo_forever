@@ -127,6 +127,13 @@
     .theme-bar .segmented { flex: 0 0 auto; }
     .tabs { display: flex; gap: 8px; padding: 4px; background: var(--card); border-radius: 14px; max-width: 100%; min-width: 0; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; touch-action: pan-x; position: sticky; top: 0; z-index: 12; }
     .tabs::-webkit-scrollbar { display: none; }
+    .tabnav { position: relative; }
+    .tabnav-arrow { position: absolute; top: 50%; transform: translateY(-50%); z-index: 13; width: 22px; height: 30px; display: none; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 8px; background: var(--card); color: var(--pink); font-size: 16px; line-height: 1; cursor: pointer; box-shadow: 0 0 0 1px var(--line); opacity: .92; }
+    .tabnav.has-overflow .tabnav-arrow { display: flex; }
+    .tabnav-arrow.left { left: 0; }
+    .tabnav-arrow.right { right: 0; }
+    .tabnav-arrow[disabled] { opacity: .35; cursor: default; }
+    .tabnav.has-overflow .tabs { padding-left: 26px; padding-right: 26px; }
     .tab { flex: 0 0 auto; border: 0; background: transparent; color: var(--muted); text-align: center; padding: 9px 10px; border-radius: 10px; font-size: 13px; cursor: pointer; white-space: nowrap; min-width: 0; }
     .tab.active { background: var(--card); color: var(--pink); box-shadow: none; }
     .tab-panel { display: flex; flex-direction: column; gap: 14px; width: 100%; min-width: 0; }
@@ -286,7 +293,9 @@
       <div class="clock" id="clock">--</div>
     </header>
 
-    <nav class="tabs">
+    <div class="tabnav">
+      <button class="tabnav-arrow left" type="button" aria-label="向前">‹</button>
+      <nav class="tabs">
       <button class="tab active" data-tab="status">状态</button>
       <button class="tab" data-tab="world">世界</button>
       <button class="tab" data-tab="schedule">日程</button>
@@ -299,7 +308,9 @@
       <button class="tab" data-tab="settings" data-group="私聊">私聊</button>
       <button class="tab" data-tab="settings" data-group="心流">心流</button>
       <button class="tab" data-tab="settings" data-group="分段">分段</button>
-    </nav>
+      </nav>
+      <button class="tabnav-arrow right" type="button" aria-label="向后">›</button>
+    </div>
 
     <div id="tab-status" class="tab-panel">
       <section class="card status-shell">
@@ -1210,6 +1221,64 @@
       }
     }
     tabButtons.forEach((button) => button.addEventListener("click", () => showTab(button.dataset.tab, button.dataset.group, button)));
+
+    (function enableTabNav() {
+      const wrap = document.querySelector(".tabnav");
+      if (!wrap) return;
+      const nav = wrap.querySelector(".tabs");
+      if (!nav) return;
+      const leftBtn = wrap.querySelector(".tabnav-arrow.left");
+      const rightBtn = wrap.querySelector(".tabnav-arrow.right");
+      const maxScroll = () => Math.max(0, nav.scrollWidth - nav.clientWidth);
+      const step = () => Math.max(140, Math.round(nav.clientWidth * 0.6));
+
+      function sync() {
+        const max = maxScroll();
+        wrap.classList.toggle("has-overflow", max > 2);
+        if (leftBtn) leftBtn.disabled = nav.scrollLeft <= 1;
+        if (rightBtn) rightBtn.disabled = nav.scrollLeft >= max - 1;
+      }
+      function move(delta) {
+        nav.scrollLeft = Math.max(0, Math.min(maxScroll(), nav.scrollLeft + delta));
+        sync();
+      }
+
+      // 滚轮：双向，悬浮在 tab 栏上时不吃页面滚动；触控板横向留给系统
+      wrap.addEventListener("wheel", (event) => {
+        if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+        if (maxScroll() <= 0) return;
+        const unit = event.deltaMode === 1 ? 16 : (event.deltaMode === 2 ? nav.clientWidth : 1);
+        event.preventDefault();
+        move((event.deltaY || 0) * unit);
+      }, { passive: false });
+
+      if (leftBtn) leftBtn.addEventListener("click", () => move(-step()));
+      if (rightBtn) rightBtn.addEventListener("click", () => move(step()));
+
+      // 按住拖动
+      let dragging = false, moved = 0, startX = 0, startLeft = 0;
+      nav.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) return;
+        dragging = true; moved = 0; startX = event.clientX; startLeft = nav.scrollLeft;
+      });
+      nav.addEventListener("pointermove", (event) => {
+        if (!dragging) return;
+        const dx = event.clientX - startX;
+        moved = Math.max(moved, Math.abs(dx));
+        nav.scrollLeft = Math.max(0, Math.min(maxScroll(), startLeft - dx));
+      });
+      const endDrag = () => { if (!dragging) return; dragging = false; sync(); };
+      nav.addEventListener("pointerup", endDrag);
+      nav.addEventListener("pointercancel", endDrag);
+      nav.addEventListener("click", (event) => {
+        if (moved > 4) { event.preventDefault(); event.stopPropagation(); }
+        moved = 0;
+      }, true);
+      nav.addEventListener("scroll", sync);
+      window.addEventListener("resize", sync);
+      sync();
+    })();
+
 
     let memoryCandidates = [];
     let profilesCache = [];
