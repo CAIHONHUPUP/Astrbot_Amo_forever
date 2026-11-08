@@ -183,6 +183,12 @@
     "hint": "默认关闭：原始聊天只写进「我想永远记住你」，陪伴用内存缓冲 + 记忆终端钩子取上下文，不再占本地库；关掉后重启会自动从终端把最近 30 条捞回来。",
     "default": false
   },
+  "context_style": {
+    "type": "string",
+    "description": "上下文风格",
+    "hint": "lean：合并重复禁令，省 30% 左右 token；full：保留原文（出问题切回这个对比）。",
+    "default": "lean"
+  },
   "memory_provider": {
     "type": "string",
     "description": "记忆能力来源",

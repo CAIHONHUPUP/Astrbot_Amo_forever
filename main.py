@@ -123,6 +123,14 @@ except Exception:
         MemoryHub = None
 
 try:
+    from .attribution import first_person_experience, attribution_leak, leak_tokens
+except Exception:
+    try:
+        from attribution import first_person_experience, attribution_leak, leak_tokens
+    except Exception:
+        first_person_experience = attribution_leak = leak_tokens = None
+
+try:
     from .schedule_engine import ScheduleEngine
 except Exception:
     try:
@@ -141,7 +149,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.9.6"
+PLUGIN_VERSION = "5.9.8"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -3730,6 +3738,7 @@ class HumanCorePlugin(Star):
         # 近聊上下文缓冲（只在内存里；本地聊天可以不落库，用记忆终端补）
         self._ctx_buffer = {}
         self._ctx_hydrated = set()
+        self._attribution_alert = {}
         self._last_schedule_save = ""
         self._disturb_cooldown = {}
         self._disturb_reset_at = {}
@@ -7197,6 +7206,12 @@ class HumanCorePlugin(Star):
         陪伴自己不存记忆：读也只读记忆终端，读不到再退旧的插件库。
         """
         limit = self.cfg_int("memory_recall_limit", 6)
+        if self.cfg_str("context_style", "lean").strip().lower() == "lean" and event is not None:
+            try:
+                if not event.is_private_chat():
+                    limit = min(limit, 4)
+            except Exception:
+                pass
         memories = []
         hub = self._memory_hub()
         if hub is not None:
@@ -7487,7 +7502,7 @@ class HumanCorePlugin(Star):
         umo = event.unified_msg_origin
         group_id = event.get_group_id()
         snap = self.state.snapshot()
-        recent = self._recent(umo, 12)
+        recent = self._recent(umo, 8 if self.cfg_str("context_style", "lean") == "lean" else 12)
         result = await self.gate.should_reply_group(
             umo, group_id, text, recent, True, profile, snap
         )
@@ -7741,7 +7756,9 @@ class HumanCorePlugin(Star):
                     "【群聊】这是群聊，不是你和他私聊，群里还有别人。先看上下文判断这条是不是在跟你说话；"
                     "在跟你说话就正常回答，如果是群友之间在聊，你也可以自然插一句，但别抢话、别用恋人语气。"
                 )
-            roster_text = self._group_roster_text(umo, uid)
+            roster_text = self._group_roster_text(
+                umo, uid, 6 if self.cfg_str("context_style", "lean").strip().lower() == "lean" else 8
+            )
             if roster_text:
                 system_parts.append(
                     "【群里的人】（按 UID 认人，同名不同号不是一个人）\n" + roster_text
@@ -8117,6 +8134,41 @@ class HumanCorePlugin(Star):
             )
         return role_name, uid, qq_nick, display_name
 
+    LEAN_PARTS = {
+        "【昵称区分】": None,
+        "【角色边界】": "【角色边界】他说“我在开车/在酒店/刚逛完”说的是他自己，不是你的经历。",
+        "【引用规则】": "【引用规则】引用的话按引用头算是谁说的，不要当成自己说过的。",
+        "【天气一致】": "【天气一致】天气以【天气】为准，不要说反。",
+        "【地点写法】": "【地点写法】地点用口语说，不要念“城市·地点”。",
+        "【别编】": "【别编】对方没明说的（进店/点好/买好/在开车）不要替他当成事实。",
+        "【别翻旧账】": "【别翻旧账】同一个问题再问就正常再答，不说“刚说过了/问几遍了”。",
+        "【问题怎么答】": "【问题怎么答】问吃什么：先说你自己吃什么，再给一两个具体建议。",
+        "【事实锁定】": "【事实锁定】以【正在】为准，不编和地点矛盾的行程。",
+        "【聊天格式】": "【聊天格式】不要复述 @昵称、账号、群号、ID。",
+        "【长度】": "【长度】默认 1-2 句，能一句说清就一句，不列点不总结。",
+        "【人格】": "【人格】保持人格设定，不要变成客服或通用助手。",
+    }
+
+    def _lean_parts(self, parts):
+        """精简模式：合并重复禁令、去掉多余解释；full 模式原样保留。"""
+        if self.cfg_str("context_style", "lean").strip().lower() != "lean":
+            return parts
+        out = []
+        for part in parts:
+            tag = ""
+            if isinstance(part, str) and part.startswith("【"):
+                end = part.find("】")
+                if end > 0:
+                    tag = part[:end + 1]
+            if tag in self.LEAN_PARTS:
+                replacement = self.LEAN_PARTS[tag]
+                if replacement is None:
+                    continue
+                out.append(replacement)
+                continue
+            out.append(part)
+        return out
+
     async def _dynamic_context(self, event):
         await self._sync_persona_name(event)
         umo = event.unified_msg_origin
@@ -8376,6 +8428,19 @@ class HumanCorePlugin(Star):
             except Exception as exc:
                 logger.debug("[amo] 礼物上下文失败: %s" % exc)
 
+        parts = self._lean_parts(parts)
+        if (not is_group) and first_person_experience is not None:
+            body_now = event.message_str or ""
+            try:
+                if first_person_experience(body_now):
+                    parts.append(
+                        "【归属】他刚说的「" + truncate(body_now, 36) + "」是他自己的经历，不是你做的；"
+                        "不要接成“我也在/我也吃了/我也去了”。"
+                    )
+                elif now_ts() - to_float(getattr(self, "_attribution_alert", {}).get(umo, 0), 0) < 600:
+                    parts.append("【归属】上一轮你把他的经历说成了自己的；这次分清：他说的是他，你说的是你。")
+            except Exception:
+                pass
         parts.append("以上是你的内在状态，不要直接复述，只影响语气、长度和是否愿意说话。")
         return "\n".join(parts)
 
@@ -8447,6 +8512,22 @@ class HumanCorePlugin(Star):
             ))
             try:
                 text = self._guard_self_location(text, self.state.current_activity().get("place"))
+            except Exception:
+                pass
+            try:
+                if attribution_leak is not None and first_person_experience is not None:
+                    body_now = event.message_str or ""
+                    if first_person_experience(body_now) and attribution_leak(body_now, text):
+                        hits = leak_tokens(body_now, text) if leak_tokens is not None else []
+                        logger.warning(
+                            "[amo] 归属串了（%s）：他说=%s / 她说=%s"
+                            % ("、".join(hits) or "?", truncate(body_now, 40), truncate(text, 40))
+                        )
+                        alerts = getattr(self, "_attribution_alert", None)
+                        if alerts is None:
+                            alerts = {}
+                            self._attribution_alert = alerts
+                        alerts[str(event.unified_msg_origin)] = now_ts()
             except Exception:
                 pass
             if self.gift is not None:
