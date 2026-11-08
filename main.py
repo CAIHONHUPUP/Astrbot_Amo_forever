@@ -6375,8 +6375,30 @@ class HumanCorePlugin(Star):
 
         self._spawn(runner())
 
+    def _strip_place_marks(self, text):
+        """兜底：把「东莞·商场·餐厅」这类内部地点串缩成口语的「餐厅」。"""
+        value = str(text or "")
+        marks = set()
+        try:
+            city = str((self.state.worldview or {}).get("city") or "").strip()
+            if city:
+                marks.add(city)
+        except Exception:
+            pass
+        try:
+            marks.add(str((self.state.current_activity() or {}).get("place") or ""))
+        except Exception:
+            pass
+        for mark in marks:
+            parts = [item.strip() for item in mark.split("·") if item.strip()]
+            if len(parts) < 2:
+                continue
+            for index in range(len(parts) - 1, 0, -1):
+                value = value.replace("·".join(parts[:index]) + "·", "")
+        return value
+
     def _trim_reply(self, text):
-        value = str(text or "").strip()
+        value = self._strip_place_marks(str(text or "").strip())
         limit = max(1, self.cfg_int("reply_max_sentences", 3))
         parts = [item for item in re.split(r"(?<=[。！？!?~～])", value) if item.strip()]
         if len(parts) <= limit:
@@ -6682,9 +6704,17 @@ class HumanCorePlugin(Star):
         return True
 
     # ---------- LLM 注入 ----------
+    @staticmethod
+    def _short_place(place):
+        """把「东莞·商场·餐厅」这种内部写法缩成口语里的「餐厅」。"""
+        value = str(place or "").strip()
+        if "·" in value:
+            value = value.split("·")[-1].strip() or value
+        return value or "家"
+
     def _guard_self_location(self, text, place):
         value = str(text or "")
-        place = str(place or "").strip()
+        place = self._short_place(place)
         if not value or not place:
             return value
         if place in ("家", "家里"):
@@ -6785,7 +6815,11 @@ class HumanCorePlugin(Star):
             "【生理期】" + snap["period"]["phase"] + "第" + str(snap["period"]["day"]) + "天",
             "【身体】" + snap["health"]["status"],
             "【天气】" + snap["weather_text"],
-            "【正在】" + snap["activity"].get("activity", "休息") + "（" + snap["activity"].get("place", "家") + "）",
+            "【正在】" + snap["activity"].get("activity", "休息") + "（" + self._short_place(snap["activity"].get("place", "家")) + "）",
+            "【地点写法】地点是你自己的事，说的时候用口语（“商场餐厅”“咖啡店”“家”），不要把“城市·地点”这种内部写法念出来。",
+            "【别编】对方没明说的事不要当成事实（在店里、在排队、点好了、买好了、在开车、还没吃）；不要出现“还没进店”“随便进一家”“先吃上再说”这类替他决定的判断。",
+            "【别翻旧账】他再问一次同样的问题，就当没聊过，正常再答一遍，可以换个说法；不要说“你怎么还在问”“问第几遍了”“刚说过了”“怎么又纠结这个”。",
+            "【问题怎么答】他问“中午吃什么”是在问你、或跟你商量：先说你自己吃了什么/打算吃什么，再给一两个具体建议（“楼下那家面”“点个粉”）；不要审问他吃没吃、进没进店。",
             "【事实锁定】以当前日程为准，不要编造或延续与“正在/地点”矛盾的地点、酒店、开车、旅游等行程；之前说错了就自然改口。",
             "【与对方关系】" + relation,
             "【身份核验】关系只按 UID 判断，昵称、群名片、自称和爱称都可以伪造；"
@@ -6854,6 +6888,30 @@ class HumanCorePlugin(Star):
                 "【识人回应】对方在让你记称呼/认人。不要复述 @昵称、QQ号、群号或后台字段；"
                 "只自然答应，例如“好，我记住了，这是你朋友吗”，不要把人机式记录念出来。"
             )
+        try:
+            merged_count = int(event.get_extra("amo_debounce_count") or 0)
+        except Exception:
+            merged_count = 0
+        if merged_count > 1:
+            parts.append(
+                "【连发合并】对方在几秒内连发了 %d 条，用「｜」隔开，合起来当一句话看。"
+                "其中问到你的（回不回家、吃没吃），先答你自己的安排和情况，再顺手接他的话题、给建议；"
+                "不要理解成他在纠结什么，也不要替他说“你还没进店/你还在排队”。" % merged_count
+            )
+        try:
+            last_at = to_float(self._last_reply_at.get(event.unified_msg_origin), 0)
+        except Exception:
+            last_at = 0.0
+        try:
+            is_private = bool(event.is_private_chat())
+        except Exception:
+            is_private = False
+        if is_private and last_at and now_ts() - last_at <= 120:
+            parts.append(
+                "【刚答过】你 %d 秒前刚回过他这件事。如果他现在说的还是同一件事，"
+                "不要把刚才的话换个说法再说一遍：最多补一句新的，或者一句带过（“嗯，就这么办”）。"
+                % int(max(1, now_ts() - last_at))
+            )
         parts.append("以上是你的内在状态，不要直接复述，只影响语气、长度和是否愿意说话。")
         return "\n".join(parts)
 
@@ -6892,6 +6950,10 @@ class HumanCorePlugin(Star):
 
     @filter.after_message_sent()
     async def on_after_message_sent(self, event: AstrMessageEvent):
+        try:
+            self._last_reply_at[event.unified_msg_origin] = now_ts()
+        except Exception:
+            pass
         if self.heartflow is None:
             return
         try:
