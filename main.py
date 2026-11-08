@@ -3238,7 +3238,9 @@ class LLMService:
             await self.persona(umo) + "\n\n"
             + self.p.state.prompt_text(snap) + "\n"
             + self.p.state.tone_text(snap, relation) + "\n"
-            "规则：你就是角色本人，只输出要发出去的消息，不要解释、不要旁白。"
+            "规则：你就是角色本人，只输出要发出去的消息，不要解释、不要旁白。\n"
+            "一致性：你此刻在做什么以【正在】为准，不要编造；不能和你刚才说过的话矛盾"
+            "（刚才说吃过了，现在就不能说去买吃的）。"
         )
         try:
             rows = self.p.db.recent_messages(umo, 12)
@@ -3276,7 +3278,7 @@ class LLMService:
         ):
             task = (
                 "用户最后一条消息是：“" + last_user_text + "”。"
-                "先自然回应这句话，再顺带说自己刚起床/刚忙完；"
+                "先自然回应这句话，再顺带说你此刻在做什么（按【正在】说，别编）；"
                 "不要问“你还没起床吗”，不要假装没看到用户已经发过消息。"
             )
         elif kind == "meal":
@@ -3295,6 +3297,11 @@ class LLMService:
             task = "你刚刚遇到一件有趣的小事（" + self.p.state.interesting_event() + "），想和" + name + "分享。"
         else:
             task = "你突然想起" + name + "，想主动发一条消息。"
+        if last_role == "bot":
+            task += (
+                " 你们刚聊过、他最后一条你已经回过了：这次是你主动开口，"
+                "不要回答他之前问过的问题，不要重复你刚才说过的话（包括刚报过的时间、刚说过的吃的）。"
+            )
         prompt = "这是私聊。请以角色身份主动发一条消息，" + task + " 1 到 2 句，口语化。"
         if context_text:
             prompt = "最近私聊记录：\n" + context_text + "\n\n" + prompt
