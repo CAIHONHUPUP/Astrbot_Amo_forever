@@ -1011,6 +1011,24 @@
     "hint": "重启不会重置这个间隔（按数据库里的上次主动时间算），避免重启后立刻又发一条。",
     "default": 30
   },
+  "proactive_unanswered_window_minutes": {
+    "type": "int",
+    "description": "「他最后一句你还没回」的有效窗口（分钟）",
+    "hint": "只有这个时间内的未回消息，主动消息才会去接话；更早的当作旧话题，不再翻。0 = 不接话。",
+    "default": 30
+  },
+  "proactive_dedupe_enabled": {
+    "type": "bool",
+    "description": "主动消息别重复自己说过的话",
+    "hint": "开启后，生成的主动消息如果和最近几句太像，会换个说法重写一次；还像就不发。",
+    "default": true
+  },
+  "proactive_dedupe_threshold": {
+    "type": "float",
+    "description": "判定「重复」的相似度阈值",
+    "hint": "0.5~0.95，越大越宽松。默认 0.62。",
+    "default": 0.62
+  },
   "usage_stats_enabled": {
     "type": "bool",
     "description": "面板显示对话用量（token / 缓存命中 / 花费）",

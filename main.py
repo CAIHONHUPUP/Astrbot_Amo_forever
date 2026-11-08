@@ -89,6 +89,14 @@ except Exception:
             return []
 
 try:
+    from .proactive_guard import analyze_rows as _pg_analyze_rows, compose_task as _pg_compose_task, near_duplicate as _pg_near_duplicate
+except Exception:
+    try:
+        from proactive_guard import analyze_rows as _pg_analyze_rows, compose_task as _pg_compose_task, near_duplicate as _pg_near_duplicate
+    except Exception:
+        _pg_analyze_rows = _pg_compose_task = _pg_near_duplicate = None
+
+try:
     from .schedule_engine import ScheduleEngine
 except Exception:
     try:
@@ -3505,66 +3513,56 @@ class LLMService:
             rows = self.p.db.recent_messages(umo, 12)
         except Exception:
             rows = []
-        lines = []
-        last_role = ""
-        last_user_text = ""
-        last_user_at = 0.0
-        for row in rows:
-            content = str(row.get("content") or "").strip()
-            if not content:
-                continue
-            role = str(row.get("role") or "")
-            who = "用户" if role == "user" else "你"
-            try:
-                when = datetime.fromtimestamp(to_float(row.get("created_at"))).strftime("%H:%M")
-            except Exception:
-                when = ""
-            lines.append((when + " " if when else "") + who + "：" + content[:120])
-            last_role = role
-            if role == "user":
-                last_user_text = content
-                last_user_at = to_float(row.get("created_at"), 0)
-        context_text = "\n".join(lines[-10:])
-        if kind == "goodnight":
-            task = "已经很晚了，你要去睡觉了，给恋人" + name + "发一条晚安，提一句太晚了/早点睡，带上称呼，1 句，亲昵自然。"
-        elif kind == "morning":
-            task = "你刚起床/刚醒，给恋人" + name + "发早安，问一句还没起来吗/醒了没，带上爱称，1 句。"
-        elif kind == "lunch":
-            task = "到午饭时间了，问恋人" + name + "今天中午吃啥子，带一点贵州方言，1 句，自然。"
-        elif (
-            last_role == "user" and last_user_text
-            and now_ts() - last_user_at <= 6 * 3600
-        ):
-            task = (
-                "用户最后一条消息是：“" + last_user_text + "”。"
-                "先自然回应这句话，再顺带说你此刻在做什么（按【正在】说，别编）；"
-                "不要问“你还没起床吗”，不要假装没看到用户已经发过消息。"
+        analysis = _pg_analyze_rows(rows, now=now_ts()) if _pg_analyze_rows else {
+            "context_text": "",
+            "unanswered_text": "",
+            "unanswered_seconds": 0.0,
+            "unanswered_at": 0.0,
+            "recent_bot_texts": [],
+        }
+        window = max(0, self.p.cfg_int("proactive_unanswered_window_minutes", 30)) * 60
+        limit = self.p.cfg_int("max_reply_chars", 220)
+
+        def build_task(duplicate_hint=""):
+            if not _pg_compose_task:
+                return "你突然想起" + name + "，想主动发一条消息。"
+            event_text = ""
+            if kind == "share":
+                try:
+                    event_text = self.p.state.interesting_event()
+                except Exception:
+                    event_text = ""
+            return _pg_compose_task(
+                kind=kind,
+                name=name,
+                unanswered_text=analysis["unanswered_text"],
+                unanswered_seconds=analysis["unanswered_seconds"],
+                window_seconds=window,
+                recent_bot_texts=analysis["recent_bot_texts"],
+                interesting_event=event_text,
+                duplicate_hint=duplicate_hint,
             )
-        elif kind == "meal":
-            task = "你正在吃饭或刚吃完，想问问" + name + "吃了没，顺便聊两句。"
-        elif kind == "game":
-            task = "你正在玩游戏，刚遇到一件好玩的事/队友很搞笑/快通关了，想和" + name + "分享。"
-        elif kind == "slack":
-            task = "你在休息/摸鱼，有点闲，想找" + name + "聊两句。"
-        elif kind == "commute":
-            task = "你正在上班/出门的路上，想跟" + name + "说一声，1 句，自然。"
-        elif kind == "offwork":
-            task = "你下班了，想问问" + name + "下班没、到家没。"
-        elif kind == "comfort":
-            task = "你现在身体或情绪不太舒服，想找" + name + "撒个娇、求安慰。"
-        elif kind == "share":
-            task = "你刚刚遇到一件有趣的小事（" + self.p.state.interesting_event() + "），想和" + name + "分享。"
-        else:
-            task = "你突然想起" + name + "，想主动发一条消息。"
-        if last_role == "bot":
-            task += (
-                " 你们刚聊过、他最后一条你已经回过了：这次是你主动开口，"
-                "不要回答他之前问过的问题，不要重复你刚才说过的话（包括刚报过的时间、刚说过的吃的）。"
-            )
-        prompt = "这是私聊。请以角色身份主动发一条消息，" + task + " 1 到 2 句，口语化。"
-        if context_text:
-            prompt = "最近私聊记录：\n" + context_text + "\n\n" + prompt
-        return await self.chat(umo, system, prompt, limit=self.p.cfg_int("max_reply_chars", 220))
+
+        def build_prompt(task):
+            prompt = "这是私聊。请以角色身份主动发一条消息，" + task + " 1 到 2 句，口语化。"
+            if analysis["context_text"]:
+                prompt = "最近私聊记录：\n" + analysis["context_text"] + "\n\n" + prompt
+            return prompt
+
+        text = await self.chat(umo, system, build_prompt(build_task()), limit=limit)
+        if not _pg_near_duplicate or not self.p.cfg_bool("proactive_dedupe_enabled", True):
+            return text
+        threshold = self.p.cfg_float("proactive_dedupe_threshold", 0.62)
+        hit = _pg_near_duplicate(text, analysis["recent_bot_texts"], threshold)
+        if not hit:
+            return text
+        retry = await self.chat(
+            umo, system, build_prompt(build_task(duplicate_hint=hit[0])), limit=limit,
+        )
+        if retry and not _pg_near_duplicate(retry, analysis["recent_bot_texts"], threshold):
+            return retry
+        logger.info("[amo] 主动消息和最近的发言重复，跳过本次：%s" % str(text or retry or "")[:60])
+        return ""
 
     async def extract_facts(self, umo, name, lines):
         system = "你是记忆提取器。只输出 JSON 数组，不要输出其他文字。"
@@ -3877,6 +3875,7 @@ class HumanCorePlugin(Star):
         self._disturb_last = {}
         self._last_pending_check = 0.0
         self._last_proactive_activity = {}
+        self._last_bot_saved = {}
         self._last_schedule_save = ""
         self._disturb_cooldown = {}
         self._disturb_reset_at = {}
@@ -6894,17 +6893,38 @@ class HumanCorePlugin(Star):
                     await event.stop_typing()
             except Exception:
                 pass
-        try:
-            self.db.add_message(
-                event.unified_msg_origin, str(event.get_self_id()),
-                self.bot_name, "bot", text,
-            )
-        except Exception:
-            pass
+        self._remember_bot_message(event.unified_msg_origin, text)
         self._last_reply_at[event.unified_msg_origin] = now_ts()
         self.state.nudge(依恋=1, 开心=1)
         logger.info("[amo] 回复 -> %s: %s" % (event.unified_msg_origin, text[:300]))
         return True
+
+    def _remember_sent_reply(self, event, text):
+        """分段引擎没接手时（关掉分段 / 发送异常）的兜底记录。"""
+        msg_obj = getattr(event, "message_obj", None)
+        if msg_obj is not None and not getattr(msg_obj, "message_id", None):
+            return  # 别的插件伪造的主动消息事件，不是这一轮的正常回复
+        self._remember_bot_message(event.unified_msg_origin, text)
+
+    def _remember_bot_message(self, umo, text):
+        """把机器人自己发出去的话也写进 messages 表。
+
+        这张表既是主动消息的上下文，也是「这句话回过没有」的唯一依据。
+        正常回复走的是分段引擎，以前只写 AstrBot 的会话历史，表里没有，
+        主动消息就会把已经答过的话当成没答过，再答一遍。
+        """
+        umo = str(umo or "").strip()
+        text = str(text or "").strip()
+        if not umo or not text:
+            return
+        try:
+            saved = self._last_bot_saved.get(umo)
+            if saved and saved[0] == text and time.time() - saved[1] < 180:
+                return
+            self.db.add_message(umo, "bot", self.bot_name, "bot", text)
+            self._last_bot_saved[umo] = (text, time.time())
+        except Exception as exc:
+            logger.debug("[amo] 记录自己的回复失败: %s" % exc)
 
     async def _send_to_umo(self, umo, text, quote_id=None, group=False):
         text = clean_reply(text, self.cfg_int("max_reply_chars", 220))
@@ -6937,20 +6957,14 @@ class HumanCorePlugin(Star):
                 if index > 0:
                     # 前面的分段已经发出去了，返回 True，别让换边逻辑整段重发
                     partial = "\n".join(segments[:index])
-                    try:
-                        self.db.add_message(umo, "bot", self.bot_name, "bot", partial)
-                    except Exception:
-                        pass
+                    self._remember_bot_message(umo, partial)
                     self._last_reply_at[umo] = now_ts()
                     return True
                 return False
             last_sent_at = time.monotonic()
         self._last_reply_at[umo] = now_ts()
         logger.info("[amo] 主动 -> %s: %s" % (umo, text[:300]))
-        try:
-            self.db.add_message(umo, "bot", self.bot_name, "bot", text)
-        except Exception:
-            pass
+        self._remember_bot_message(umo, text)
         return True
 
     # ---------- LLM 注入 ----------
@@ -7290,6 +7304,7 @@ class HumanCorePlugin(Star):
 
             # 群聊/私聊的最终发送只交给完整本地分段引擎。
             if self.segment_engine is None or not self.cfg_bool("seg_enable", True):
+                self._remember_sent_reply(event, text)
                 return
             backup = list(result.chain)
             try:
@@ -7303,6 +7318,7 @@ class HumanCorePlugin(Star):
                 handled = False
             if not handled:
                 result.chain = backup
+                self._remember_sent_reply(event, text)
             return
         except Exception as exc:
             logger.debug("[amo] 结果装饰失败: %s" % exc)
@@ -7700,6 +7716,25 @@ class HumanCorePlugin(Star):
         gap = max(1, self.cfg_int("proactive_forced_gap_minutes", 30)) * 60
         return (now - to_float(profile.get("last_proactive", 0))) >= gap
 
+    def _forced_hour_key(self, uid):
+        return "proactive_forced_hour_" + str(uid or "")
+
+    def _forced_sent_this_hour(self, uid):
+        """「日常关心」每小时只强制一次；存数据库，热重载/重启都不清空。"""
+        mark = today_str() + ":" + str(datetime.now().hour)
+        try:
+            return str(self.db.kv_get(self._forced_hour_key(uid), "")) == mark
+        except Exception:
+            return self._last_proactive_activity.get(str(uid)) == mark
+
+    def _mark_forced_hour(self, uid):
+        mark = today_str() + ":" + str(datetime.now().hour)
+        self._last_proactive_activity[str(uid)] = mark
+        try:
+            self.db.kv_set(self._forced_hour_key(uid), mark)
+        except Exception:
+            pass
+
     # ---- 主动消息多平台轮换 ----
     def _record_channel(self, uid, umo, platform):
         """记下这个人各平台的会话地址，供主动消息选边。"""
@@ -7972,7 +8007,7 @@ class HumanCorePlugin(Star):
                 relation == "相恋"
                 and category in ("meal", "rest", "play", "commute")
                 and self._proactive_forced_allowed(profile, now)
-                and self._last_proactive_activity.get(str(profile.get("uid"))) != today_str() + ":" + str(datetime.now().hour)
+                and not self._forced_sent_this_hour(profile.get("uid"))
             )
             if not guaranteed and not forced and now - to_float(profile.get("last_proactive", 0)) < interval:
                 continue
@@ -7999,7 +8034,7 @@ class HumanCorePlugin(Star):
                 self.db.bump_proactive(profile["uid"])
                 self.db.log_proactive(profile["uid"], kind, text)
                 self._set_proactive_pending(profile["uid"], kind, text)
-                self._last_proactive_activity[str(profile.get("uid"))] = today_str() + ":" + str(datetime.now().hour)
+                self._mark_forced_hour(profile.get("uid"))
 
                 logger.debug("[amo] 主动私聊 -> %s (%s)" % (profile.get("name", ""), kind))
 
