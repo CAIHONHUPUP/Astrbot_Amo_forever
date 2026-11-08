@@ -6,6 +6,7 @@
 """
 
 import json
+import random
 import re
 import time
 import datetime
@@ -75,6 +76,15 @@ BUILTIN_RULES: Dict[str, Dict[str, str]] = {
 # ============================================================
 # 基础提示词模板
 # ============================================================
+# 群友在聊、但没有点名机器人时，随机挑一个角度插话，避免每次都像在“回答问题”
+INTERJECT_ANGLES: List[str] = [
+    "顺着他们正在聊的事接一句",
+    "接个梗或吐槽一下",
+    "补一个自己的看法",
+    "像随口问一句那样把话题接下去",
+    "说说自己此刻的想法",
+]
+
 BASE_JUDGE_PROMPT = """你是群聊机器人决策系统，判断机器人是否应该回复消息。
 
 ## 机器人身份
@@ -89,12 +99,27 @@ BASE_JUDGE_PROMPT = """你是群聊机器人决策系统，判断机器人是否
 2. 判断当前消息是否与机器人的发言存在关联：追问、回应、赞同、反驳、补充、顺着话题继续
 3. 如果当前消息是在回应机器人说过的话，continuity 必须给高分
 
-## ⚠️ 第一步：这条消息是不是在跟机器人说话
-在打分之前，先判断话题对象：
-- **在跟机器人说**：叫了机器人名字/别名、@了机器人、回复机器人上一条、接着机器人刚说的话往下聊、问“你/你呢”。
-- **不是在跟机器人说**：群友之间互相 @ / 叫别人名字 / 聊和机器人无关的事 / 群里的事务性对话（约饭、开黑、公告）。
-如果判断是「不是在跟机器人说」，relevance 和 continuity 必须给低分（接近 {score_min}），overall 不要超过阈值。
-只有在拿不准、或话题明显和机器人有关时，才按普通闲聊打分。
+## 🧠 打分之前先走一遍逻辑推理（按顺序想清楚，再打分）
+**第 1 步 · 还原现场**：读 dialogue 历史（contexts），找到最近的对话关系。
+- role 为 assistant 的是【机器人自己】说过的话，带 [昵称] 的是群友。
+- 看最近 3-5 条：谁在回答谁？有没有人的问题还悬着？现在这条在接谁的话？
+
+**第 2 步 · 判断这条消息在对谁说（target）**：
+- `bot`：叫了机器人名字/别名、@机器人、回复机器人上一条、接着机器人刚说的话题往下聊、用“你/你呢”问机器人。
+- `other`：叫了别的群友名字、@别人、两个人一问一答、明显在回应别人刚才的话。
+- `all`：抛给全群的问题、分享、感叹、群通知，没有特定对象。
+- `unknown`：信息不足，看不出来。
+
+**第 3 步 · 判断插话价值（这一步才是核心）**：
+不是“被叫到才说话”的客服；你是群里一个会自己插话的人。
+- target = bot：正常接话，relevance、continuity 可以给高分。
+- target = other / all：问自己“我接一句自然吗？”
+  - 自然：话题看得懂、能接梗、能补充、能开个玩笑、群里正冷场、大家在聊你也在参与的事 → 分数照常给，不要因为没点名就把分数压到底。
+  - 不自然：两个人在聊私事、正在争执、在解决和机器人无关的具体事务（约饭、开黑、转账）→ social、timing 给低分。
+
+**第 4 步 · 打分**：按上面的判断给 5 个维度打分。
+不要预设“不是叫我 = 全部最低分”，那样机器人就永远不会在群里说话了；
+也不要因为想说话就把明显插不进去的对话打成高分。
 
 ## 评分规则
 - 所有评分必须在 {score_min} 到 {score_max} 之间。
@@ -120,9 +145,15 @@ BASE_JUDGE_PROMPT = """你是群聊机器人决策系统，判断机器人是否
 阈值: {threshold}
 分数范围: {score_min}-{score_max}分
 
+## 结构化字段
+- `is_mentioning_bot`：这条是不是在直接叫机器人（名字/别名/@/回复机器人上一条）。
+- `context_type`：mention_bot=在叫机器人；knowledge_comment=在聊知识、新闻、作品并发表看法；question=在提问（不一定问机器人）；casual_chat=日常闲聊；other=其他。
+- `topic`：当前在聊什么，2-6 个字（如“AI技术”“晚饭”“加班”）。
+- `reply_style`：answer=直接回答；comment=插一句评论/接话；quote=引用着接更清楚（人多、指代不清时）；none=这次不该说话。
+
 ## 返回格式
 严格返回 JSON，不要输出任何其他内容：
-{{"relevance": 分数, "willingness": 分数, "social": 分数, "timing": 分数, "continuity": 分数{reasoning_part}}}
+{{"relevance": 分数, "willingness": 分数, "social": 分数, "timing": 分数, "continuity": 分数, "is_mentioning_bot": true或false, "context_type": "mention_bot|knowledge_comment|question|casual_chat|other", "topic": "2-6个字", "target": "bot|other|all|unknown", "reply_style": "answer|comment|quote|none", "thought": "一句话说明这条在对谁说、依据是什么"{reasoning_part}}}
 """
 
 # ============================================================
@@ -140,6 +171,13 @@ class JudgeResult:
     should_reply: bool = False
     confidence: float = 0.0
     overall_score: float = 0.0
+    # 这条消息在对谁说：bot / other / all / unknown
+    target: str = ""
+    # 结构化意图（小模型返回，缺省时按分数判断）
+    is_mentioning_bot: bool = False
+    context_type: str = ""
+    topic: str = ""
+    reply_style: str = ""
 
     def __post_init__(self):
         for attr in ("relevance", "willingness", "social", "timing", "continuity"):
@@ -191,6 +229,78 @@ def safe_extract_score(data: Dict[str, Any], key: str,
     try: val = float(raw)
     except (TypeError, ValueError): return SCORE_DEFAULT
     return min_val if val <= 0 else max(min_val, min(max_val, val))
+
+def _normalize_target(raw: Any) -> str:
+    """把模型返回的 target 归一化成 bot / other / all / unknown。"""
+    text = str(raw or "").strip().lower()
+    if not text:
+        return ""
+    table = {
+        "bot": "bot", "assistant": "bot", "self": "bot", "me": "bot",
+        "机器人": "bot", "自己": "bot", "叫我": "bot", "被叫": "bot", "at": "bot",
+        "other": "other", "others": "other", "member": "other", "someone": "other",
+        "别人": "other", "群友": "other", "某个人": "other", "其他人": "other",
+        "all": "all", "everyone": "all", "全体": "all", "大家": "all", "全群": "all",
+        "unknown": "unknown", "不确定": "unknown", "说不清": "unknown", "无法判断": "unknown",
+    }
+    if text in table:
+        return table[text]
+    if "机器人" in text or "bot" in text:
+        return "bot"
+    if "别人" in text or "群友" in text or "other" in text:
+        return "other"
+    if "全" in text or "all" in text or "大家" in text:
+        return "all"
+    if "unknown" in text or "不确定" in text:
+        return "unknown"
+    return ""
+
+def _normalize_style(raw: Any) -> str:
+    """把 reply_style 归一化成 answer / comment / quote / none。"""
+    text = str(raw or "").strip().lower()
+    table = {
+        "answer": "answer", "reply": "answer", "回答": "answer", "直接回答": "answer",
+        "comment": "comment", "chat": "comment", "评论": "comment", "接话": "comment", "插话": "comment",
+        "quote": "quote", "引用": "quote", "引用回复": "quote",
+        "none": "none", "silent": "none", "不说话": "none", "不回复": "none",
+    }
+    if text in table:
+        return table[text]
+    if "quote" in text or "引用" in text:
+        return "quote"
+    if "answer" in text or "回答" in text:
+        return "answer"
+    if "none" in text or "沉默" in text or "不说" in text:
+        return "none"
+    if "comment" in text or "评论" in text or "插" in text:
+        return "comment"
+    return ""
+
+
+def _normalize_context_type(raw: Any) -> str:
+    """把 context_type 归一化成 mention_bot / knowledge_comment / question / casual_chat / other。"""
+    text = str(raw or "").strip().lower()
+    table = {
+        "mention_bot": "mention_bot", "mention": "mention_bot", "at_bot": "mention_bot", "叫我": "mention_bot",
+        "knowledge_comment": "knowledge_comment", "knowledge": "knowledge_comment", "评论": "knowledge_comment", "知识": "knowledge_comment",
+        "question": "question", "ask": "question", "提问": "question", "问题": "question",
+        "casual_chat": "casual_chat", "casual": "casual_chat", "chat": "casual_chat", "闲聊": "casual_chat",
+        "other": "other", "其他": "other",
+    }
+    if text in table:
+        return table[text]
+    if "mention" in text or "at" == text:
+        return "mention_bot"
+    if "question" in text or "问" in text:
+        return "question"
+    if "knowledge" in text or "评论" in text:
+        return "knowledge_comment"
+    if "casual" in text or "聊" in text:
+        return "casual_chat"
+    if "other" in text:
+        return "other"
+    return ""
+
 
 def _extract_json(text: str) -> Dict[str, Any]:
     """从文本中提取JSON"""
@@ -487,6 +597,58 @@ class HeartflowEngine:
             if len(value) >= 2 and value in normalized:
                 return candidate
         return ""
+
+    def _retrieve_addressing(self, event: AstrMessageEvent):
+        """从最近上下文里检索证据：这条消息到底在对谁说。
+
+        返回 (target, hard)：
+          target = bot / other / all / unknown；取不到证据返回空字符串。
+          hard   = 是否硬证据（叫了机器人名字 / @ 了机器人）。硬证据可以覆盖模型判定；
+                   软证据（看起来像在接机器人的话）只在模型判不出对象时兜底。
+        这里只提供证据，不做否决——要不要说话仍由评分决定。
+        """
+        text = event.message_str or ""
+        if self._addresses_bot(text):
+            return "bot", True
+        self_id = ""
+        try:
+            self_id = str(event.get_self_id())
+        except Exception:
+            self_id = ""
+        # @ 了谁：@ 机器人 = 对机器人说；@ 别人 = 对别人说
+        try:
+            for component in (getattr(event.message_obj, "message", None) or []):
+                if isinstance(component, At):
+                    if self_id and str(getattr(component, "qq", "")) == self_id:
+                        return "bot", True
+                    return "other", True
+        except Exception:
+            pass
+        try:
+            umo = event.unified_msg_origin
+            msgs = self._get_raw_buffer(umo)
+        except Exception:
+            return "", False
+        if msgs and not msgs[-1].is_bot and msgs[-1].content == text:
+            msgs = msgs[:-1]
+        recent = msgs[-4:]
+        if not recent:
+            return "", False
+        last = recent[-1]
+        plain = re.sub(r"\s+", "", text)
+        # 上一条是机器人自己说的，这条又在接话：短句 + 疑问/第二人称，大概率是在回机器人
+        if last.is_bot and (time.time() - last.timestamp) <= 180:
+            if len(plain) <= 24 and re.search(r"[?？]|你|吗|呢|咋|怎么|为啥|为什么", text):
+                return "bot", False
+        # 提到了别的群友的昵称：在对别人说（昵称至少两个字，避免误判）
+        for msg in reversed(recent):
+            if msg.is_bot:
+                continue
+            name = re.sub(r"\s+", "", str(msg.sender_name or ""))
+            if len(name) >= 2 and name in plain and name != re.sub(r"\s+", "", text):
+                if not self._addresses_bot(name):
+                    return "other", False
+        return "", False
 
     def _log_detail(self, msg: str) -> None:
         """输出详细日志（仅当开启时）"""
@@ -866,7 +1028,7 @@ class HeartflowEngine:
                 relevance=float(self.score_max), willingness=float(self.score_max),
                 social=float(self.score_max), timing=float(self.score_max),
                 continuity=float(self.score_max), reasoning="消息直接呼叫机器人名字/别名",
-                should_reply=True, confidence=1.0, overall_score=1.0,
+                should_reply=True, confidence=1.0, overall_score=1.0, target="bot",
             )
         provider = None
         if self.judge_provider_name:
@@ -933,15 +1095,34 @@ class HeartflowEngine:
                 normalized_scores = {k: (v - self.score_min) / (self.score_max - self.score_min) for k, v in scores.items()}
                 overall = sum(normalized_scores[k] * self.weights[k] for k in self.weights)
                 should_reply = overall >= dynamic_threshold
+                target = _normalize_target(data.get("target"))
+                thought = str(data.get("thought") or "").strip()
+                mention = bool(data.get("is_mentioning_bot", False))
+                if mention:
+                    target = "bot"
+                context_type = _normalize_context_type(data.get("context_type"))
+                topic = str(data.get("topic") or "").strip()[:20]
+                style = _normalize_style(data.get("reply_style"))
+                force = bool(getattr(event, "amo_force_reply", False))
+                # 模型说“这次别说话”才压掉；如果是被点名/@，仍按对机器人说处理
+                if style == "none" and not force and not mention and target != "bot":
+                    should_reply = False
                 avg_absolute_score = sum(scores.values()) / len(scores)
                 dim_order = ["relevance", "willingness", "social", "timing", "continuity"]
                 dim_scores = " | ".join([f"{dim}:{scores[dim]:.1f}" for dim in dim_order])
+                who = {"bot": "对机器人说", "other": "对某个群友说", "all": "对全群说", "unknown": "看不出对谁说"}.get(target, "未判定对象")
+                extra = " | 类型:%s | 话题:%s | 风格:%s" % (context_type or "?", topic or "?", style or "?")
 
                 if should_reply:
-                    logger.info(f"[心流] 📊 评分模式: {overall:.3f}/{dynamic_threshold:.2f} (均分:{avg_absolute_score:.1f}分) | ✅触发 | 活跃度:{activity_desc}({activity:.0%}) | {data.get('reasoning', '')} | 各维度: {dim_scores}")
+                    logger.info(f"[心流] 📊 评分模式: {overall:.3f}/{dynamic_threshold:.2f} (均分:{avg_absolute_score:.1f}分) | ✅触发 | {who}{extra} | 活跃度:{activity_desc}({activity:.0%}) | {thought or data.get('reasoning', '')} | 各维度: {dim_scores}")
                 else:
-                    logger.info(f"[心流] 📊 评分模式: {overall:.3f}/{dynamic_threshold:.2f} (均分:{avg_absolute_score:.1f}分) | ❌跳过 | 活跃度:{activity_desc}({activity:.0%}) | {data.get('reasoning', '')} | 各维度: {dim_scores}")
-                return JudgeResult(**scores, reasoning=data.get("reasoning", ""), should_reply=should_reply, confidence=overall, overall_score=overall)
+                    logger.info(f"[心流] 📊 评分模式: {overall:.3f}/{dynamic_threshold:.2f} (均分:{avg_absolute_score:.1f}分) | ❌跳过 | {who}{extra} | 活跃度:{activity_desc}({activity:.0%}) | {thought or data.get('reasoning', '')} | 各维度: {dim_scores}")
+                return JudgeResult(
+                    **scores, reasoning=data.get("reasoning", "") or thought,
+                    should_reply=should_reply, confidence=overall, overall_score=overall,
+                    target=target or "unknown", is_mentioning_bot=mention,
+                    context_type=context_type, topic=topic, reply_style=style,
+                )
             except (json.JSONDecodeError, ValueError):
                 if attempt == self.judge_max_retries:
                     return JudgeResult(should_reply=False, reasoning="JSON解析失败")
@@ -967,7 +1148,7 @@ class HeartflowEngine:
                 relevance=float(self.score_max), willingness=float(self.score_max),
                 social=float(self.score_max), timing=float(self.score_max),
                 continuity=float(self.score_max), reasoning="消息直接呼叫机器人名字/别名",
-                should_reply=True, confidence=1.0, overall_score=1.0,
+                should_reply=True, confidence=1.0, overall_score=1.0, target="bot",
             )
         provider = None
         if self.judge_provider_name:
@@ -1000,12 +1181,16 @@ class HeartflowEngine:
 你必须先找到机器人最近说了什么，然后判断当前消息与机器人发言的关系。
 
 ## 沉浸模式判断规则
+先按顺序推理：① 从对话历史还原最近谁在跟谁说话 ② 判断当前这条在对谁说（bot / other / all / unknown）
+③ 再决定要不要说话。
+
 你的默认倾向是 **不回复**。只有在以下情况之一时才回复：
 1. 消息直接 @ 了机器人或提到机器人名字
 2. 消息明确向机器人提问
 3. 消息是机器人发起的对话的延续
 4. 消息内容与机器人刚聊的话题直接相关
 5. 群聊中出现冷场，机器人的回复能自然活跃气氛
+6. 群里正聊得热闹、话题轻松，机器人插一句能接上（不要求被点名）
 
 ## 当前状态
 - 模式: 沉浸模式 | 剩余: {remaining}秒 | 活跃度: {activity_desc} ({activity:.0%})
@@ -1014,9 +1199,9 @@ class HeartflowEngine:
 [{event.get_sender_name()}] {event.message_str}
 
 ## 严格判断
-根据上述规则严格判断。沉默也是好的选择。
+根据上述规则严格判断。沉默也是好的选择，但不要因为“没叫我”就一律沉默。
 严格返回 JSON：
-{{"should_reply": true或false{immersive_reasoning_part}}}
+{{"should_reply": true或false, "target": "bot|other|all|unknown", "thought": "一句话说明在对谁说"{immersive_reasoning_part}}}
 """
         for attempt in range(self.judge_max_retries + 1):
             try:
@@ -1028,11 +1213,13 @@ class HeartflowEngine:
                 )
                 data = _extract_json(resp.completion_text.strip())
                 should_reply = bool(data.get("should_reply", False))
+                target = _normalize_target(data.get("target")) or "unknown"
+                thought = str(data.get("thought") or "").strip()
                 if should_reply:
-                    logger.info(f"[心流] 🌊 沉浸模式: ✅触发 | 剩余{remaining}秒 | 活跃度:{activity_desc}({activity:.0%}) | {data.get('reasoning', '')}")
+                    logger.info(f"[心流] 🌊 沉浸模式: ✅触发 | 对象:{target} | 剩余{remaining}秒 | 活跃度:{activity_desc}({activity:.0%}) | {thought or data.get('reasoning', '')}")
                 else:
-                    logger.info(f"[心流] 🌊 沉浸模式: ❌跳过 | 剩余{remaining}秒 | 活跃度:{activity_desc}({activity:.0%}) | {data.get('reasoning', '')}")
-                return JudgeResult(should_reply=should_reply, reasoning=data.get("reasoning", ""), confidence=1.0 if should_reply else 0.0, overall_score=1.0 if should_reply else 0.0)
+                    logger.info(f"[心流] 🌊 沉浸模式: ❌跳过 | 对象:{target} | 剩余{remaining}秒 | 活跃度:{activity_desc}({activity:.0%}) | {thought or data.get('reasoning', '')}")
+                return JudgeResult(should_reply=should_reply, reasoning=data.get("reasoning", "") or thought, confidence=1.0 if should_reply else 0.0, overall_score=1.0 if should_reply else 0.0, target=target)
             except (json.JSONDecodeError, ValueError):
                 if attempt == self.judge_max_retries:
                     return JudgeResult(should_reply=False, reasoning="JSON解析失败")
@@ -1084,6 +1271,57 @@ class HeartflowEngine:
 
             if res.should_reply:
                 mode_name = "immersive" if is_immersive else "score"
+                # 心流判定通过后，再检索一次上下文：这条到底是不是在跟机器人说。
+                # 是 → 按这条消息接话；不是 → 随机挑个角度插进他们的话题里，而不是沉默。
+                # 优先级：模型的语义判定 > 上下文检索的软证据；只有硬证据（叫名字 / @）才覆盖模型。
+                target = res.target or "unknown"
+                hinted, hard = self._retrieve_addressing(event)
+                if hard:
+                    target = hinted
+                elif target in ("", "unknown") and hinted:
+                    target = hinted
+                style = res.reply_style or ""
+                if style == "none":
+                    style = "comment" if target != "bot" else "answer"
+
+                # 回复方式：以模型的 context_type / reply_style 为主，target 兜底。
+                # 「AI好强」这类感慨 → knowledge_comment → 插话；
+                # 「你觉得AI强吗」→ 对机器人说 / question → 直接回答。
+                if target == "bot" or res.is_mentioning_bot:
+                    mode_hint = "direct"
+                elif res.context_type == "knowledge_comment":
+                    mode_hint = "interject"
+                elif style == "answer":
+                    mode_hint = "direct"
+                elif res.context_type == "question" and target in ("all", "unknown"):
+                    # 群里公开提问，机器人正面答一句是自然的
+                    mode_hint = "direct"
+                else:
+                    mode_hint = "interject"
+
+                setattr(event, "heartflow_target", target)
+                setattr(event, "heartflow_thought", res.reasoning or "")
+                setattr(event, "heartflow_context_type", res.context_type or "")
+                setattr(event, "heartflow_topic", res.topic or "")
+                setattr(event, "heartflow_reply_style", style)
+                if style == "quote":
+                    # 人多、指代不清时，她判断“引用着说更清楚”
+                    setattr(event, "amo_quote_hint", True)
+
+                if mode_hint == "direct":
+                    setattr(event, "heartflow_mode_hint", "direct")
+                    logger.info(
+                        "[心流] 🎯 对象:%s(%s) 类型:%s → 按这条消息直接回（%s）"
+                        % (target, "硬证据" if hard else "模型判定", res.context_type or "?", (res.reasoning or "")[:40])
+                    )
+                else:
+                    angle = random.choice(INTERJECT_ANGLES)
+                    setattr(event, "heartflow_mode_hint", "interject")
+                    setattr(event, "heartflow_angle", angle)
+                    logger.info(
+                        "[心流] 💬 对象:%s 类型:%s 话题:%s → 插话角度「%s」"
+                        % (target, res.context_type or "?", res.topic or "?", angle)
+                    )
                 state.pending_heartflow_reply = True
                 state.pending_heartflow_mode = mode_name
                 self._set_judgment_paused(umo, paused=True)

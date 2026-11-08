@@ -38,6 +38,7 @@ class FakeDB:
         return self.messages[-max(1, int(limit)):]
 
     def add_memory(self, uid, content, kind="fact", tier=0, **kwargs):
+        # 真实插件的记忆已经交给外挂插件，这里只为兼容旧断言保留
         self.memories.append({"uid": str(uid), "content": content, "kind": kind, "tier": tier})
         return True
 
@@ -74,7 +75,6 @@ class FakePlugin:
             "gift_max_wall_items": 8,
             "gift_allow_big": False,
             "gift_only_shopping": True,
-            "enable_memory": True,
         }
 
     def cfg_bool(self, key, default=False):
@@ -89,6 +89,10 @@ class FakePlugin:
 
     def cfg_str(self, key, default=""):
         return str(self.config.get(key, default) or "")
+
+    def _external_memory_write(self, uid, content, kind="fact", tier=1):
+        """真实插件把记忆写进外挂记忆模块；测试里记到 FakeDB 上方便断言。"""
+        return self.db.add_memory(uid, content, kind, tier)
 
     @staticmethod
     def _canonical_uid(event):

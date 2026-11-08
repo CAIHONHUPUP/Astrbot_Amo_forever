@@ -133,7 +133,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.4.2"
+PLUGIN_VERSION = "5.5.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -240,8 +240,6 @@ ANGRY_WORDS = ("滚", "闭嘴", "傻", "废物", "烦死", "气死", "去死", "
 SAD_WORDS = ("难过", "伤心", "想哭", "委屈", "孤单", "没人", "算了", "失望", "哭")
 AFFECTION_WORDS = ("喜欢", "爱你", "想你", "抱抱", "亲亲", "贴贴", "宝贝", "老婆", "宝宝", "么么")
 INSULT_WORDS = ("傻逼", "智障", "废物", "垃圾", "去死", "恶心", "滚")
-STOP_NAMES = {"学生", "上班族", "男孩子", "女孩子", "男生", "女生", "人", "谁", "你的",
-              "我", "你", "他", "她", "一个", "一只", "这里", "那儿", "好人", "坏人"}
 
 
 # ---------------------------------------------------------------------------
@@ -536,62 +534,6 @@ def clean_reply(text, limit=300):
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()[:limit]
-
-
-def _clean_fact_value(value):
-    value = re.sub(r"[，。！？!?~～\s]+$", "", str(value)).strip()
-    return value[:40]
-
-
-def extract_facts(text):
-    text = text or ""
-    facts = []
-
-    def add(content, kind="fact", tier=1):
-        content = _clean_fact_value(content)
-        if content and len(content) >= 2:
-            facts.append({"content": content, "kind": kind, "tier": tier})
-
-    match = re.search(
-        r"(?:我叫|我的名字(?:是|叫)|叫我|我是)\s*([\u4e00-\u9fa5A-Za-z0-9_]{1,12})", text
-    )
-    if match and match.group(1) not in STOP_NAMES:
-        add("名字是" + match.group(1), "name", 2)
-
-    match = re.search(
-        r"(?:我(?:的)?生日(?:是|在)?|生日(?:是|在))\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?", text
-    )
-    if match:
-        add("生日是%02d月%02d日" % (to_int(match.group(1)), to_int(match.group(2))), "birthday", 2)
-
-    match = re.search(r"我(?:最)?(?:喜欢|爱|中意|偏爱)\s*([^，。！？!?\n]{1,30})", text)
-    if match:
-        add("喜欢" + match.group(1), "preference", 1)
-
-    match = re.search(r"我(?:最)?(?:讨厌|不喜欢|害怕|怕)\s*([^，。！？!?\n]{1,30})", text)
-    if match:
-        add("讨厌或害怕" + match.group(1), "preference", 1)
-
-    match = re.search(r"我(?:住在|家在|现在在)\s*([\u4e00-\u9fa5]{2,12})(?:市|区|县|镇|附近)?", text)
-    if match:
-        add("住在" + match.group(1), "place", 1)
-
-    match = re.search(r"我(?:在)\s*([\u4e00-\u9fa5A-Za-z0-9]{2,20}?)(?:上班|工作|上学|读书)", text)
-    if match:
-        add("在" + match.group(1) + "上班或上学", "work", 1)
-
-    match = re.search(r"我(?:养了|有一只|有一只叫)\s*([^，。！？!?\n]{1,16})", text)
-    if match:
-        add("养了" + match.group(1), "pet", 1)
-
-    match = re.search(r"我(?:今年)?\s*(\d{1,2})\s*岁", text)
-    if match:
-        add("今年%s岁" % match.group(1), "age", 1)
-
-    if "生日" in text and "今天" in text:
-        add("今天提到了生日", "birthday_hint", 1)
-
-    return facts
 
 
 # ---------------------------------------------------------------------------
@@ -1181,21 +1123,6 @@ def merge_uid_alias_data(conn, alias_map):
             )
             report["profiles"] += 1
 
-        # 记忆：改归属 + 只对"别名带来的"正文去重（不误伤主 uid 自己的同名记忆）
-        try:
-            alias_contents = [r[0] for r in cur.execute(
-                "SELECT DISTINCT content FROM memories WHERE uid=?", (alias_uid,))]
-            cur.execute("UPDATE memories SET uid=? WHERE uid=?", (canon_uid, alias_uid))
-            report["memories"] += cur.rowcount or 0
-            for content in alias_contents:
-                cur.execute(
-                    "DELETE FROM memories WHERE uid=? AND content=? AND rowid NOT IN "
-                    "(SELECT MIN(rowid) FROM memories WHERE uid=? AND content=?)",
-                    (canon_uid, content, canon_uid, content),
-                )
-        except Exception:
-            pass
-
         # 消息：改归属 + 只对"别名带来的"那几条去重
         try:
             alias_msgs = [tuple(r) for r in cur.execute(
@@ -1388,18 +1315,6 @@ class AmoDB:
                     relation_at REAL DEFAULT 0,
                     is_admin INTEGER DEFAULT 0
                 );
-                CREATE TABLE IF NOT EXISTS memories (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    uid TEXT DEFAULT '',
-                    content TEXT DEFAULT '',
-                    kind TEXT DEFAULT 'fact',
-                    tier INTEGER DEFAULT 0,
-                    created_at REAL DEFAULT 0,
-                    last_hit REAL DEFAULT 0,
-                    hits INTEGER DEFAULT 0,
-                    expires_at REAL
-                );
-                CREATE INDEX IF NOT EXISTS idx_mem_uid ON memories(uid);
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     umo TEXT DEFAULT '',
@@ -1476,21 +1391,6 @@ class AmoDB:
                         "INSERT OR IGNORE INTO profiles(uid, relation, msg_count, first_seen, last_seen) "
                         "VALUES(?,?,?,?,?)",
                         (row["uid"], row["relation"] or "普通", row["mem_count"] or 0, now_ts(), now_ts()),
-                    )
-            has_old_mem = self.conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='memory'"
-            ).fetchone()
-            if has_old_mem:
-                rows = self.conn.execute(
-                    "SELECT uid, content, is_important FROM memory"
-                ).fetchall()
-                for row in rows:
-                    tier = 1 if row["is_important"] else 0
-                    self.conn.execute(
-                        "INSERT INTO memories(uid, content, kind, tier, created_at, last_hit, hits, expires_at) "
-                        "VALUES(?,?,?,?,?,?,0,?)",
-                        (row["uid"], row["content"], "legacy", tier, now_ts(), now_ts(),
-                         None if tier >= 2 else now_ts() + (14 if tier == 1 else 7) * 86400),
                     )
             self.conn.commit()
         except Exception as exc:
@@ -1892,101 +1792,6 @@ class AmoDB:
             )
             self.conn.commit()
 
-    # ---------- 记忆 ----------
-    def add_memory(self, uid, content, kind="fact", tier=0,
-                   normal_days=7, important_days=14):
-        content = (content or "").strip()
-        if not uid or not content:
-            return False
-        now = now_ts()
-        tier = to_int(tier, 0)
-        expires = None
-        if tier <= 0:
-            expires = now + max(1, normal_days) * 86400
-        elif tier == 1:
-            expires = now + max(1, important_days) * 86400
-        with self.lock:
-            row = self.conn.execute(
-                "SELECT id FROM memories WHERE uid=? AND content=? LIMIT 1",
-                (str(uid), content),
-            ).fetchone()
-            if row:
-                self.conn.execute(
-                    "UPDATE memories SET last_hit=?, hits=hits+1, expires_at=?, "
-                    "tier=MAX(tier, ?) WHERE id=?",
-                    (now, expires, tier, row["id"]),
-                )
-            else:
-                self.conn.execute(
-                    "INSERT INTO memories(uid, content, kind, tier, created_at, last_hit, "
-                    "hits, expires_at) VALUES(?,?,?,?,?,?,0,?)",
-                    (str(uid), content, kind, tier, now, now, expires),
-                )
-            self.conn.commit()
-        return True
-
-    def search_memories(self, uid, query, limit=6, normal_days=7, important_days=14):
-        now = now_ts()
-        with self.lock:
-            rows = self.conn.execute(
-                "SELECT * FROM memories WHERE uid=? AND (expires_at IS NULL OR expires_at>?) "
-                "ORDER BY tier DESC, last_hit DESC, id DESC LIMIT 200",
-                (str(uid), now),
-            ).fetchall()
-            query_tokens = tokens(query)
-            scored = []
-            for row in rows:
-                item = dict(row)
-                score = overlap(query_tokens, tokens(item.get("content", "")))
-                score += 0.08 * to_int(item.get("tier"))
-                score += 0.02 * min(3, to_int(item.get("hits")))
-                if score > 0 or not query_tokens:
-                    scored.append((score, item))
-            scored.sort(key=lambda pair: (-pair[0], -to_int(pair[1].get("id"))))
-            result = [item for _, item in scored[:max(1, int(limit))]]
-            for item in result:
-                tier = to_int(item.get("tier"))
-                expires = None
-                if tier == 0:
-                    expires = now + normal_days * 86400
-                elif tier == 1:
-                    expires = now + important_days * 86400
-                self.conn.execute(
-                    "UPDATE memories SET hits=hits+1, last_hit=?, expires_at=? WHERE id=?",
-                    (now, expires, item["id"]),
-                )
-                item["expires_at"] = expires
-            self.conn.commit()
-        return result
-
-    def list_memories(self, uid, limit=30):
-        with self.lock:
-            rows = self.conn.execute(
-                "SELECT * FROM memories WHERE uid=? ORDER BY tier DESC, last_hit DESC, id DESC LIMIT ?",
-                (str(uid), int(limit)),
-            ).fetchall()
-        return [dict(row) for row in rows]
-
-    def delete_memory(self, memory_id):
-        with self.lock:
-            self.conn.execute("DELETE FROM memories WHERE id=?", (to_int(memory_id),))
-            self.conn.commit()
-        return True
-
-    def count_memories(self, uid):
-        with self.lock:
-            row = self.conn.execute(
-                "SELECT COUNT(*) AS c FROM memories WHERE uid=? AND "
-                "(expires_at IS NULL OR expires_at>?)", (str(uid), now_ts())
-            ).fetchone()
-        return int(row["c"]) if row else 0
-
-    def purge_memories(self):
-        with self.lock:
-            self.conn.execute("DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at<?",
-                              (now_ts(),))
-            self.conn.commit()
-
     # ---------- 消息 ----------
     def add_message(self, umo, uid, name, role, content):
         content = str(content or "").strip()
@@ -2135,10 +1940,7 @@ class AmoDB:
     def counts(self):
         with self.lock:
             profiles = self.conn.execute("SELECT COUNT(*) AS c FROM profiles").fetchone()["c"]
-            memories = self.conn.execute(
-                "SELECT COUNT(*) AS c FROM memories WHERE expires_at IS NULL OR expires_at>?",
-                (now_ts(),),
-            ).fetchone()["c"]
+            memories = 0
             messages = self.conn.execute("SELECT COUNT(*) AS c FROM messages").fetchone()["c"]
         return {"profiles": profiles, "memories": memories, "messages": messages}
 
@@ -3506,6 +3308,16 @@ class LLMService:
         }
         window = max(0, self.p.cfg_int("proactive_unanswered_window_minutes", 30)) * 60
         limit = self.p.cfg_int("max_reply_chars", 220)
+        # 记忆只来自外挂记忆插件；主动消息也带上，免得她说得像个陌生人
+        memory_text = ""
+        try:
+            uid = str(profile.get("uid") or "")
+            if uid:
+                _, memory_text = await self.p._recall(uid, "", None)
+        except Exception:
+            memory_text = ""
+        if memory_text:
+            system = system + "\n【关于他的记忆】\n" + memory_text
 
         def build_task(duplicate_hint=""):
             if not _pg_compose_task:
@@ -3531,6 +3343,8 @@ class LLMService:
             prompt = "这是私聊。请以角色身份主动发一条消息，" + task + " 1 到 2 句，口语化。"
             if analysis["context_text"]:
                 prompt = "最近私聊记录：\n" + analysis["context_text"] + "\n\n" + prompt
+            if memory_text:
+                prompt = "你记得关于他的事：\n" + memory_text + "\n\n" + prompt
             return prompt
 
         text = await self.chat(umo, system, build_prompt(build_task()), limit=limit)
@@ -4006,28 +3820,6 @@ class HumanCorePlugin(Star):
     def _dialect_region(self):
         style = self._dialect_style().strip()
         return DIALECT_REGIONS.get(style, style)
-
-    def _apply_dialect(self, text):
-        """按语境偶尔替换一个方言词；不改变整体意思。"""
-        text = str(text or "")
-        if not text or not self.cfg_bool("dialect_enabled", True):
-            return text
-        if not self.cfg_bool("dialect_auto_replace", False):
-            return text
-        if random.random() > clamp(self.cfg_float("dialect_prob", 0.08), 0.0, 1.0):
-            return text
-        try:
-            rows = self._dialect_rows()
-        except Exception:
-            return text
-        candidates = [
-            row for row in rows
-            if row.get("meaning") and row["meaning"] in text and row.get("term") not in text
-        ]
-        if not candidates:
-            return text
-        row = random.choice(candidates)
-        return text.replace(str(row["meaning"]), str(row["term"]), 1)
 
     def scenic_spots(self):
         if getattr(self, "_scenic_cache", None):
@@ -4822,17 +4614,10 @@ class HumanCorePlugin(Star):
             affection -= 2
         affection = int(clamp(affection, 0, 100))
 
-        if self.cfg_bool("enable_memory", True):
-            for fact in extract_facts(text):
-                self.db.add_memory(
-                    uid, fact["content"], fact["kind"], fact["tier"],
-                    self.cfg_int("mem_days_normal", 7),
-                    self.cfg_int("mem_days_important", 14),
-                )
-                if fact["kind"] == "birthday":
-                    match = re.search(r"生日是(\d{2})月(\d{2})日", fact["content"])
-                    if match:
-                        self.db.update_profile(uid, birthday="%s-%s" % (match.group(1), match.group(2)))
+        # 记忆只在外挂记忆插件里；这里只把生日这种档案字段记进画像。
+        match = re.search(r"生日(?:是|在)?\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?", text or "")
+        if match:
+            self.db.update_profile(uid, birthday="%02d-%02d" % (to_int(match.group(1)), to_int(match.group(2))))
 
         fields = {"affection": affection}
         relation = profile.get("relation", "普通")
@@ -5043,6 +4828,22 @@ class HumanCorePlugin(Star):
             and str(row.get("uid") or "")
         }
         return len(speakers)
+
+    def _should_quote_group(self, umo):
+        """群聊要不要引用原消息：只看最近聊天人数有没有超过阈值。
+
+        没有单独的开关键；阈值填 0 就是不引用。
+        """
+        try:
+            threshold = self.cfg_int("quote_group_speaker_threshold", 3)
+        except Exception:
+            threshold = 3
+        if threshold <= 0:
+            return False
+        try:
+            return self._group_speaker_count(umo) >= threshold
+        except Exception:
+            return False
 
     @staticmethod
     def _is_memory_companion(plugin):
@@ -5322,6 +5123,47 @@ class HumanCorePlugin(Star):
         service = getattr(plugin, "service", None)
         return service if service is not None else plugin
 
+    WRITE_METHODS = (
+        "add_memory", "remember", "save_memory", "store_memory",
+        "add_fact", "ingest_memory", "write_memory",
+    )
+
+    def _external_memory_write(self, uid, content, kind="fact", tier=1):
+        """把一条记忆写进外挂记忆插件；写不进去就安静跳过（本插件不再存记忆）。"""
+        content = re.sub(r"\s+", " ", str(content or "")).strip()
+        if not content:
+            return False
+        target = self._memory_plugin_target()
+        if target is None:
+            return False
+        for name in self.WRITE_METHODS:
+            method = getattr(target, name, None)
+            if not callable(method):
+                continue
+            for args in (
+                (str(uid), content),
+                (content,),
+                (str(uid), content, kind, int(tier)),
+            ):
+                try:
+                    result = method(*args)
+                    if asyncio.iscoroutine(result):
+                        # 异步写入接口：丢到事件循环里跑，不阻塞当前回合
+                        try:
+                            asyncio.get_running_loop().create_task(result)
+                        except RuntimeError:
+                            result.close()
+                        logger.debug("[amo] 记忆已交给外挂插件异步写入(%s): %s" % (name, content[:40]))
+                        return True
+                    logger.debug("[amo] 记忆已写入外挂插件(%s): %s" % (name, content[:40]))
+                    return True
+                except TypeError:
+                    continue
+                except Exception as exc:
+                    logger.debug("[amo] 记忆写入 %s 失败: %s" % (name, exc))
+                    break
+        return False
+
     @staticmethod
     def _memory_hit_item(hit):
         """把插件返回的一条命中转成 amo 的记忆条目；不认识的结构返回 None。"""
@@ -5395,30 +5237,6 @@ class HumanCorePlugin(Star):
         for item in picked:
             item["source"] = item.get("source") or "external"
             items.append(item)
-        return items
-
-    def _local_memory_recall(self, uid, text, limit):
-        """兼容旧配置：amo 自己的记忆（陪伴插件 data + 本地表），enable_memory 控制。"""
-        items = []
-        source = self.cfg_str("memory_source", "auto").strip().lower()
-        if source in ("auto", "companion"):
-            try:
-                items.extend(self._companion_memories(uid, text))
-            except Exception as exc:
-                logger.debug("[amo] 陪伴插件记忆读取失败: %s", exc)
-        if source in ("auto", "local") or not items:
-            try:
-                for item in self.db.search_memories(
-                    uid,
-                    text,
-                    limit=limit,
-                    normal_days=self.cfg_int("mem_days_normal", 7),
-                    important_days=self.cfg_int("mem_days_important", 14),
-                ):
-                    item["source"] = "local"
-                    items.append(item)
-            except Exception as exc:
-                logger.debug("[amo] 本地记忆检索失败: %s", exc)
         return items
 
     def _memcomp_all_memories(self, uid, keyword="", limit=50):
@@ -6347,13 +6165,14 @@ class HumanCorePlugin(Star):
             self.db.update_profile(uid, **fields)
 
     async def _recall(self, uid, text, event=None):
-        """记忆来自外挂记忆插件（牢记等）；amo 自己的本地记忆只在 enable_memory=true 时参与。"""
+        """记忆只来自外挂记忆插件（我会牢牢记住你 / 天使之魂 / livingmemory）。
+
+        本插件不再自带记忆库：先走插件的检索接口，再退回直读它的库。
+        """
         limit = self.cfg_int("memory_recall_limit", 6)
         memories = await self._external_memory_recall(event, text, limit)
         if not memories:
             memories = self._external_memory_fallback(uid, text, limit)
-        if self.cfg_bool("enable_memory", True):
-            memories.extend(self._local_memory_recall(uid, text, limit))
 
         unique = []
         seen = set()
@@ -6841,10 +6660,24 @@ class HumanCorePlugin(Star):
             "【人格】保持上面的人格设定，不要变成通用助手或客服；即使回答咨询也要用自己的口吻。",
         ]
         if group:
-            system_parts.append(
-                "【群聊】这是群聊，不是你和他私聊，群里还有别人。只有这条消息明确在叫你/回你时才正常接话；"
-                "如果只是群友之间互相聊、或和你无关，就别硬接话、别把话抢过来，更不要用恋人的语气。"
-            )
+            target = str(getattr(event, "heartflow_target", "") or "")
+            angle = str(getattr(event, "heartflow_angle", "") or "")
+            if target == "bot" or getattr(event, "heartflow_mode_hint", "") == "direct":
+                system_parts.append(
+                    "【群聊·对你说】这是群聊，不是私聊。这条是在跟你说话（叫了你的名字/@你/接你的话），"
+                    "正常回答说话的人，不要客服腔，也不要用错人的关系。"
+                )
+            elif target:
+                system_parts.append(
+                    "【群聊·插话】这是群聊，这条不是在叫你，你只是自己想插一句：" + angle + "。"
+                    "1-2 句、自然、像群里随口说话；不要把它当成别人问你的问题来回答，"
+                    "不要复述对方的话，不要突然报日程，不要用恋人语气，也别抢话题。"
+                )
+            else:
+                system_parts.append(
+                    "【群聊】这是群聊，不是你和他私聊，群里还有别人。先看上下文判断这条是不是在跟你说话；"
+                    "在跟你说话就正常回答，如果是群友之间在聊，你也可以自然插一句，但别抢话、别用恋人语气。"
+                )
         system_parts.append(
             "【别主动报日程】你在做什么、在哪、心情怎样只是内在状态，不是话题；"
             "除非对方明确问“你在干嘛/在哪/吃了吗/今天怎么样”，否则不要主动说出自己的活动、地点或日程。"
@@ -6999,7 +6832,6 @@ class HumanCorePlugin(Star):
         text = clean_reply(text, self.cfg_int("max_reply_chars", 220))
         if looks_like_ai_admission(text):
             text = "你才人机呢，你见过这么会聊天的机器人吗？"
-        text = self._apply_dialect(text)
         if not text:
             return False
         if group is None:
@@ -7015,7 +6847,7 @@ class HumanCorePlugin(Star):
             chain = []
             if (
                 group and index == 0 and quote_id is not None
-                and self.cfg_bool("quote_group_reply", True)
+                and self._should_quote_group(event.unified_msg_origin)
             ):
                 try:
                     chain.append(Comp.Reply(id=quote_id))
@@ -7068,7 +6900,6 @@ class HumanCorePlugin(Star):
 
     async def _send_to_umo(self, umo, text, quote_id=None, group=False):
         text = clean_reply(text, self.cfg_int("max_reply_chars", 220))
-        text = self._apply_dialect(text)
         if not text or not umo:
             return False
         segments = self._segment(text)
@@ -7083,7 +6914,7 @@ class HumanCorePlugin(Star):
             chain = []
             if (
                 group and index == 0 and quote_id is not None
-                and self.cfg_bool("quote_group_reply", True)
+                and self._should_quote_group(umo)
             ):
                 try:
                     chain.append(Comp.Reply(id=quote_id))
@@ -7211,8 +7042,14 @@ class HumanCorePlugin(Star):
             is_group = False
         addressed = False
         if is_group:
+            # 心流触发时会把 is_at_or_wake_command 也置 True（那是它自己的“该说话了”标记），
+            # 不能当成“在点名跟我说话”，否则插话会被写成正面回答。
+            hf_hint = str(getattr(event, "heartflow_mode_hint", "") or "")
+            triggered_by_hf = bool(getattr(event, "heartflow_triggered", False))
             try:
-                if getattr(event, "is_at_or_wake_command", False):
+                if getattr(event, "is_at_or_wake_command", False) and not (
+                    triggered_by_hf and hf_hint == "interject"
+                ):
                     addressed = True
             except Exception:
                 addressed = False
@@ -7259,17 +7096,41 @@ class HumanCorePlugin(Star):
             "【人格】保持上面的人格设定，不要变成通用助手或客服；即使回答咨询也要用自己的口吻。",
         ]
         if is_group:
-            parts.append(
-                "【群聊】这是群聊，不是你和他私聊，群里还有别的成员，说话的是 " + sender_nick + "。"
-                + ("这条消息是**明确叫你/回你**的，可以正常接话。" if addressed else
-                   "这条消息**没有叫你的名字，也不一定是在跟你说话**：先看上下文——"
-                   "如果只是群友之间互相聊、或和你无关的话题，就别硬接、别把话抢过来，"
-                   "更不要用恋人或女朋友的语气。")
-            )
+            target = str(getattr(event, "heartflow_target", "") or "")
+            angle = str(getattr(event, "heartflow_angle", "") or "")
+            mode = str(getattr(event, "heartflow_mode_hint", "") or "")
+            if mode == "direct" or addressed or target == "bot":
+                parts.append(
+                    "【群聊·对你说】这是群聊，说话的是 " + sender_nick + "。这条是在跟你说话"
+                    "（叫了你的名字 / @你 / 接着你的话说），正常回答他，不要客服腔，也不要串到别人的关系上。"
+                )
+            elif mode == "interject" or target:
+                parts.append(
+                    "【群聊·插话】这是群聊，说话的是 " + sender_nick + "。这条不是在叫你，"
+                    "你只是自己想插一句：先把上下文里他们在聊的事看懂，再" + (angle or "顺着话题接一句") + "。"
+                    "要求：1-2 句、自然、像群里随口说话；不要把它当成别人问你的问题来回答，"
+                    "不要复述对方的话，不要突然报自己的日程或地点，不要用恋人语气，也别把话题抢过来。"
+                )
+            else:
+                parts.append(
+                    "【群聊】这是群聊，不是你和他私聊，群里还有别的成员，说话的是 " + sender_nick + "。"
+                    "先看上下文判断这条是不是在跟你说话：在跟你说话就正常回答；"
+                    "如果是群友之间在聊，你也可以自然插一句，但别抢话、别用恋人语气。"
+                )
             parts.append(
                 "【群聊称呼】不要叫群里的人“老公/宝贝/亲爱的”，除非关系确实是相恋；"
                 "对普通群友就叫昵称或“你”。"
             )
+            try:
+                speakers = self._group_speaker_count(umo)
+            except Exception:
+                speakers = 0
+            quote_at = self.cfg_int("quote_group_speaker_threshold", 3)
+            if speakers:
+                parts.append(
+                    "【群聊人数】最近十分钟有 %d 个人在说话%s。"
+                    % (speakers, "，人多、消息刷得快，回话尽量短" if quote_at > 0 and speakers >= quote_at else "")
+                )
         parts.append(
             "【别主动报日程】你在做什么、在哪、心情怎样，是你的内在状态，**不是话题**。"
             "除非他明确问“你在干嘛/在哪/吃了吗/今天怎么样”，否则不要主动说出自己的活动、地点、日程安排；"
@@ -7479,13 +7340,11 @@ class HumanCorePlugin(Star):
             if any(not isinstance(comp, (Comp.Plain, Comp.At)) for comp in result.chain):
                 return
             group = not event.is_private_chat()
-            threshold = self.cfg_int("quote_group_multi_speaker_threshold", 4)
-            auto_quote = bool(
-                group and threshold > 0
-                and self._group_speaker_count(event.unified_msg_origin) >= threshold
-            )
             quote_enabled = bool(
-                group and (self.cfg_bool("quote_group_reply", True) or auto_quote)
+                group and (
+                    self._should_quote_group(event.unified_msg_origin)
+                    or getattr(event, "amo_quote_hint", False)
+                )
             )
             quote_id = getattr(event.message_obj, "message_id", None) if quote_enabled else None
             if self.cfg_bool("polish_native", False):
@@ -7509,7 +7368,6 @@ class HumanCorePlugin(Star):
                     text = polished
                     result.chain = [Comp.Plain(text)]
             text = self._trim_reply(text)
-            text = self._apply_dialect(text)
             result.chain = [Comp.Plain(text)]
 
             # 群聊/私聊的最终发送只交给完整本地分段引擎。
@@ -7595,7 +7453,6 @@ class HumanCorePlugin(Star):
             self._decay_hate_relations()
         if now - self._last_purge > 3600:
             self._last_purge = now
-            self.db.purge_memories()
             self.db.purge_messages(self.cfg_int("chat_log_days", 14))
 
         if self.cfg_bool("enable_auto_learn", True) and now - self._last_auto_learn > 1800:
@@ -7640,8 +7497,7 @@ class HumanCorePlugin(Star):
         return ""
 
     async def _auto_learn(self):
-        if not self.cfg_bool("enable_memory", True):
-            return
+        """定时提炼长期事实，写进外挂记忆插件；本插件不再存记忆。"""
         try:
             users = self.db.active_users(now_ts() - 3600, limit=2)
         except Exception:
@@ -7661,10 +7517,8 @@ class HumanCorePlugin(Star):
                     self._last_umo, user.get("name", "") or uid, lines
                 )
                 for fact in facts:
-                    self.db.add_memory(
-                        uid, fact["content"], fact["kind"], fact["tier"],
-                        self.cfg_int("mem_days_normal", 7),
-                        self.cfg_int("mem_days_important", 14),
+                    self._external_memory_write(
+                        uid, fact["content"], fact["kind"], fact["tier"]
                     )
                 self.db.kv_set(key, now_ts())
             except Exception as exc:
@@ -8370,6 +8224,28 @@ class HumanCorePlugin(Star):
             except Exception as exc:
                 logger.debug("[amo] 心流阈值读取失败: %s" % exc)
         counts = self.db.counts()
+        # 记忆条数改成外挂插件的：本插件不再存记忆，面板显示外部模块里的条数
+        primary_uid = ""
+        try:
+            primary = self.db.list_profiles(limit=1)
+            primary_uid = str(primary[0].get("uid") or "") if primary else ""
+        except Exception:
+            primary_uid = ""
+        try:
+            # 状态页会被轮询，外部记忆条数缓存 30 秒，别每次都去读别人的库
+            stamp = to_float(self.db.kv_get("ext_mem_count_at_" + primary_uid, 0), 0.0)
+            cached = to_int(self.db.kv_get("ext_mem_count_" + primary_uid, 0), 0)
+            if primary_uid and now_ts() - stamp < 30:
+                counts["memories"] = cached
+            elif primary_uid:
+                counted = len(self._external_all_memories(primary_uid, "", 200))
+                counts["memories"] = counted
+                self.db.kv_set("ext_mem_count_at_" + primary_uid, now_ts())
+                self.db.kv_set("ext_mem_count_" + primary_uid, counted)
+            else:
+                counts["memories"] = 0
+        except Exception:
+            counts["memories"] = 0
         return {
             "time": snap["datetime_text"],
             "day": day_meta(),
@@ -8432,8 +8308,8 @@ class HumanCorePlugin(Star):
                 "/amo profile [@人] 档案｜/amo memories [@人] 记忆\n"
                 "/amo period 生理期｜/amo health 健康｜/amo schedule 日程\n"
                 "/amo weather 天气｜/amo worldview 世界观｜/amo threshold 阈值\n"
-                "管理员：/amo rel @人 关系｜/amo set @人 字段 值｜/amo memo @人 内容 [0/1/2]\n"
-                "/amo forget 记忆ID｜/amo period set YYYY-MM-DD｜/amo health set 状态\n"
+                "管理员：/amo rel @人 关系｜/amo set @人 字段 值｜/amo memo @人 内容 [0/1/2]（写入记忆插件）\n"
+                "/amo period set YYYY-MM-DD｜/amo health set 状态\n"
                 "/amo schedule regen｜/amo worldview regen｜/amo say 内容｜/amo clean"
             )
 
@@ -8484,7 +8360,7 @@ class HumanCorePlugin(Star):
                 "关系：" + str(profile.get("relation") or "普通"),
                 "好感：" + str(profile.get("affection") or 0),
                 "消息数：" + str(profile.get("msg_count") or 0),
-                "记忆数：" + str(self.db.count_memories(target)),
+                "记忆数：" + str(len(self._external_all_memories(target, "", 200))),
                 "备注：" + str(profile.get("notes") or "无"),
             ])
 
@@ -8492,7 +8368,7 @@ class HumanCorePlugin(Star):
             target = self._resolve_target(event, args, 1)
             if target != uid and not self._is_admin(event):
                 return "只有管理员才能查看别人的记忆。"
-            items = self.db.list_memories(target, 20)
+            items = self._external_all_memories(target, "", 20)
             if not items:
                 return "暂时没有记忆。"
             lines = ["📖 记忆 · " + target]
@@ -8519,11 +8395,7 @@ class HumanCorePlugin(Star):
             self.db.update_profile(target, relation=relation)
             if relation == "相恋":
                 self._register_lover(target)
-            self.db.add_memory(
-                target, "与角色的关系是" + relation, "relation", 2,
-                self.cfg_int("mem_days_normal", 7),
-                self.cfg_int("mem_days_important", 14),
-            )
+            self._external_memory_write(target, "与角色的关系是" + relation, "relation", 2)
             return "✅ 已将 " + target + " 的关系设为「" + relation + "」"
 
         if sub == "set" or sub == "设置":
@@ -8562,20 +8434,16 @@ class HumanCorePlugin(Star):
             content = " ".join(content_parts).strip()
             if not content:
                 return "内容不能为空。"
-            self.db.add_memory(
-                target, content, "manual", tier,
-                self.cfg_int("mem_days_normal", 7),
-                self.cfg_int("mem_days_important", 14),
-            )
-            return "✅ 已记住：" + content
+            if self._external_memory_write(target, content, "manual", tier):
+                return "✅ 已记住：" + content
+            return "⚠️ 没能写进记忆插件：请先在设置里选好记忆来源插件。"
 
         if sub == "forget" or sub == "忘记":
             if not self._is_admin(event):
                 return "只有管理员才能删除记忆。"
             if len(args) < 2:
                 return "用法：/amo forget 记忆ID"
-            self.db.delete_memory(args[1])
-            return "✅ 已删除记忆 #" + str(args[1])
+            return "记忆由外挂插件保存，请到该插件里删除；本插件不再单独存记忆。"
 
         if sub == "period" or sub == "生理期":
             if len(args) >= 3 and args[1].lower() == "set":
@@ -8677,9 +8545,8 @@ class HumanCorePlugin(Star):
         if sub == "clean" or sub == "清理":
             if not self._is_admin(event):
                 return "只有管理员才能清理。"
-            self.db.purge_memories()
             self.db.purge_messages(self.cfg_int("chat_log_days", 14))
-            return "✅ 已清理过期记忆与过期聊天记录。"
+            return "✅ 已清理过期聊天记录。"
 
         return "未知指令。发送 /amo help 查看帮助。"
 
@@ -8766,7 +8633,7 @@ class HumanCorePlugin(Star):
             return
         yield event.plain_result(
             "🤍 关系：" + str(profile.get("relation", "普通"))
-            + "\n📖 记忆条数：" + str(self.db.count_memories(uid))
+            + "\n📖 记忆条数：" + str(len(self._external_all_memories(uid, "", 200)))
         )
 
     @filter.command("c_setrel")
@@ -8787,20 +8654,15 @@ class HumanCorePlugin(Star):
     @filter.command("learn_and_gate")
     async def cmd_learn(self, event: AstrMessageEvent):
         await self._ensure_ready()
-        if not self.cfg_bool("enable_memory", True):
-            yield event.plain_result("❌ 记忆功能已在配置中关闭")
-            return
         text = (event.message_str or "").replace("/learn_and_gate", "").strip()
         if not text:
             yield event.plain_result("请输入要学习的内容")
             return
         uid = self._canonical_uid(event)
-        self.db.add_memory(
-            uid, text, "manual", 1,
-            self.cfg_int("mem_days_normal", 7),
-            self.cfg_int("mem_days_important", 14),
-        )
-        yield event.plain_result("✅ 已经记下来啦。")
+        if self._external_memory_write(uid, text, "manual", 1):
+            yield event.plain_result("✅ 已经记下来啦。")
+        else:
+            yield event.plain_result("⚠️ 没能写进记忆插件：请先在设置里选好记忆来源插件。")
 
     @filter.command("礼物")
     async def cmd_gift_list(self, event: AstrMessageEvent):
@@ -9602,7 +9464,7 @@ class HumanCorePlugin(Star):
             "code": 0,
             "data": {
                 "relation": profile.get("relation", "普通"),
-                "mem_count": self.db.count_memories(profile.get("uid", uid)),
+                "mem_count": len(self._external_all_memories(profile.get("uid", uid), "", 200)),
                 "profile": profile,
             },
         }
@@ -9667,6 +9529,7 @@ class HumanCorePlugin(Star):
         }
 
     async def api_memories(self):
+        """面板记忆页：只读外挂记忆插件的记忆（本插件不再存记忆）。"""
         await self._ensure_ready()
         data = await self._body()
         uid = str(data.get("uid") or self._q("uid", "") or "")
@@ -9674,28 +9537,11 @@ class HumanCorePlugin(Star):
             return {"code": 1, "msg": "uid 不能为空"}
         keyword = str(data.get("q") or self._q("q", "") or "")
         limit = self._q_int("limit", 50)
-        if keyword:
-            items = self.db.search_memories(
-                uid, keyword, limit=limit,
-                normal_days=self.cfg_int("mem_days_normal", 7),
-                important_days=self.cfg_int("mem_days_important", 14),
-            )
-        else:
-            items = self.db.list_memories(uid, limit)
-        if self._companion_plugin() is not None or self._livingmem_active():
-            seen = {
-                re.sub(r"\s+", "", str(item.get("content") or "")).lower()
-                for item in items
-            }
-            for item in self._external_all_memories(uid, keyword, limit):
-                key = re.sub(r"\s+", "", str(item.get("content") or "")).lower()
-                if key and key not in seen:
-                    seen.add(key)
-                    items.append(item)
-            items = items[:max(1, min(100, limit))]
-        return {"code": 0, "data": items}
+        items = self._external_all_memories(uid, keyword, limit)
+        return {"code": 0, "data": items[:max(1, min(100, limit))]}
 
     async def api_memory_add(self):
+        """面板“添加记忆”改为写进外挂记忆插件。"""
         await self._ensure_ready()
         data = await self._body()
         uid = str(data.get("uid") or self._q("uid", "") or "").strip()
@@ -9703,19 +9549,17 @@ class HumanCorePlugin(Star):
         if not uid or not content:
             return {"code": 1, "msg": "uid 和 content 不能为空"}
         tier = to_int(data.get("tier", self._q("tier", 1)), 1)
-        self.db.add_memory(
-            uid, content, str(data.get("kind", "manual")), tier,
-            self.cfg_int("mem_days_normal", 7),
-            self.cfg_int("mem_days_important", 14),
-        )
-        return {"code": 0, "msg": "已写入记忆"}
+        if self._external_memory_write(uid, content, str(data.get("kind", "manual")), tier):
+            return {"code": 0, "msg": "已写入记忆插件"}
+        return {"code": 1, "msg": "没有可写入的记忆插件，请先在设置里选择记忆来源"}
 
     async def api_memory_delete(self):
+        """删除交给记忆插件自己管理；本插件只做只读展示。"""
         await self._ensure_ready()
-        data = await self._body()
-        memory_id = data.get("id", self._q("id", 0))
-        self.db.delete_memory(memory_id)
-        return {"code": 0, "msg": "已删除"}
+        return {
+            "code": 1,
+            "msg": "记忆由外挂插件保存，请到该插件里删除；本插件不再单独存记忆",
+        }
 
     async def api_mood_update(self):
         await self._ensure_ready()

@@ -177,22 +177,6 @@
     "hint": "下雨、低温、月经期、过度疲惫会额外增加",
     "default": 0.02
   },
-  "enable_memory": {
-    "type": "bool",
-    "description": "amo 自己的长期记忆（读+写）",
-    "hint": "关闭后 amo 不读也不写自己的记忆库；外挂记忆插件（牢记等）的检索仍然生效。想让记忆只由外挂插件负责就关掉它。",
-    "default": true
-  },
-  "mem_days_normal": {
-    "type": "int",
-    "description": "普通记忆保留天数",
-    "default": 7
-  },
-  "mem_days_important": {
-    "type": "int",
-    "description": "重要记忆保留天数",
-    "default": 14
-  },
   "memory_recall_limit": {
     "type": "int",
     "description": "每次最多注入几条记忆",
@@ -218,14 +202,13 @@
   },
   "memory_source": {
     "type": "string",
-    "description": "记忆来源",
+    "description": "外部记忆来源",
     "options": [
       "auto",
-      "companion",
-      "local"
+      "companion"
     ],
     "default": "auto",
-    "hint": "auto=优先 private companion，缺失时用本地；companion=只读陪伴插件；local=只用本地"
+    "hint": "本插件不再自带记忆库，只读外挂记忆插件；auto=自动检测，companion=只用选定的记忆插件。"
   },
   "companion_memory_plugin_name": {
     "type": "string",
@@ -410,17 +393,11 @@
     "default": 20000,
     "hint": "单次打字延迟上限；默认 20000ms，避免长回复被截成 4.5 秒。"
   },
-  "quote_group_reply": {
-    "type": "bool",
-    "description": "群聊回复引用原消息",
-    "hint": "私聊不引用",
-    "default": true
-  },
-  "quote_group_multi_speaker_threshold": {
+  "quote_group_speaker_threshold": {
     "type": "int",
-    "description": "群聊多人时自动引用",
-    "hint": "最近10分钟不同发言人数达到该值时，即使关闭“群聊回复引用原消息”也启用引用；填 0 关闭自动引用。",
-    "default": 4
+    "description": "群聊多少人聊天时引用原消息",
+    "hint": "最近 10 分钟不同发言人数达到这个数，回复时才会引用原消息；填 0 表示从不引用。",
+    "default": 3
   },
   "max_reply_chars": {
     "type": "int",
@@ -986,21 +963,9 @@
   },
   "dialect_enabled": {
     "type": "bool",
-    "description": "启用方言替换",
-    "hint": "聊天时按语境偶尔把普通话词替换成贵州土家族地区方言",
+    "description": "启用方言风格",
+    "hint": "只在提示词里给模型一个方言参考，由模型自己决定用不用，不会强行替换字词",
     "default": true
-  },
-  "dialect_auto_replace": {
-    "type": "bool",
-    "description": "强制自动替换方言词",
-    "hint": "关闭后不再把“就是”硬改成“逗是”，由模型自然决定是否用方言",
-    "default": false
-  },
-  "dialect_prob": {
-    "type": "float",
-    "description": "方言替换概率",
-    "hint": "0~1；默认 0.3，太高会影响理解",
-    "default": 0.08
   },
   "create_dialect_kb": {
     "type": "bool",

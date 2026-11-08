@@ -7,7 +7,7 @@
 和主脑的关系：
 - ``build_hint()`` 由 ``_dynamic_context()`` 调用，把「他刚送了你 X」拼进 ``<amo_state>``；
 - ``observe_reply()`` 由 ``on_decorating_result()`` 调用，异步抽心愿，不阻塞她说话；
-- 收礼物时顺手 ``state.nudge()`` 加心情、``db.add_memory()`` 写长期记忆（记忆开关关着就跳过）。
+- 收礼物时顺手 ``state.nudge()`` 加心情，并把这件事写进外挂记忆插件（没有插件就跳过）。
 
 数据存在插件数据目录的 ``gifts.json``（和 ``amo_forever.db`` 同级），不写数据库表。
 """
@@ -1211,8 +1211,6 @@ class GiftEngine:
         if not uid or not item:
             return
         try:
-            if not self.plugin.cfg_bool("enable_memory", True):
-                return
             day = time.strftime("%m月%d日", time.localtime())
             if kind in ("vehicle", "home", "luxury"):
                 content = "%s他送了我%s，这么贵重的东西，我收下了。" % (day, item)
@@ -1220,7 +1218,9 @@ class GiftEngine:
                 content = "%s他送了我%s，我很喜欢，会好好用。" % (day, item)
             else:
                 content = "%s他送了我%s，我很喜欢。" % (day, item)
-            self.plugin.db.add_memory(uid, content, kind="gift", tier=2)
+            writer = getattr(self.plugin, "_external_memory_write", None)
+            if callable(writer):
+                writer(uid, content, "gift", 2)
         except Exception:
             pass
 
