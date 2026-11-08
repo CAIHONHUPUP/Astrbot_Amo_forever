@@ -8989,53 +8989,53 @@ class HumanCorePlugin(Star):
             ("/get_status", self.api_get_status, ["GET"]),
             ("/profiles", self.api_profiles, ["GET", "POST"]),
             ("/get_profile", self.api_get_profile, ["GET", "POST"]),
-            ("/profiles/sync", self.api_profiles_sync, ["POST"]),
+            ("/profiles/sync", self.api_profiles_sync, ["GET", "POST"]),
             ("/relations", self.api_relations, ["GET", "POST"]),
-            ("/relation/save", self.api_relation_save, ["POST"]),
-            ("/relation_save", self.api_relation_save, ["POST"]),
-            ("/relation/delete", self.api_relation_delete, ["POST"]),
-            ("/relation_delete", self.api_relation_delete, ["POST"]),
+            ("/relation/save", self.api_relation_save, ["GET", "POST"]),
+            ("/relation_save", self.api_relation_save, ["GET", "POST"]),
+            ("/relation/delete", self.api_relation_delete, ["GET", "POST"]),
+            ("/relation_delete", self.api_relation_delete, ["GET", "POST"]),
             ("/memory/candidates", self.api_memory_candidates, ["GET"]),
             ("/memory_candidates", self.api_memory_candidates, ["GET"]),
-            ("/profiles_sync", self.api_profiles_sync, ["POST"]),
+            ("/profiles_sync", self.api_profiles_sync, ["GET", "POST"]),
             ("/config", self.api_config, ["GET"]),
             ("/city/search", self.api_city_search, ["GET", "POST"]),
-            ("/city/set", self.api_city_set, ["POST"]),
+            ("/city/set", self.api_city_set, ["GET", "POST"]),
             ("/usage", self.api_usage, ["GET"]),
             ("/providers", self.api_providers, ["GET"]),
             ("/providers_list", self.api_providers, ["GET"]),
             ("/balance", self.api_balance, ["GET"]),
-            ("/config/save", self.api_config_save, ["POST"]),
-            ("/config_save", self.api_config_save, ["POST"]),
-            ("/profile/save", self.api_profile_save, ["POST"]),
-            ("/profile_save", self.api_profile_save, ["POST"]),
-            ("/profile/delete", self.api_profile_delete, ["POST"]),
-            ("/profile_delete", self.api_profile_delete, ["POST"]),
+            ("/config/save", self.api_config_save, ["GET", "POST"]),
+            ("/config_save", self.api_config_save, ["GET", "POST"]),
+            ("/profile/save", self.api_profile_save, ["GET", "POST"]),
+            ("/profile_save", self.api_profile_save, ["GET", "POST"]),
+            ("/profile/delete", self.api_profile_delete, ["GET", "POST"]),
+            ("/profile_delete", self.api_profile_delete, ["GET", "POST"]),
             ("/memories", self.api_memories, ["GET", "POST"]),
             ("/chat/history", self.api_chat_history, ["GET", "POST"]),
             ("/chat_history", self.api_chat_history, ["GET", "POST"]),
-            ("/memory/add", self.api_memory_add, ["POST"]),
-            ("/memory_add", self.api_memory_add, ["POST"]),
-            ("/memory/delete", self.api_memory_delete, ["POST"]),
-            ("/memory_delete", self.api_memory_delete, ["POST"]),
+            ("/memory/add", self.api_memory_add, ["GET", "POST"]),
+            ("/memory_add", self.api_memory_add, ["GET", "POST"]),
+            ("/memory/delete", self.api_memory_delete, ["GET", "POST"]),
+            ("/memory_delete", self.api_memory_delete, ["GET", "POST"]),
             ("/schedule", self.api_schedule, ["GET", "POST"]),
             ("/schedule/detail", self.api_schedule_detail, ["GET", "POST"]),
             ("/schedule_detail", self.api_schedule_detail, ["GET", "POST"]),
-            ("/mood/update", self.api_mood_update, ["POST"]),
-            ("/mood_update", self.api_mood_update, ["POST"]),
-            ("/schedule/regen", self.api_schedule_regen, ["POST"]),
-            ("/kb/regen", self.api_kb_regen, ["POST"]),
-            ("/scenic_kb/regen", self.api_scenic_kb_regen, ["POST"]),
-            ("/scenic_kb_regen", self.api_scenic_kb_regen, ["POST"]),
-            ("/kb_regen", self.api_kb_regen, ["POST"]),
-            ("/schedule_regen", self.api_schedule_regen, ["POST"]),
+            ("/mood/update", self.api_mood_update, ["GET", "POST"]),
+            ("/mood_update", self.api_mood_update, ["GET", "POST"]),
+            ("/schedule/regen", self.api_schedule_regen, ["GET", "POST"]),
+            ("/kb/regen", self.api_kb_regen, ["GET", "POST"]),
+            ("/scenic_kb/regen", self.api_scenic_kb_regen, ["GET", "POST"]),
+            ("/scenic_kb_regen", self.api_scenic_kb_regen, ["GET", "POST"]),
+            ("/kb_regen", self.api_kb_regen, ["GET", "POST"]),
+            ("/schedule_regen", self.api_schedule_regen, ["GET", "POST"]),
             ("/weather", self.api_weather, ["GET"]),
             ("/gift", self.api_gift, ["GET"]),
             ("/gift/list", self.api_gift, ["GET"]),
             ("/worldview", self.api_worldview, ["GET"]),
-            ("/worldview/regen", self.api_worldview_regen, ["POST"]),
-            ("/worldview_regen", self.api_worldview_regen, ["POST"]),
-            ("/say", self.api_say, ["POST"]),
+            ("/worldview/regen", self.api_worldview_regen, ["GET", "POST"]),
+            ("/worldview_regen", self.api_worldview_regen, ["GET", "POST"]),
+            ("/say", self.api_say, ["GET", "POST"]),
             ("/refresh_status", self.api_refresh_status, ["GET"]),
         ]
         for prefix in prefixes:
@@ -9064,7 +9064,21 @@ class HumanCorePlugin(Star):
                         origin = str(headers.get("origin") or headers.get("referer") or "")
                         host = str(headers.get("host") or "")
                 if method and method != "POST":
-                    return {"code": 403, "msg": "该操作只接受 POST"}
+                    # 写接口同时注册 GET+POST：老版本 AstrBot 的插件页桥接只有 apiGet，
+                    # 硬禁 GET 会把面板按钮全废掉。这里改成「只挡浏览器导航/图片这类 GET」：
+                    # fetch/XHR（面板桥接走这条）放行，<img src>、<a> 点击、iframe 嵌入拦截。
+                    dest = ""
+                    mode = ""
+                    accept = ""
+                    if headers is not None:
+                        dest = str(headers.get("sec-fetch-dest") or "").lower()
+                        mode = str(headers.get("sec-fetch-mode") or "").lower()
+                        accept = str(headers.get("accept") or "").lower()
+                    if dest in ("image", "document", "iframe", "script", "style", "font", "video", "audio") \
+                            or mode == "navigate" \
+                            or (accept and accept.startswith(("image/", "text/html"))):
+                        logger.warning("[amo] 拒绝浏览器直连的 Web 写操作 GET（dest=%s mode=%s）" % (dest, mode))
+                        return {"code": 403, "msg": "该操作不能用浏览器直接打开"}
                 if origin and host:
                     from urllib.parse import urlparse
                     origin_host = (urlparse(origin).hostname or "").lower()
