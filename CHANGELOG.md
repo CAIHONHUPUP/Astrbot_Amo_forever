@@ -1,5 +1,22 @@
 # Changelog
 
+## 5.3.1
+
+### 修复和风天气 Host 不带协议导致 unknown url type
+
+- 原因：15 号 PR 新增的 urllib 版 `_fetch_qweather` 没有给 `weather_host` 补 `https://`，
+  同时文件里还残留了旧版同名方法（被覆盖），只填域名时 urllib 直接报
+  `unknown url type: 'xxx.re.qweatherapi.com/geo/v2/...'`；
+- 修复：新增 `_weather_base_url()` 统一补协议（`http://`/`https://` 原样保留），
+  `_fetch_qweather` 和 `_fetch_qweather_daily` 都走它；删除旧的 aiohttp 重复定义；
+- 配置提示更新：API Host 可只填域名，自动补 `https://`。
+
+### 合并 PR #19 / #20
+
+- #19 主动消息护栏：已经回过的话不再当没回过；重复自己就重写，仍重复则不发；
+  日常关心每小时只强制一次且持久化；
+- #20 livingmemory 正式成为面板可识别的记忆来源，并修正自动检测优先级。
+
 ## 5.3.0
 
 ### 心流判定模型自动识别

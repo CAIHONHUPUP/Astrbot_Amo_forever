@@ -41,13 +41,13 @@
   "weather_host": {
     "type": "string",
     "description": "和风天气 API Host",
-    "hint": "填和风天气控制台里的 API Host，例如 https://xxxx.qweatherapi.com；devapi/api/geoapi 公共域名已陆续停服。",
+    "hint": "和风控制台的 API Host，可只填域名（如 pa6vhjdfwm.re.qweatherapi.com），会自动补 https://；也可填完整 URL。",
     "default": "https://devapi.qweather.com"
   },
   "weather_geo_host": {
     "type": "string",
     "description": "和风天气 GeoAPI Host",
-    "hint": "留空则用 API Host + /geo/v2；也可单独填，例如 https://xxxx.qweatherapi.com",
+    "hint": "留空则用 API Host + /geo/v2；也可只填域名，会自动补 https://。",
     "default": ""
   },
   "bot_name": {

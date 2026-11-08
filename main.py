@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-我想永远陪着你 / 我想永远陪伴你 5.3.0
+我想永远陪着你 / 我想永远陪伴你 5.3.1
 一个尽量“像人”的 AstrBot 智械人类核心：
 生理期 / 九维心情 / 世界观与日程 / 天气 / 健康 / 群聊插话阈值 /
 私聊判定 / 主动私聊 / 长期记忆与遗忘 / 防抖 / 分段与打字延迟 / 引用回复 / AI 润色
@@ -115,7 +115,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "5.3.0"
+PLUGIN_VERSION = "5.3.1"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -2370,6 +2370,16 @@ class HumanState:
 
     # ---------- 天气 ----------
     @staticmethod
+    def _weather_base_url(value, default=""):
+        """和风 Host 兼容：允许只填域名（自动补 https://），也允许带路径。"""
+        text = str(value or default or "").strip().rstrip("/")
+        if not text:
+            return ""
+        if not text.startswith(("http://", "https://")):
+            text = "https://" + text
+        return text
+
+    @staticmethod
     def _weather_tag(text):
         if any(word in text for word in ("雷", "暴雨")):
             return "storm"
@@ -2446,71 +2456,6 @@ class HumanState:
             )
         return payload
 
-    async def _fetch_qweather(self, key, city):
-        try:
-            import aiohttp
-        except Exception:
-            return None
-        host = (self.p.cfg_str("weather_host", "https://devapi.qweather.com") or "https://devapi.qweather.com").strip().rstrip("/")
-        if host and not host.startswith(("http://", "https://")):
-            host = "https://" + host
-        legacy_hosts = {"https://devapi.qweather.com", "https://api.qweather.com"}
-        geo_raw = self.p.cfg_str("weather_geo_host", "").strip().rstrip("/")
-        if geo_raw and not geo_raw.startswith(("http://", "https://")):
-            geo_raw = "https://" + geo_raw
-        if geo_raw:
-            geo_base = geo_raw
-            if geo_base.endswith("/city/lookup"):
-                geo_base = geo_base[:-len("/city/lookup")]
-            if not geo_base.endswith(("/geo/v2", "/v2")):
-                geo_base += "/geo/v2"
-        elif host in legacy_hosts:
-            geo_base = "https://geoapi.qweather.com/v2"
-        else:
-            geo_base = host + "/geo/v2"
-        if host in legacy_hosts:
-            logger.warning("[amo] 和风天气公共 API 域名已停服，请在配置里填写控制台的 API Host")
-        headers = {"X-QW-Api-Key": key}
-        timeout = aiohttp.ClientTimeout(total=8)
-        location = str(city)
-        try:
-            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-                if not location.isdigit():
-                    async with session.get(
-                        geo_base + "/city/lookup",
-                        params={"location": location, "key": key, "number": 1},
-                    ) as response:
-                        geo = await self._qweather_payload(response, "geo")
-                    if str(geo.get("code") or "") != "200" or not isinstance(geo.get("location"), list):
-                        return None
-                    first = geo["location"][0] if geo["location"] else None
-                    if not isinstance(first, dict) or not first.get("id"):
-                        return None
-                    location = str(first["id"])
-                async with session.get(
-                    host + "/v7/weather/now",
-                    params={"location": location, "key": key},
-                ) as response:
-                    data = await self._qweather_payload(response, "now")
-                if str(data.get("code") or "") != "200":
-                    return None
-                now = data.get("now")
-                if not isinstance(now, dict):
-                    logger.warning("[amo] 和风天气 now 字段缺失或格式异常")
-                    return None
-                text = str(now.get("text") or "多云")
-                return {
-                    "city": city, "text": text, "tag": self._weather_tag(text),
-                    "temp": to_int(now.get("temp")), "humidity": to_int(now.get("humidity")),
-                    "wind": str(now.get("windDir", "")) + str(now.get("windScale", "")) + "级",
-                    "ts": now_ts(), "source": "qweather", "ok": True, "error": "",
-                    "key_set": True,
-                    "host": host,
-                }
-        except Exception as exc:
-            logger.warning("[amo] 和风天气接口失败: %s" % exc)
-            return None
-
     async def _qweather_get(self, url, params):
         """和风请求：用系统网络栈（线程里 urllib），避免 aiohttp 在部分环境超时。"""
         import urllib.parse
@@ -2535,15 +2480,13 @@ class HumanState:
         return await asyncio.to_thread(_do)
 
     async def _fetch_qweather(self, key, city):
-        host = (self.p.cfg_str("weather_host", "") or "").strip().rstrip("/")
+        host = self._weather_base_url(self.p.cfg_str("weather_host", ""))
         if not host:
             return None
         legacy_hosts = {"https://devapi.qweather.com", "https://api.qweather.com"}
         if host in legacy_hosts:
             logger.warning("[amo] 和风天气公共 API 域名已停服，请在配置里填写控制台的 API Host")
-        geo_raw = (self.p.cfg_str("weather_geo_host", "") or "").strip().rstrip("/")
-        if geo_raw and not geo_raw.startswith(("http://", "https://")):
-            geo_raw = "https://" + geo_raw
+        geo_raw = self._weather_base_url(self.p.cfg_str("weather_geo_host", ""))
         if geo_raw:
             geo_base = geo_raw
             if geo_base.endswith("/city/lookup"):
@@ -2599,12 +2542,10 @@ class HumanState:
         ):
             items = cache.get("items")
             return items if isinstance(items, list) else []
-        host = (self.p.cfg_str("weather_host", "") or "").strip().rstrip("/")
+        host = self._weather_base_url(self.p.cfg_str("weather_host", ""))
         if not host:
             return []
-        geo_raw = (self.p.cfg_str("weather_geo_host", "") or "").strip().rstrip("/")
-        if geo_raw and not geo_raw.startswith(("http://", "https://")):
-            geo_raw = "https://" + geo_raw
+        geo_raw = self._weather_base_url(self.p.cfg_str("weather_geo_host", ""))
         if geo_raw:
             geo_base = geo_raw
             if geo_base.endswith("/city/lookup"):
