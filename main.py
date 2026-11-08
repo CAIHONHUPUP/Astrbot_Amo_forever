@@ -6001,7 +6001,7 @@ class HumanCorePlugin(Star):
         roll = random.random()
         logger.info(
             "[amo] 私聊判定 | 概率=%.2f | roll=%.2f | %s"
-            % (probability, roll, "回复" if roll > probability else "不回")
+            % (probability, roll, "回复" if roll <= probability else "不回")
         )
         if roll <= probability:
             return
