@@ -6654,7 +6654,10 @@ class HumanCorePlugin(Star):
                 "只自然答应，例如“好，我记住了，这是你朋友吗”，不要把人机式记录念出来。"
             )
         try:
-            if str(self.db.kv_get("weather_alert_open", "") or "") == today_str():
+            if (
+                str(self.db.kv_get("weather_alert_open", "") or "") == today_str()
+                and getattr(event, "is_private", False)
+            ):
                 parts.append(
                     "【天气提醒之后】你今晚已经提醒过他天气了，他说“知道了/好/嗯/收到”就自然应一句，"
                     "不要再提天气、带伞、加衣服，也不要追问；只有他主动再问天气才回答。"
