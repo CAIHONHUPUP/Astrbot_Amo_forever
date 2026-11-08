@@ -78,6 +78,14 @@ except Exception:
             logger.error("[amo] 内置心流/分段模块加载失败: %s" % _engine_exc)
 
 try:
+    from .gift_engine import GiftEngine
+except Exception:
+    try:
+        from gift_engine import GiftEngine
+    except Exception:
+        GiftEngine = None
+
+try:
     from .weather_alert import evaluate as evaluate_weather_alert, parse_daily as parse_weather_daily
 except Exception:
     try:
@@ -3829,6 +3837,7 @@ class HumanCorePlugin(Star):
         self.state = None
         self.llm = LLMService(self)
         self.gate = ReplyGate(self)
+        self.gift = GiftEngine(self) if GiftEngine is not None else None
         self.heartflow = None
         self.segment_engine = None
         try:
@@ -7068,6 +7077,7 @@ class HumanCorePlugin(Star):
             "【生理期】" + snap["period"]["phase"] + "第" + str(snap["period"]["day"]) + "天",
             "【身体】" + snap["health"]["status"],
             "【天气】" + snap["weather_text"],
+            "【天气一致】你的天气以【天气】为准；不要说出和它相反的冷热（除非刚进出空调房/室内）。",
             "【正在】" + snap["activity"].get("activity", "休息") + "（" + self._short_place(snap["activity"].get("place", "家")) + "）",
             "【地点写法】地点是你自己的事，说的时候用口语（“商场餐厅”“咖啡店”“家”），不要把“城市·地点”这种内部写法念出来。",
             "【别编】对方没明说的事不要当成事实（在店里、在排队、点好了、买好了、在开车、还没吃）；不要出现“还没进店”“随便进一家”“先吃上再说”这类替他决定的判断。",
@@ -7182,6 +7192,14 @@ class HumanCorePlugin(Star):
                 % int(max(1, now_ts() - last_at))
             )
 
+        if self.gift is not None:
+            try:
+                gift_hint = await self.gift.build_hint(event)
+                if gift_hint:
+                    parts.append(gift_hint)
+            except Exception as exc:
+                logger.debug("[amo] 礼物上下文失败: %s" % exc)
+
         parts.append("以上是你的内在状态，不要直接复述，只影响语气、长度和是否愿意说话。")
         return "\n".join(parts)
 
@@ -7250,6 +7268,11 @@ class HumanCorePlugin(Star):
                 text = self._guard_self_location(text, self.state.current_activity().get("place"))
             except Exception:
                 pass
+            if self.gift is not None:
+                try:
+                    self.gift.observe_reply(event, text)
+                except Exception as exc:
+                    logger.debug("[amo] 礼物心愿捕获失败: %s" % exc)
             if looks_like_ai_admission(text):
                 text = "你才人机呢，你见过这么会聊天的机器人吗？"
                 result.chain = [Comp.Plain(text=text)]
@@ -8521,6 +8544,26 @@ class HumanCorePlugin(Star):
         )
         yield event.plain_result("✅ 已经记下来啦。")
 
+    @filter.command("礼物")
+    async def cmd_gift_list(self, event: AstrMessageEvent):
+        if self.gift is None or not self.gift.enabled:
+            yield event.plain_result("礼物功能还没开。")
+            return
+        if not self.gift.is_owner(event):
+            yield event.plain_result("这个只给主人看哦。")
+            return
+        yield event.plain_result(self.gift.command_text())
+
+    @filter.command("送礼")
+    async def cmd_gift_send(self, event: AstrMessageEvent, item: str = ""):
+        if self.gift is None or not self.gift.enabled:
+            yield event.plain_result("礼物功能还没开。")
+            return
+        if not self.gift.is_owner(event):
+            yield event.plain_result("这个只给主人用哦。")
+            return
+        yield event.plain_result(self.gift.manual_gift(event, item))
+
     # ---------- Web 面板 ----------
     def _register_web_apis(self):
         prefixes = uniq([
@@ -8604,6 +8647,8 @@ class HumanCorePlugin(Star):
             ("/kb_regen", self.api_kb_regen, ["GET", "POST"]),
             ("/schedule_regen", self.api_schedule_regen, ["GET", "POST"]),
             ("/weather", self.api_weather, ["GET"]),
+            ("/gift", self.api_gift, ["GET"]),
+            ("/gift/list", self.api_gift, ["GET"]),
             ("/worldview", self.api_worldview, ["GET"]),
             ("/worldview/regen", self.api_worldview_regen, ["GET", "POST"]),
             ("/worldview_regen", self.api_worldview_regen, ["GET", "POST"]),
@@ -9374,6 +9419,12 @@ class HumanCorePlugin(Star):
         await self._ensure_ready()
         items = await self.state.ensure_schedule(self._last_umo, force=True)
         return {"code": 0, "data": items}
+
+    async def api_gift(self):
+        await self._ensure_ready()
+        if self.gift is None:
+            return {"code": 0, "data": {"enabled": False, "wishes": [], "gifts": []}}
+        return {"code": 0, "data": self.gift.panel_data()}
 
     async def api_weather(self):
         await self._ensure_ready()

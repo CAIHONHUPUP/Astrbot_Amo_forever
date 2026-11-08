@@ -275,15 +275,32 @@ class ScheduleEngine:
         if not car:
             car = CAR_POOL[md5_int(str(world.get("name") or "") + "|car") % len(CAR_POOL)]
 
-        profile = {
+        base = {
             "city": city,
             "home": home,
             "workplace": workplace,
             "car": car,
         }
         try:
-            if cached != profile:
-                self.state.db.kv_set("schedule_profile", profile)
+            if cached != base:
+                self.state.db.kv_set("schedule_profile", base)
+        except Exception:
+            pass
+        profile = dict(base)
+        profile["has_gift_car"] = False
+        profile["has_gift_home"] = False
+        try:
+            gift = getattr(self.p, "gift", None)
+            if gift is not None:
+                car_gift = gift.asset_override("vehicle")
+                if car_gift:
+                    profile["car"] = car_gift
+                    profile["has_gift_car"] = True
+                home_gift = gift.asset_override("home")
+                if home_gift:
+                    profile["has_gift_home"] = True
+                    profile["home"] = (home_gift if str(home_gift) not in ("房", "房子", "住宅", "楼", "小区")
+                                       else "新家")
         except Exception:
             pass
         return profile
@@ -374,6 +391,11 @@ class ScheduleEngine:
             "home": home,
             "workplace": workplace,
             "car": car,
+            "has_gift_car": bool(profile.get("has_gift_car")),
+            "has_gift_home": bool(profile.get("has_gift_home")),
+            "assets": self._gift_assets(),
+            "worn": self._gift_worn(),
+            "gift_log": self._gift_log(),
             "mood": mood_now,
             "period": dict(period or {}),
             "health": dict(health or {}),
@@ -386,6 +408,81 @@ class ScheduleEngine:
             "seed": seed,
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
+
+    def _gift_assets(self):
+        """他送的大件（车/房/贵重），写进日程上下文，让日记自然带出来。"""
+        try:
+            gift = getattr(self.p, "gift", None)
+            if gift is not None:
+                return gift.asset_text()
+        except Exception:
+            pass
+        return ""
+
+    def _gift_worn(self):
+        """他送的小件里能穿戴的（手表/围巾/包/口红），写进日程上下文。"""
+        try:
+            gift = getattr(self.p, "gift", None)
+            if gift is not None:
+                return gift.worn_text()
+        except Exception:
+            pass
+        return ""
+
+    @staticmethod
+    def _use_gift_today(ctx, label):
+        """同一天同一件东西固定选择：六成用他送的，四成用自己的。"""
+        day = str(ctx.get("day") or "")
+        if not day:
+            return True
+        return md5_int(day + "|wear|" + label) % 10 < 6
+
+    @staticmethod
+    def _wear_phrase(label, gifted):
+        if label == "包":
+            return "背着包（他送的）" if gifted else "背着包"
+        return ("戴了%s（他送的）" if gifted else "戴了%s") % label
+
+    def _apply_gift_effects(self, items, ctx):
+        """出门时写穿戴：他送的标「他送的」；自己的只写通用名。"""
+        temp = (ctx.get("weather") or {}).get("temp")
+        labels = []
+        gift = getattr(self.p, "gift", None)
+        if gift is not None:
+            try:
+                labels = gift.wear_labels(temp)
+            except Exception:
+                labels = []
+        own = ["围巾"] if temp is not None and float(temp) <= 20 else []
+        if not labels and not own:
+            return items
+        extras = []
+        for label in labels:
+            extras.append(self._wear_phrase(label, self._use_gift_today(ctx, label)))
+        for label in own:
+            if label not in labels:
+                extras.append(self._wear_phrase(label, False))
+        suffix = "；".join(extras)
+        for item in items:
+            if item.get("category") not in ("commute", "play"):
+                continue
+            place = str(item.get("place") or "")
+            if not place or place == "家" or place.startswith("家"):
+                continue
+            detail = str(item.get("detail") or "").strip()
+            if suffix and suffix not in detail:
+                item["detail"] = (detail + "；" + suffix).strip("；")
+        return items
+
+    def _gift_log(self):
+        """带日期的礼物记录，让日程日记有迹可查。"""
+        try:
+            gift = getattr(self.p, "gift", None)
+            if gift is not None:
+                return gift.gift_log_text()
+        except Exception:
+            pass
+        return ""
 
     def yesterday_summary(self, day):
         """读取昨日遗留：熬夜、睡眠不足、生病，今天必须疲惫。"""
@@ -546,6 +643,7 @@ class ScheduleEngine:
         items = self._expand(segments, ctx)
         items = self._fill_activities(items, ctx)
         items = self._smooth_moods(items, ctx)
+        items = self._apply_gift_effects(items, ctx)
         items = self._validate(items, ctx)
         return items
 
@@ -566,18 +664,28 @@ class ScheduleEngine:
         sick = bool((ctx.get("health") or {}).get("sick"))
         pain = int((ctx.get("period") or {}).get("pain") or 0)
         wake = "赖床、起不来" if late else "起床洗漱、吃早餐"
-        commute = "挤地铁去公司"
-        if sick:
+        has_car = bool(ctx.get("has_gift_car"))
+        if has_car:
+            commute = "开车去公司"
+        elif sick:
             commute = "带病出门，慢慢走去地铁站"
+        else:
+            commute = "挤地铁去公司"
         return [
             self._seg("00:00", "07:00", "睡觉", home, "home", "sleep"),
             self._seg("07:00", "08:00", wake, home, "home", "life", detail="昨晚没睡好" if late else ""),
-            self._seg("08:00", "09:00", commute, "路上", "road", "commute", transit="subway"),
+            self._seg("08:00", "09:00", commute, "路上", "road", "commute",
+                      transit="drive" if has_car else "subway",
+                      vehicle=ctx.get("car") if has_car else "",
+                      detail="早高峰有点堵，到公司还得找车位" if has_car else ""),
             self._seg("09:00", "12:00", "上班", office, "office", "work"),
             self._seg("12:00", "13:00", "吃午饭", office + "附近", "restaurant", "meal"),
             self._seg("13:00", "14:00", "午休", office, "office", "rest"),
             self._seg("14:00", "18:00", "上班", office, "office", "work"),
-            self._seg("18:00", "19:00", "下班回家", "路上", "road", "commute", transit="subway"),
+            self._seg("18:00", "19:00", "下班开车回家" if has_car else "下班回家", "路上", "road", "commute",
+                      transit="drive" if has_car else "subway",
+                      vehicle=ctx.get("car") if has_car else "",
+                      detail="晚高峰，慢慢挪" if has_car else ""),
             self._seg("19:00", "20:00", "吃晚饭", home, "home", "meal"),
             self._seg("20:00", "22:00", "休息", home, "home", "rest"),
             self._seg("22:00", "23:00", "洗澡护肤", home, "home", "life"),
@@ -1255,6 +1363,20 @@ class ScheduleEngine:
             car_line = "这一小时是开%s；必须写清堵车、找停车位或路上的细节。" % item.get("vehicle")
         if item.get("detail"):
             car_line = (car_line + " 可以用的细节：%s。" % item.get("detail")).strip()
+        asset_line = ""
+        assets = str(ctx.get("assets") or "").strip()
+        if assets:
+            asset_line = ("他送你的东西：%s。写这一小时时可以自然戴/用/开，"
+                          "但不要每段都提，也不要写你还想要更大的。" % assets)
+        worn_line = ""
+        worn = str(ctx.get("worn") or "").strip()
+        if worn:
+            worn_line = "你今天身上/包里有：%s（他送的）。写日记时可以自然带一句，不用每段都提。" % worn
+        gift_line = ""
+        gift_log = str(ctx.get("gift_log") or "").strip()
+        if gift_log:
+            gift_line = ("他送过你的东西（日期）：%s。写日记时可以自然带一句；"
+                         "日期不是今天的，不要写成今天送的，也不要每段都提。" % gift_log)
         return (
             "角色设定：\n" + _brief_world(ctx.get("world") or {}) + "\n"
             "今天：%s，%s；天气：%s；所在地：%s。\n"
@@ -1266,6 +1388,9 @@ class ScheduleEngine:
             "下一小时：%s\n"
             "突发事件：%s\n"
             "景区信息：%s\n"
+            "%s\n"
+            "%s\n"
+            "%s\n"
             "%s\n"
             "请写一段 120-260 字的第一人称小日记，要求：\n"
             "1. 只写这一小时，不要提前写下一小时；\n"
@@ -1293,6 +1418,9 @@ class ScheduleEngine:
             event.get("note") or "无",
             _scenic_text(scenic),
             car_line,
+            asset_line,
+            worn_line,
+            gift_line,
         )
 
     @staticmethod
