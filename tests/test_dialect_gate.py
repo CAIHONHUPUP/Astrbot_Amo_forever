@@ -159,6 +159,7 @@ class WiringTests(unittest.TestCase):
             html = stream.read()
         self.assertIn('<option value="普通话">', html)
         self.assertIn('dialect_enabled: false', html, "选普通话时要顺手关掉方言开关")
+        self.assertIn('create_dialect_kb: true', html, "选回方言时要把方言库开关恢复")
 
 
 if __name__ == "__main__":

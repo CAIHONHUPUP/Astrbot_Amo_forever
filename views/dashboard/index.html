@@ -1239,7 +1239,7 @@
       try {
         const changes = plain
           ? { dialect_style: "普通话", dialect_enabled: false, create_dialect_kb: false }
-          : { dialect_style: value, dialect_enabled: true };
+          : { dialect_style: value, dialect_enabled: true, create_dialect_kb: true };
         const result = await call("config_save", { changes });
         if (result && result.code && result.code !== 0) throw new Error(result.msg || "切换失败");
         toast(plain ? "已切到普通话：方言已关闭（不再查方言库）" : "语种已切换：" + value);
