@@ -1258,5 +1258,21 @@
     "description": "【礼物】每次最多提醒几件",
     "default": 8,
     "hint": "太多会让她每句话都想提礼物，建议 5-8。"
+  },
+  "gift_shop_hint_chance": {
+    "type": "float",
+    "description": "【礼物】逛街时提一句的概率",
+    "hint": "0~1，默认 0.35：不是每次逛街都会想到小东西，抽中了才提一句。",
+    "default": 0.35
+  },
+  "gift_shop_hint_gap_hours": {
+    "type": "int",
+    "description": "【礼物】逛街提示最短间隔（小时）",
+    "default": 6
+  },
+  "gift_shop_hint_max_per_day": {
+    "type": "int",
+    "description": "【礼物】逛街提示每天最多几次",
+    "default": 1
   }
 }
