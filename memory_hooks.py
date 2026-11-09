@@ -91,7 +91,11 @@ def render_recent_block(rows, self_name="你", limit=8):
         content = _clean(row.get("content"), 120)
         if not content:
             continue
-        if str(row.get("role")) == "bot":
+        role = str(row.get("role"))
+        if role == "summary":
+            lines.append("【摘要】" + content)
+            continue
+        if role == "bot":
             who = self_name
         else:
             who = _clean(row.get("name"), 16) or "他"
@@ -118,7 +122,7 @@ class ChatBuffer:
             "umo": umo,
             "uid": str(uid or ""),
             "name": str(name or ""),
-            "role": "bot" if str(role) == "bot" else "user",
+            "role": str(role) if str(role) in ("bot", "summary") else "user",
             "content": text,
             "created_at": _number(created_at, time.time()),
         }
@@ -163,7 +167,7 @@ class ChatBuffer:
                 "umo": umo,
                 "uid": str(row.get("uid") or ""),
                 "name": str(row.get("name") or ""),
-                "role": "bot" if str(row.get("role")) == "bot" else "user",
+                "role": str(row.get("role")) if str(row.get("role")) in ("bot", "summary") else "user",
                 "content": text,
                 "created_at": _number(row.get("created_at"), 0),
             })
@@ -245,8 +249,25 @@ class AmoDataProvider(MemoryProvider):
 
     name = "amo_data"
     priority = 10
-    caps = frozenset({CAP_REMEMBER, CAP_RECALL, CAP_PROFILE, CAP_RECENT})
     PLUGIN_NAMES = ("Astr_Amo_data", "astrbot_plugin_amo_data", "AstrAmoData")
+
+    @property
+    def caps(self):
+        """运行时探测：旧版数据插件缺哪个方法，就不声明哪个能力。"""
+        owners = [self._mem(), self._store()]
+        found = set()
+        for owner in owners:
+            if owner is None:
+                continue
+            if any(callable(getattr(owner, n, None)) for n in ("remember", "add_memory", "save_memory")):
+                found.add(CAP_REMEMBER)
+            if any(callable(getattr(owner, n, None)) for n in ("recall", "search_memory", "query_memory", "search")):
+                found.add(CAP_RECALL)
+            if any(callable(getattr(owner, n, None)) for n in ("get_profile", "profile", "save_profile", "set_profile")):
+                found.add(CAP_PROFILE)
+            if any(callable(getattr(owner, n, None)) for n in ("list_messages", "recent_messages", "messages")):
+                found.add(CAP_RECENT)
+        return frozenset(found)
 
     def _plugin(self):
         return self.rt.get_plugin(self.PLUGIN_NAMES)

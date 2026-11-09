@@ -174,7 +174,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.3.4"
+PLUGIN_VERSION = "6.3.6"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -5012,20 +5012,25 @@ class HumanCorePlugin(Star):
         merged.extend(rows)
         return merged[-size:]
 
-    async def _recent_by_uid(self, uid, limit=20):
-        """按 uid 取近聊：记忆终端优先，没有再退回内存缓冲/本地缓存。"""
+    async def _recent_by_uid(self, uid, limit=20, umo=""):
+        """取近聊：优先按会话，其次按 uid；都没有再退回缓冲/本地缓存。"""
         uid = str(uid or "")
         size = max(1, int(limit or 20))
         mem = self._data_mem()
         lister = getattr(mem, "list_messages", None) if mem is not None else None
+        if callable(lister) and umo:
+            # 按会话取：bot 行的 uid 是字面量 "bot"，按 uid 过滤会把她说的话全滤掉
+            try:
+                rows = await lister(self._data_bot_id(), str(umo), size) or []
+            except TypeError:
+                rows = []
+            except Exception:
+                rows = []
+            if rows:
+                return sorted(rows, key=lambda item: to_float(item.get("created_at"), 0))[-size:]
         if callable(lister):
             try:
                 rows = await lister(self._data_bot_id(), "", size, uid=uid) or []
-            except TypeError:
-                try:
-                    rows = await lister(self._data_bot_id(), "", size) or []
-                except Exception:
-                    rows = []
             except Exception:
                 rows = []
             if rows:
@@ -6180,6 +6185,32 @@ class HumanCorePlugin(Star):
         "add_memory", "remember", "save_memory", "store_memory",
         "add_fact", "ingest_memory", "write_memory",
     )
+
+    async def _write_memory_checked(self, uid, content, kind="fact", tier=1):
+        """写一条记忆并返回是否真的成功；失败打 warning，调用方据此决定要不要标记。"""
+        hub = self._memory_hub()
+        level = to_int(tier, 1)
+        importance = 0.75 if level >= 2 else (0.55 if level == 1 else 0.35)
+        if hub is not None and hub.writable():
+            try:
+                result = await hub.remember(str(uid), content, str(kind or "fact"), importance)
+            except Exception as exc:
+                logger.warning("[amo] 记忆写入异常: %s" % exc)
+                result = {"ok": False}
+            if isinstance(result, dict) and result.get("ok"):
+                return True
+            logger.warning(
+                "[amo] 记忆没写进去（%s）: %s" % ((result or {}).get("reason", "?"), str(content)[:40])
+            )
+            return False
+        if self._data_mem() is not None:
+            try:
+                result = await self._data_memory_write(uid, content, kind, tier)
+            except Exception:
+                result = False
+            if result:
+                return True
+        return False
 
     def _external_memory_write(self, uid, content, kind="fact", tier=1):
         """把一条记忆交给「记忆终端」：装了 Astr_Amo_data 就写它，没装才写外挂记忆插件。
@@ -8132,13 +8163,34 @@ class HumanCorePlugin(Star):
             self._ctx_remember(umo, "bot", self.bot_name, "bot", text)
             if self.cfg_bool("local_chat_cache", False):
                 self.db.add_message(umo, "bot", self.bot_name, "bot", text)
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._data_call(
-                    "add_message", self._data_bot_id(), umo, "bot", self.bot_name, "bot", text, platform=str(umo).split(":", 1)[0]
-                ))
-            except Exception:
-                pass
+            # 直接同步写进记忆终端：fire-and-forget 在 reload/退出时会丢这句
+            saved = False
+            store = self._data_store()
+            if store is not None and callable(getattr(store, "add_message", None)):
+                try:
+                    store.add_message(
+                        self._data_bot_id(), umo, "bot", self.bot_name, "bot", text,
+                        platform=str(umo).split(":", 1)[0],
+                    )
+                    saved = True
+                except TypeError:
+                    try:
+                        store.add_message(self._data_bot_id(), umo, "bot", self.bot_name, "bot", text)
+                        saved = True
+                    except Exception as exc:
+                        logger.warning("[amo] 自己的回复写入终端失败: %s" % exc)
+                except Exception as exc:
+                    logger.warning("[amo] 自己的回复写入终端失败: %s" % exc)
+            if not saved:
+                try:
+                    loop = asyncio.get_running_loop()
+                    task = loop.create_task(self._data_call(
+                        "add_message", self._data_bot_id(), umo, "bot", self.bot_name, "bot", text,
+                        platform=str(umo).split(":", 1)[0],
+                    ))
+                    task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+                except Exception:
+                    pass
             self._last_bot_saved[umo] = (text, time.time())
         except Exception as exc:
             logger.debug("[amo] 记录自己的回复失败: %s" % exc)
@@ -8920,22 +8972,34 @@ class HumanCorePlugin(Star):
             try:
                 profile_row = self.db.get_profile(uid) or {}
                 home_umo = str(profile_row.get("private_umo") or "").strip()
-                rows = await self._recent_by_uid(uid, 20)
+                if not home_umo:
+                    # 还没私聊过：不要退到全局会话，否则群聊的话会被当成他说的
+                    continue
+                rows = await self._recent_by_uid(uid, 20, umo=home_umo)
                 lines = []
                 for row in rows:
                     row_umo = str(row.get("umo") or "").strip()
-                    if home_umo and row_umo and row_umo != home_umo:
-                        # 只从私聊里学，别把别的群、别人的话揉进来
+                    if row_umo and row_umo != home_umo:
                         continue
-                    who = "我" if str(row.get("role")) == "bot" else "他"
+                    role = str(row.get("role") or "")
+                    if role == "summary":
+                        continue
+                    who = "我" if role == "bot" else "他"
                     lines.append("[" + who + "] " + str(row.get("content") or ""))
+                if not lines:
+                    continue
                 facts = await self.llm.extract_facts(
-                    home_umo or self._last_umo, user.get("name", "") or uid, lines
+                    home_umo, user.get("name", "") or uid, lines
                 )
+                ok_any = False
                 for fact in facts:
-                    self._external_memory_write(
+                    written = await self._write_memory_checked(
                         uid, fact["content"], fact["kind"], fact["tier"]
                     )
+                    ok_any = ok_any or written
+                if facts and not ok_any:
+                    logger.warning("[amo] 记忆写入失败，本轮不标记已学: %s" % uid)
+                    continue
                 self.db.kv_set(key, now_ts())
             except Exception as exc:
                 logger.debug("[amo] 自动学习失败: %s" % exc)

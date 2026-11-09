@@ -94,6 +94,9 @@ def analyze_rows(rows, now=None):
     for row in ordered:
         content = str(row.get("content") or "").strip()
         role = str(row.get("role") or "")
+        if role == "summary":
+            # 压缩摘要不是某一方说的话，不参与「谁还没回」的判断
+            continue
         created = _to_float(row.get("created_at"))
         when = _clock(created)
         who = "用户" if role == "user" else "你"

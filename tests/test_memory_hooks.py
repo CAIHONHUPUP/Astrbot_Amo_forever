@@ -106,6 +106,10 @@ class RenderTests(unittest.TestCase):
         text = render_memory_block([{"content": "喜欢无糖茶", "name": "小冉", "tier": 1}])
         self.assertEqual(text, "- 小冉：喜欢无糖茶（重要）")
 
+    def test_summary_rendered_as_summary(self):
+        text = render_recent_block([{"content": "昨天聊了车", "role": "summary"}])
+        self.assertEqual(text, "【摘要】昨天聊了车")
+
     def test_recent_block(self):
         text = render_recent_block([
             {"content": "在吗", "role": "user", "name": "他"},

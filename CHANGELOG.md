@@ -1,5 +1,23 @@
 # Changelog
 
+## 6.3.6
+
+### 实跑报告里的 D1/D3/D4/D5 全部修掉
+
+- **D1** `_recent_by_uid` 改成**按会话取**（`list_messages(bot, umo)`）：
+  bot 行的 `uid` 是字面量 `bot`，按 uid 过滤会把她说的话全滤掉，
+  所以 `[我]` 之前是死代码；现在她自己的话能被学进长期记忆；
+- **D3** 自己的回复改成**同步写进记忆终端**（`store.add_message`），
+  不再 fire-and-forget，reload/退出瞬间不会丢；失败打 warning；
+- **D4** `_auto_learn`：`private_umo` 为空时直接跳过，
+  不再回退全局 `_last_umo`；过滤条件改成 `row_umo and row_umo != home_umo`；
+- **D5** 写入记忆改成 `_write_memory_checked`：真的拿到 `ok` 才算成功，
+  失败打 warning 且**不标记「已学」**，下次还会重试；
+- `AmoDataProvider.caps` 改成**运行时探测**（缺方法就不声明能力）；
+- 压缩摘要按新 `summary` 角色渲染成「【摘要】…」，不再冒充「你说的」。
+
+> 报告是针对 6.3.2 跑的；E1–E8（你先忙 / 报日程 / 台词池）已在 6.3.4 改完。
+
 ## 6.3.4
 
 ### 修「你先忙」：不再拿内在状态当借口赶人
