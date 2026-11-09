@@ -9293,6 +9293,10 @@ class HumanCorePlugin(Star):
             logger.info("[amo] 日记已写: %s" % path)
         except Exception as exc:
             logger.warning("[amo] 写日记失败: %s" % exc)
+            try:
+                self.db.kv_set(attempt_key, now_ts())
+            except Exception:
+                pass
         finally:
             self._diary_writing = False
 
