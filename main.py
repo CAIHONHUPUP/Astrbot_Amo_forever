@@ -127,6 +127,26 @@ except Exception:
             return ""
 
 try:
+    from .diary_lines import (
+        DIARY_WRITTEN_REPLIES as _DIARY_WRITTEN,
+        DIARY_SHOW_REPLIES as _DIARY_SHOW,
+        pick_hints as _diary_pick_hints,
+    )
+except Exception:
+    try:
+        from diary_lines import (
+            DIARY_WRITTEN_REPLIES as _DIARY_WRITTEN,
+            DIARY_SHOW_REPLIES as _DIARY_SHOW,
+            pick_hints as _diary_pick_hints,
+        )
+    except Exception:
+        _DIARY_WRITTEN = ["写了", "写了，不给你看", "写了，秘密"]
+        _DIARY_SHOW = ["不行，你不能偷看我的日记哦", "那是我的日记，才不给你看", "你想得美"]
+
+        def _diary_pick_hints(items, count=8, seed=""):
+            return list(items)[:count]
+
+try:
     from .diary_engine import (
         DEFAULT_DIR as _DIARY_DEFAULT_DIR,
         parse_day as _diary_parse_day,
@@ -8709,15 +8729,16 @@ class HumanCorePlugin(Star):
         try:
             _diary_q = str(event.message_str or "")
             if any(word in _diary_q for word in ("日记", "偷看", "日记本")):
+                _diary_seed = str(_diary_q) + "|" + str(now_ts() // 60)
+                _written_hints = _diary_pick_hints(_DIARY_WRITTEN, 8, _diary_seed)
+                _show_hints = _diary_pick_hints(_DIARY_SHOW, 8, _diary_seed)
                 parts.append(
                     "【日记】你有自己的日记，每天写一篇，存在你自己的电脑里，是你的私人东西。"
                     "**不要主动跟他提日记**，不问他就不说；只有他问起（写没写/写日记吗/想看）时才接话。"
-                    "他问写了没，就随口答，别每次都一样（可以自己造新说法）："
-                    "「写了」「写了，不给你看」「写了呀，写什么就不告诉你」「写了，秘密」"
-                    "「写了，才不告诉你写了什么」「写啦，内容保密」「写了，别问」「写了，但不归你管」；"
-                    "他说想看，就换着撒娇拒绝（也别每次同一句）：「不行，你不能偷看我的日记哦」"
-                    "「那是我的日记，才不给你看」「你想得美」「这是我的小秘密」「不给看，想都别想」"
-                    "「你敢翻试试」「才不要，看了要生气的」「撒娇也不行，收好」；"
+                    "他问写了没，就随口答，别每次都一样（也可以自己造新说法），比如："
+                    + "、".join("「" + item + "」" for item in _written_hints) + "；"
+                    "他说想看，就换着撒娇拒绝（也别每次同一句），比如："
+                    + "、".join("「" + item + "」" for item in _show_hints) + "；"
                     "最多念一句给他，不要整篇念出来。"
                 )
         except Exception:

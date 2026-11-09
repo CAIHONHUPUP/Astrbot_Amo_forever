@@ -13,6 +13,7 @@ from datetime import date
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import diary_engine  # noqa: E402
+import diary_lines  # noqa: E402
 
 
 class DiaryEngineTests(unittest.TestCase):
@@ -97,12 +98,20 @@ class DiaryEngineTests(unittest.TestCase):
         self.assertIn("这天没怎么聊", prompt)
         self.assertIn("没有小日记", prompt)
 
-    def test_ending_hint_pool_has_48_unique(self):
-        self.assertEqual(len(diary_engine.DIARY_ENDING_HINTS), 48)
-        self.assertEqual(len(set(diary_engine.DIARY_ENDING_HINTS)), 48)
+    def test_phrase_pools_are_96_unique(self):
+        pools = [
+            diary_lines.DIARY_ENDING_HINTS,
+            diary_lines.DIARY_WRITTEN_REPLIES,
+            diary_lines.DIARY_SHOW_REPLIES,
+        ]
+        for pool in pools:
+            self.assertEqual(len(pool), 96)
+            self.assertEqual(len(set(pool)), 96)
+
+    def test_prompt_uses_a_sample_from_ending_pool(self):
         prompt = diary_engine.build_prompt(date(2026, 11, 8), ["他：在吗"], ["13:00 在工位"])
-        self.assertIn("只此一本，恕不外借", prompt)
-        self.assertIn("这本子是我的，你管不着", prompt)
+        self.assertTrue(any(item in prompt for item in diary_engine.DIARY_ENDING_HINTS))
+        self.assertNotIn("不许偷看", diary_engine.DIARY_ENDING_HINTS)
 
 
 if __name__ == "__main__":
