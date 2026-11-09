@@ -1,5 +1,25 @@
 # Changelog
 
+## 6.4.2
+
+### 关系网开始自己长出来
+
+之前关系只认「小明是我同事」这种显式句子，聊得再热也不会产生边。现在：
+
+- 新增 `relation_sediment.plan_edges` + `main._sediment_relations`，每 30 分钟随 tick 跑一次：
+  - **bot ↔ 用户**：近 30 天 ≥15 条且跨 ≥2 天 → `熟人`；≥60 条且跨 ≥7 天 → `朋友`；
+    不够门槛就不写（不硬造）；
+  - **两跳推断**：bot 已经认识你、而你有「非仇人」的人际边 → 记 `bot ↔ A = 朋友`，
+    note「推断：经你认识」，每人最多 5 条；
+- 三条保护：管理员手设边永不覆盖；`家人/恋人/仇人` 不改；自动边**只升不降**、重复跑幂等；
+- `_relation_network_text` 和面板接口把 `uid="bot"` 显示成角色名，
+  不再出现「小明和 bot 是朋友」；
+- 新增 `tests/test_relation_sediment.py`（门槛、手设保护、只升不降、两跳推断、幂等、限额）；
+- 配置开关：`enable_auto_relation`（默认开）、`relation_sediment_days`（30）、
+  `relation_infer_per_user`（5），不配就用默认值。
+
+> 数据插件 2.3.2 同步给 `bot` 节点补了显示名。
+
 ## 6.4.0
 
 ### 群聊两三个字也会去翻记忆

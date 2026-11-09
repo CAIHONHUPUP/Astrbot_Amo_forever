@@ -156,6 +156,14 @@ except Exception:
         _rank_edges = None
 
 try:
+    from .relation_sediment import plan_edges as plan_relation_edges
+except Exception:
+    try:
+        from relation_sediment import plan_edges as plan_relation_edges
+    except Exception:
+        plan_relation_edges = None
+
+try:
     from .schedule_engine import ScheduleEngine
 except Exception:
     try:
@@ -174,7 +182,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.4.0"
+PLUGIN_VERSION = "6.4.2"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -1929,6 +1937,18 @@ class AmoDB:
                     params,
                 ).fetchall()
         return [dict(row) for row in reversed(rows)]
+
+    def interaction_stats(self, days=30):
+        """按 uid 统计真实互动量（只算用户自己说的话），给关系沉淀用。"""
+        cutoff = now_ts() - max(1, int(days)) * 86400
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT uid, MAX(name) AS name, COUNT(*) AS c, MIN(created_at) AS f, MAX(created_at) AS l "
+                "FROM messages WHERE role='user' AND uid!='' AND uid!='bot' AND created_at>? "
+                "GROUP BY uid ORDER BY c DESC LIMIT 200",
+                (cutoff,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def active_users(self, since, limit=2):
         with self.lock:
@@ -3819,6 +3839,7 @@ class HumanCorePlugin(Star):
         self._proactive_last = 0.0
         self._last_ritual = 0.0
         self._last_relation_decay = 0.0
+        self._last_relation_sediment = 0.0
         self._bot_initiated = {}
         self._prefix_cache = None
         self._loop_task = None
@@ -7451,6 +7472,7 @@ class HumanCorePlugin(Star):
                 names[str(item.get("uid"))] = item.get("alias") or item.get("name") or str(item.get("uid"))
         except Exception:
             pass
+        names["bot"] = str(getattr(self, "bot_name", "") or "你")
         picked = []
         if _rank_edges is not None:
             try:
@@ -8862,6 +8884,55 @@ class HumanCorePlugin(Star):
             except asyncio.CancelledError:
                 return
 
+    async def _sediment_relations(self):
+        """按真实互动量沉淀关系网：聊得多就是熟人/朋友，并让 bot 通过你认识你的人。
+
+        只补两种情况，且只写「自动：」「推断：」两类 note（算法见 relation_sediment.py）：
+        1. bot ↔ 用户：近 30 天 ≥15 条且跨 ≥2 天 → 熟人；≥60 条且跨 ≥7 天 → 朋友；
+        2. 两跳推断：bot↔用户已是熟/朋友，而用户↔A 有非仇人边 → bot↔A 记「朋友」，note「推断：经X认识」。
+        管理员手设的关系（note 不带这两个前缀）永远不覆盖；家人/恋人/仇人不改，自动边只升不降。
+        """
+        if plan_relation_edges is None:
+            return
+        days = max(1, int(self.cfg_int("relation_sediment_days", 30)))
+        try:
+            stats = self.db.interaction_stats(days)
+        except Exception as exc:
+            logger.debug("[amo] 互动统计失败: %s" % exc)
+            return
+        if not stats:
+            return
+
+        names = {}
+        try:
+            for item in self.db.list_profiles(limit=500):
+                names[str(item.get("uid"))] = str(item.get("alias") or item.get("name") or "")
+        except Exception:
+            names = {}
+
+        existing = {}
+        try:
+            for edge in self.db.list_relations():
+                pair = tuple(sorted([str(edge.get("a_uid") or ""), str(edge.get("b_uid") or "")]))
+                existing[pair] = (str(edge.get("relation") or ""), str(edge.get("note") or ""))
+        except Exception as exc:
+            logger.debug("[amo] 读取关系网失败: %s" % exc)
+            return
+
+        infer_limit = max(1, min(10, int(self.cfg_int("relation_infer_per_user", 5))))
+        try:
+            plan = plan_relation_edges(stats, existing, names, days, infer_limit)
+        except Exception as exc:
+            logger.debug("[amo] 关系沉淀计算失败: %s" % exc)
+            return
+        for a_uid, b_uid, relation, note in plan:
+            try:
+                if not self.db.upsert_relation(a_uid, b_uid, relation, note):
+                    continue
+                await self._push_relation_to_data(a_uid, b_uid, relation, note)
+            except Exception as exc:
+                logger.debug("[amo] 关系沉淀写入失败: %s" % exc)
+
     def _decay_hate_relations(self):
         try:
             cutoff = now_ts() - 7 * 86400
@@ -8919,6 +8990,13 @@ class HumanCorePlugin(Star):
         if now - self._last_relation_decay > 3600:
             self._last_relation_decay = now
             self._decay_hate_relations()
+        if (self.cfg_bool("enable_auto_relation", True)
+                and now - self._last_relation_sediment > 1800):
+            self._last_relation_sediment = now
+            try:
+                await self._sediment_relations()
+            except Exception as exc:
+                logger.debug("[amo] 关系沉淀失败: %s" % exc)
         if now - self._last_purge > 3600:
             self._last_purge = now
             self.db.purge_messages(self.cfg_int("chat_log_days", 14))
@@ -10931,6 +11009,7 @@ class HumanCorePlugin(Star):
         await self._ensure_ready()
         profiles = self.db.list_profiles(limit=500)
         names = {str(item.get("uid")): (item.get("alias") or item.get("name") or item.get("uid")) for item in profiles}
+        names["bot"] = str(getattr(self, "bot_name", "") or "你")
         edges = []
         for edge in self.db.list_relations():
             row = dict(edge)
