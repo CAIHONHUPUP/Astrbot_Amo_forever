@@ -378,10 +378,10 @@ class MemoryCompanionProvider(MemoryProvider):
 
     name = "memory_companion"
     priority = 30
-    caps = frozenset({CAP_REMEMBER, CAP_RECALL, CAP_PROFILE})
     PLUGIN_NAMES = ("astrbot_plugin_private_companion", "memory_companion")
     RECALL_METHODS = ("search_for_event", "recall_for_event", "search_memory", "recall_memory")
     WRITE_METHODS = ("add_memory", "remember", "save_memory")
+    PROFILE_METHODS = ("get_profile", "profile", "save_profile", "set_profile")
     BLOCK_WORDS = ("permission", "forbidden", "denied", "p5", "attest", "unauthorized", "gate")
 
     def __init__(self, runtime):
@@ -395,6 +395,21 @@ class MemoryCompanionProvider(MemoryProvider):
             return None
         service = getattr(plugin, "service", None)
         return service if service is not None else plugin
+
+    @property
+    def caps(self):
+        """按目标插件实际暴露的接口声明能力，老版本缺方法时别误判可写。"""
+        target = self._target()
+        if target is None:
+            return frozenset()
+        found = set()
+        if any(callable(getattr(target, n, None)) for n in self.WRITE_METHODS):
+            found.add(CAP_REMEMBER)
+        if any(callable(getattr(target, n, None)) for n in self.RECALL_METHODS):
+            found.add(CAP_RECALL)
+        if any(callable(getattr(target, n, None)) for n in self.PROFILE_METHODS):
+            found.add(CAP_PROFILE)
+        return frozenset(found)
 
     def available(self):
         target = self._target()

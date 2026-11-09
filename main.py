@@ -174,7 +174,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.3.6"
+PLUGIN_VERSION = "6.3.8"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -8188,7 +8188,14 @@ class HumanCorePlugin(Star):
                         "add_message", self._data_bot_id(), umo, "bot", self.bot_name, "bot", text,
                         platform=str(umo).split(":", 1)[0],
                     ))
-                    task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+                    def _log_failed_task(task):
+                        if task.cancelled():
+                            return
+                        exc = task.exception()
+                        if exc is not None:
+                            logger.warning("[amo] 自己的回复异步落库失败: %s" % exc)
+
+                    task.add_done_callback(_log_failed_task)
                 except Exception:
                     pass
             self._last_bot_saved[umo] = (text, time.time())

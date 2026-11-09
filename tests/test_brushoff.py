@@ -16,6 +16,22 @@ class BrushoffTests(unittest.TestCase):
         self.assertEqual(text, "我在上班呢，")
         self.assertIn("你先忙", hit)
 
+    def test_keeps_information_in_same_sentence(self):
+        # 整句命中时不按逗号切，会把「明天九点开会」一起删掉
+        text, hit = strip_brushoff("我查了下，明天九点开会，你先忙吧。", "在吗")
+        self.assertEqual(text, "我查了下，明天九点开会，")
+        self.assertIn("你先忙", hit)
+
+    def test_drops_only_brushoff_clause_at_head(self):
+        text, hit = strip_brushoff("你先忙吧，我正好也要出门。", "在吗")
+        self.assertEqual(text, "我正好也要出门。")
+        self.assertIn("你先忙", hit)
+
+    def test_fallback_follows_user_message(self):
+        text, hit = strip_brushoff("那你先忙，晚点聊。", "今天好累")
+        self.assertTrue(hit)
+        self.assertEqual(text, "我在呢，你说。")
+
     def test_keeps_when_only_brushoff(self):
         text, hit = strip_brushoff("那你先忙，不打扰你了。", "在吗")
         self.assertTrue(hit)
