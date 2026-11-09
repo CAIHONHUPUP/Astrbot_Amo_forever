@@ -1254,5 +1254,39 @@
     "type": "int",
     "description": "【礼物】逛街提示每天最多几次",
     "default": 1
+  },
+  "time_recall_enabled": {
+    "type": "bool",
+    "description": "【时间回看】按时间问就回看当时的聊天",
+    "hint": "他问「昨天下午/前天/上周三」时，去记忆终端（我想永远记住你）取那段时间的聊天再回答；只带内容，不给每条消息打时间戳。",
+    "default": true
+  },
+  "time_recall_limit": {
+    "type": "int",
+    "description": "【时间回看】最多带几条",
+    "default": 6
+  },
+  "daily_digest_enabled": {
+    "type": "bool",
+    "description": "【阶段记忆】每天把昨天聊天压成一条长期记忆",
+    "hint": "上午（默认 6 点后）用模型把昨天聊到的事、约定、他的状态总结成 2-4 句写进记忆终端，供以后召回。",
+    "default": true
+  },
+  "daily_digest_hour": {
+    "type": "int",
+    "description": "【阶段记忆】几点之后总结昨天",
+    "default": 6
+  },
+  "auto_learn_minutes": {
+    "type": "int",
+    "description": "【长期记忆】自动提炼间隔（分钟）",
+    "hint": "从最近私聊里抽事实的间隔，默认 15 分钟（原来是写死 30 分钟）。",
+    "default": 15
+  },
+  "memory_inject_max_chars": {
+    "type": "int",
+    "description": "【注入】每轮记忆最多多少个字",
+    "hint": "防止一次塞太多记忆挤占对话；按行截断，默认 1200 字。",
+    "default": 1200
   }
 }

@@ -115,6 +115,18 @@ except Exception:
         _pg_analyze_rows = _pg_compose_task = _pg_near_duplicate = None
 
 try:
+    from .time_recall import looks_like_time_query as _looks_like_time_query, render_time_block as _render_time_block
+except Exception:
+    try:
+        from time_recall import looks_like_time_query as _looks_like_time_query, render_time_block as _render_time_block
+    except Exception:
+        def _looks_like_time_query(*args, **kwargs):
+            return False
+
+        def _render_time_block(*args, **kwargs):
+            return ""
+
+try:
     from .memory_hooks import MemoryHub, render_recent_block
 except Exception:
     try:
@@ -5961,6 +5973,34 @@ class HumanCorePlugin(Star):
             logger.debug(message)
         return pushed
 
+    async def _time_recall_context(self, event, uid):
+        """按时间回看：他问"昨天下午/前天/上周三"时，去记忆终端取那段时间的聊天。"""
+        if not self.cfg_bool("time_recall_enabled", True):
+            return ""
+        text = str(getattr(event, "message_str", "") or "")
+        if not _looks_like_time_query(text):
+            return ""
+        mem = self._data_mem()
+        if mem is None or not callable(getattr(mem, "recall_messages", None)):
+            return ""
+        try:
+            umo = str(getattr(event, "unified_msg_origin", "") or "")
+            limit = self.cfg_int("time_recall_limit", 6)
+            result = await self._data_call(
+                "recall_messages", self._data_bot_id(), query=text, umo=umo,
+                uid=str(uid), limit=max(4, min(int(limit) * 2, 40)),
+            )
+        except Exception as exc:
+            logger.debug("[amo] 时间回看失败: %s" % exc)
+            return ""
+        if not isinstance(result, dict):
+            return ""
+        messages = result.get("messages") or []
+        label = str(result.get("label") or "")
+        if not label:
+            return ""
+        return _render_time_block(label, messages, max_lines=max(1, int(limit)))
+
     async def _cross_platform_context(self, event, uid):
         """同一个人的其他平台（QQ / 飞书）说过什么，拼成一段给提示词用。"""
         mem = self._data_mem()
@@ -7416,7 +7456,13 @@ class HumanCorePlugin(Star):
             who = str(item.get("name") or "").strip()
             prefix = (who + "：") if (who and source in ("hub", "amo_data")) else ""
             lines.append("· " + prefix + str(item.get("content", "")) + "（" + label + "）")
-        return memories, "\n".join(lines)
+        text = "\n".join(lines)
+        budget = self.cfg_int("memory_inject_max_chars", 1200)
+        if budget > 0 and len(text) > budget:
+            text = text[:budget]
+            if "\n" in text:
+                text = text.rsplit("\n", 1)[0]
+        return memories, text
 
     # ---------- 消息入口 ----------
     @filter.event_message_type(filter.EventMessageType.ALL)
@@ -8998,6 +9044,9 @@ class HumanCorePlugin(Star):
                 and now_ts() - to_float(getattr(self, "_last_data_probe", 0), 0) > 300):
             self._last_data_probe = now_ts()
             self._spawn(self._sync_with_data_plugin())
+        elif now_ts() - to_float(getattr(self, "_last_digest_check", 0), 0) > 300:
+            self._last_digest_check = now_ts()
+            self._spawn(self._maybe_daily_digest())
         elif now_ts() - to_float(getattr(self, "_last_profile_sync", 0), 0) > 600:
             # 画像每 10 分钟对一次账，保证面板和本地不脱节
             self._last_profile_sync = now_ts()
@@ -9077,6 +9126,96 @@ class HumanCorePlugin(Star):
         if now - self._last_ritual >= 60:
             await self._maybe_rituals()
 
+    async def _maybe_daily_digest(self):
+        """每天上午把"昨天"的聊天压成一条长期记忆（阶段记忆）。"""
+        if not self.cfg_bool("daily_digest_enabled", True):
+            return
+        now = datetime.now()
+        if now.hour < max(0, min(23, self.cfg_int("daily_digest_hour", 6))):
+            return
+        today = now.strftime("%Y-%m-%d")
+        guard = "daily_digest:" + today
+        try:
+            if self.db.kv_get(guard, ""):
+                return
+        except Exception:
+            pass
+        mem = self._data_mem()
+        if mem is None or not callable(getattr(mem, "recall_messages", None)):
+            return
+        try:
+            profiles = self.db.list_profiles(limit=20) or []
+        except Exception:
+            profiles = []
+        digest_written = 0
+        digest_failed = 0
+        digest_attempted = 0
+        for profile in profiles:
+            uid = str(profile.get("uid") or "")
+            home_umo = str(profile.get("private_umo") or "")
+            if not uid or not home_umo:
+                continue
+            if str(profile.get("relation") or "") != "相恋":
+                continue
+            try:
+                # 按人取（不限会话）：他上午可能在飞书、晚上在 QQ
+                result = await self._data_call(
+                    "recall_messages", self._data_bot_id(), query="昨天",
+                    umo="", uid=uid, limit=300,
+                )
+            except Exception as exc:
+                logger.debug("[amo] 每日总结取聊天失败: %s" % exc)
+                continue
+            messages = (result or {}).get("messages") or []
+            lines = []
+            for row in messages:
+                text = str(row.get("content") or "").strip().replace("\n", " ")
+                if not text or str(row.get("role") or "") == "system":
+                    continue
+                who = "我" if str(row.get("role") or "") == "bot" else "他"
+                lines.append("[" + who + "] " + text[:120])
+            if len(lines) < 6:
+                continue
+            digest_attempted += 1
+            system = "你是长期记忆整理器。只输出一段中文总结，不要标题、不要分点、不要时间戳。"
+            prompt = (
+                "下面是昨天（" + (now - timedelta(days=1)).strftime("%Y-%m-%d") + "）两人的聊天记录。\n"
+                "请把它压成 2-4 句长期记忆：写清聊到的事、约定、他的状态变化（工作/身体/情绪/计划）。\n"
+                "只写事实，不写「今天/昨天」这类相对时间；不要复述原话；不确定的不要编。\n\n"
+                + "\n".join(lines[-120:])
+            )
+            try:
+                summary = await self.llm.chat_raw(home_umo, system, prompt)
+            except Exception as exc:
+                logger.debug("[amo] 每日总结生成失败: %s" % exc)
+                summary = ""
+            summary = re.sub(r"\s+", " ", str(summary or "")).strip()
+            if len(summary) < 8:
+                continue
+            content = "【" + (now - timedelta(days=1)).strftime("%Y-%m-%d") + "】" + summary[:400]
+            written = await self._write_memory_checked(uid, content, "daily_digest", 2)
+            logger.info("[amo] 每日总结%s: %s" % ("已写入" if written else "写入失败", content[:80]))
+            if written:
+                digest_written += 1
+            else:
+                digest_failed += 1
+        # 只有"确实生成过"或"根本没有足够的聊天"才落 guard；
+        # 生成失败会重试（最多 3 次/天），避免一天都没有阶段记忆。
+        if digest_written or (digest_failed == 0 and digest_attempted == 0):
+            try:
+                self.db.kv_set(guard, today)
+            except Exception:
+                pass
+        elif digest_failed:
+            try:
+                tries = to_int(self.db.kv_get("daily_digest_tries:" + today, 0), 0) + 1
+                self.db.kv_set("daily_digest_tries:" + today, tries)
+                if tries >= 3:
+                    self.db.kv_set(guard, today)
+                    logger.warning("[amo] 每日总结连续失败 %d 次，今天不再重试" % tries)
+            except Exception:
+                pass
+
     def _first_private_umo(self):
         try:
             for profile in self.db.list_profiles(limit=50):
@@ -9098,7 +9237,8 @@ class HumanCorePlugin(Star):
                 continue
             key = "auto_learn_" + uid
             last = to_float(self.db.kv_get(key, 0))
-            if now_ts() - last < 1800:
+            interval = max(5, self.cfg_int("auto_learn_minutes", 15)) * 60
+            if now_ts() - last < interval:
                 continue
             try:
                 profile_row = self.db.get_profile(uid) or {}
