@@ -57,8 +57,9 @@
     .brand { display: flex; align-items: center; gap: 9px; font-size: 20px; font-weight: 650; letter-spacing: .5px; }
     .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--pink); box-shadow: 0 0 10px rgba(232, 72, 154, .45); }
     .clock { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
-    .neuron-tab { flex: 0 0 auto; width: 34px; min-width: 34px; padding: 0; display: grid; place-items: center; color: #7a6f86; }
-    .neuron-tab:hover, .neuron-tab.on { color: var(--pink); border-color: var(--pink); box-shadow: 0 0 0 3px rgba(224,106,154,.12); }
+    .neuron-btn { margin-left: 8px; width: 32px; height: 32px; border-radius: 10px; border: 1px solid var(--line);
+      background: #fff; color: #7a6f86; display: grid; place-items: center; cursor: pointer; transition: .18s; }
+    .neuron-btn:hover, .neuron-btn.on { border-color: var(--pink); color: var(--pink); box-shadow: 0 0 0 3px rgba(224,106,154,.12); }
     .card {
       background: var(--card);
       border: 1px solid var(--line);
@@ -315,7 +316,16 @@
 <body>
   <div class="wrap">
     <header>
+      <div style="display:flex;align-items:center">
       <div class="brand"><span class="dot"></span> 陪伴</div>
+      <button class="neuron-btn" id="btnNeuron" title="关系图谱" aria-label="关系图谱">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8">
+          <circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="17" r="2.2"/><circle cx="19" cy="17" r="2.2"/>
+          <circle cx="12" cy="12" r="2.2"/>
+          <path d="M12 7.2v2.6M10.2 13.4 6.6 15.6M13.8 13.4l3.6 2.2"/>
+        </svg>
+      </button>
+      </div>
       <div class="clock" id="clock">--</div>
     </header>
 
@@ -323,13 +333,6 @@
       <button class="tabnav-arrow left" type="button" aria-label="向前">‹</button>
       <nav class="tabs">
       <button class="tab active" data-tab="status">状态</button>
-      <button class="tab neuron-tab" id="btnNeuron" title="关系图谱" aria-label="关系图谱">
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8">
-          <circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="17" r="2.2"/><circle cx="19" cy="17" r="2.2"/>
-          <circle cx="12" cy="12" r="2.2"/>
-          <path d="M12 7.2v2.6M10.2 13.4 6.6 15.6M13.8 13.4l3.6 2.2"/>
-        </svg>
-      </button>
       <button class="tab" data-tab="world">世界</button>
       <button class="tab" data-tab="schedule">日程</button>
       <button class="tab" data-tab="actions">操作</button>
