@@ -201,6 +201,104 @@ except Exception:
             return ""
 
 try:
+    from .wander import (
+        assess as _wander_assess,
+        ask_limit as _wander_ask_limit,
+        detect_agreement as _wander_agree,
+        detect_question as _wander_question,
+        detect_follow_invite as _follow_invite,
+        detect_follow_refuse as _follow_refuse,
+        detect_refusal as _wander_refuse,
+        follow_agree_text as _wander_follow_agree_text,
+        follow_block as _follow_block,
+        offer_block as _wander_offer_block,
+        offer_text as _wander_offer_text,
+        pick_destination as _wander_pick,
+        plan_text as _wander_plan_text,
+        solo_agree_text as _wander_solo_agree_text,
+        solo_block as _wander_solo_block,
+        solo_refuse_text as _wander_solo_refuse_text,
+        trip_days as _wander_trip_days,
+        want_travel as _wander_want,
+    )
+except Exception:
+    try:
+        from wander import (
+            assess as _wander_assess,
+            ask_limit as _wander_ask_limit,
+            detect_agreement as _wander_agree,
+            detect_question as _wander_question,
+            detect_follow_invite as _follow_invite,
+            detect_follow_refuse as _follow_refuse,
+            detect_refusal as _wander_refuse,
+            follow_agree_text as _wander_follow_agree_text,
+            follow_block as _follow_block,
+            offer_block as _wander_offer_block,
+            offer_text as _wander_offer_text,
+            pick_destination as _wander_pick,
+            plan_text as _wander_plan_text,
+            solo_agree_text as _wander_solo_agree_text,
+            solo_block as _wander_solo_block,
+            solo_refuse_text as _wander_solo_refuse_text,
+            trip_days as _wander_trip_days,
+            want_travel as _wander_want,
+        )
+    except Exception:
+        def _wander_assess(*args, **kwargs):
+            return (False, False)
+
+        def _wander_agree(*args, **kwargs):
+            return False
+
+        def _wander_question(*args, **kwargs):
+            return False
+
+        def _wander_refuse(*args, **kwargs):
+            return False
+
+        def _follow_block(*args, **kwargs):
+            return ""
+
+        def _follow_invite(*args, **kwargs):
+            return False
+
+        def _follow_refuse(*args, **kwargs):
+            return False
+
+        def _wander_follow_agree_text(*args, **kwargs):
+            return ""
+
+        def _wander_offer_block(*args, **kwargs):
+            return ""
+
+        def _wander_offer_text(*args, **kwargs):
+            return ""
+
+        def _wander_pick(*args, **kwargs):
+            return ("", [])
+
+        def _wander_plan_text(*args, **kwargs):
+            return ""
+
+        def _wander_ask_limit(*args, **kwargs):
+            return 1
+
+        def _wander_solo_agree_text(*args, **kwargs):
+            return ""
+
+        def _wander_solo_block(*args, **kwargs):
+            return ""
+
+        def _wander_solo_refuse_text(*args, **kwargs):
+            return ""
+
+        def _wander_trip_days(*args, **kwargs):
+            return 1
+
+        def _wander_want(*args, **kwargs):
+            return False
+
+try:
     from .memory_hooks import MemoryHub, render_recent_block
 except Exception:
     try:
@@ -232,6 +330,54 @@ except Exception:
         from relation_learn import parse_relations
     except Exception:
         parse_relations = None
+
+try:
+    from .city_follow import (
+        DEFAULT_CITY as _CITY_DEFAULT,
+        detect_city as _city_detect,
+        compose_block as _city_block,
+        travel_block as _city_travel_block,
+        travel_events as _city_travel_events,
+        travel_action as _city_travel_action,
+        travel_to_events as _city_travel_to_events,
+        pick_spots as _city_pick_spots,
+    )
+except Exception:
+    try:
+        from city_follow import (
+            DEFAULT_CITY as _CITY_DEFAULT,
+            detect_city as _city_detect,
+            compose_block as _city_block,
+            travel_block as _city_travel_block,
+            travel_events as _city_travel_events,
+            travel_action as _city_travel_action,
+            travel_to_events as _city_travel_to_events,
+            pick_spots as _city_pick_spots,
+        )
+    except Exception:
+        _CITY_DEFAULT = "东莞"
+
+        def _city_pick_spots(*args, **kwargs):
+            return []
+
+        def _city_travel_to_events(*args, **kwargs):
+            return []
+
+        def _city_travel_action(*args, **kwargs):
+            return "none"
+
+        def _city_detect(*args, **kwargs):
+            return None
+
+        def _city_block(*args, **kwargs):
+            return ""
+
+        def _city_travel_block(*args, **kwargs):
+            return ""
+
+        def _city_travel_events(*args, **kwargs):
+            return []
+
 
 try:
     from .relation_graph import rank_edges as _rank_edges
@@ -2134,6 +2280,14 @@ class AmoDB:
             self.conn.execute("DELETE FROM schedule_diary WHERE day=?", (str(day),))
             self.conn.commit()
 
+    def clear_diaries_from(self, day, hour):
+        """只清某个小时及以后的小日记（换城覆盖日程时用，过去的留着）。"""
+        with self.lock:
+            self.conn.execute(
+                "DELETE FROM schedule_diary WHERE day=? AND hour>=?", (str(day), str(hour))
+            )
+            self.conn.commit()
+
     def purge_diaries(self, days=30):
         cutoff = (date.today() - timedelta(days=max(1, int(days)))).isoformat()
         with self.lock:
@@ -3021,7 +3175,280 @@ class HumanState:
         logger.info("[amo] 生成日程主干 %s：%s" % (
             today, (context or {}).get("event", {}).get("kind", "none"),
         ))
+        try:
+            travel = self.db.kv_get("travel", {}) or {}
+            if isinstance(travel, dict) and str(travel.get("city") or "").strip():
+                city = str(travel["city"])
+                start_day = str(travel.get("start_day") or "")
+                today = today_str()
+                if start_day and today < start_day:
+                    pass
+                elif today == start_day and travel.get("phase") == "journey":
+                    try:
+                        start_hour = int(travel.get("start_hour") or 9)
+                    except (TypeError, ValueError):
+                        start_hour = 9
+                    rows = [x for x in (travel.get("spots") or []) if isinstance(x, dict)]
+                    self.apply_follow_start(city, start_hour, rows, keep_past=False)
+                    self.db.kv_set("his_city", city)
+                    if travel.get("id"):
+                        try:
+                            await self.p._switch_weather_city({
+                                "id": str(travel["id"]), "name": city,
+                            })
+                        except Exception as exc:
+                            logger.debug("[amo] 跟随天气切换失败: %s" % exc)
+                    travel["phase"] = "touring"
+                    self.db.kv_set("travel", travel)
+                else:
+                    self.apply_travel_overlay(city)
+                    self._log_follow_day(city, today)
+        except Exception as exc:
+            logger.debug("[amo] 出行日程覆盖失败: %s" % exc)
+        try:
+            trip = self.db.kv_get("wander_trip", {}) or {}
+            if isinstance(trip, dict) and trip.get("city"):
+                city = str(trip["city"])
+                start_day = str(trip.get("day") or "")
+                ret_day = str(trip.get("return_day") or start_day)
+                today = today_str()
+                if start_day and today < start_day:
+                    pass
+                elif today == start_day:
+                    self.apply_travel_overlay(city)
+                    trip["phase"] = "applied"
+                    self.db.kv_set("wander_trip", trip)
+                    self._log_solo_day(city, today)
+                    if trip.get("id"):
+                        try:
+                            await self.p._switch_weather_city({
+                                "id": str(trip["id"]), "name": city,
+                            })
+                        except Exception as exc:
+                            logger.debug("[amo] 旅游天气切换失败: %s" % exc)
+                elif start_day < today < ret_day:
+                    self.apply_travel_overlay(city)
+                    self._log_solo_day(city, today)
+                elif today == ret_day:
+                    until = int(trip.get("return_hour") or 12)
+                    self.apply_return_overlay(city, until)
+                    self._log_solo_day(city, today)
+                    if datetime.now().hour >= until:
+                        his = str(self.db.kv_get("his_city", "") or "").strip() or _CITY_DEFAULT
+                        hit = self.p._city_lookup(his)
+                        if hit:
+                            try:
+                                await self.p._switch_weather_city(hit)
+                            except Exception:
+                                pass
+                elif today > ret_day:
+                    self.db.kv_set("wander_trip", {})
+                    his = str(self.db.kv_get("his_city", "") or "").strip() or _CITY_DEFAULT
+                    hit = self.p._city_lookup(his)
+                    if hit:
+                        try:
+                            await self.p._switch_weather_city(hit)
+                        except Exception:
+                            pass
+                    self.apply_travel_overlay(his)
+                    try:
+                        rows = self.db.list_profiles(limit=1) or []
+                        uid = str((rows[0] or {}).get("uid") or "") if rows else ""
+                        if uid:
+                            self.p._external_memory_write(
+                                uid, "她 %s 从 %s 旅游回来了" % (today, city), "event", 1,
+                            )
+                    except Exception as exc:
+                        logger.debug("[amo] 回来记忆失败: %s" % exc)
+        except Exception as exc:
+            logger.debug("[amo] 旅游行程推进失败: %s" % exc)
         return items
+
+    def _log_solo_day(self, city, day):
+        """旅游每天记一条（日记用）；同一天只记一次。"""
+        try:
+            log = self.db.kv_get("travel_log", []) or []
+            if not isinstance(log, list):
+                log = []
+            if any(
+                isinstance(x, dict) and x.get("day") == day and x.get("solo") and not x.get("back")
+                for x in log
+            ):
+                return
+            log.append({"day": day, "hour": "09:00", "city": city, "solo": True})
+            self.db.kv_set("travel_log", log[-10:])
+        except Exception:
+            pass
+
+    def apply_follow_start(self, city, start_hour=9, spots=None, keep_past=True):
+        """跟去他那边的出发日：起床 → 出门坐车约 2 小时 → 到达 → 旅游。"""
+        name = str(city or "").strip()
+        if not name:
+            return False
+        if not self.p.cfg_bool("city_travel_schedule", True):
+            return False
+        today = today_str()
+        try:
+            start = max(0, min(21, int(start_hour or 9)))
+        except (TypeError, ValueError):
+            start = 9
+        existing = self.schedule.get(today) or self.db.get_schedule(today) or []
+        keep = []
+        if keep_past:
+            for item in existing:
+                try:
+                    hour = int(str(item.get("start") or "0")[:2])
+                except Exception:
+                    hour = 0
+                if hour < start:
+                    keep.append(item)
+        items = _city_travel_to_events(
+            name, start, spots=spots, weekday=date.today().weekday() < 5, seed=today,
+        )
+        if keep_past:
+            items = [x for x in items if int(str(x.get("start") or "0")[:2]) >= start]
+        merged = keep + items
+        if not merged:
+            return False
+        self.schedule[today] = merged
+        self.db.save_schedule(today, merged)
+        self.db.kv_set("schedule", self.schedule)
+        try:
+            ctx = dict(self.schedule_ctx.get(today) or {})
+            if ctx:
+                ctx["city"] = name
+                ctx["location"] = name
+                ctx["home"] = "他桌面上"
+                ctx["workplace"] = "（在去" + name + "的路上）"
+                self.schedule_ctx[today] = ctx
+                self.db.kv_set("schedule_ctx", self.schedule_ctx)
+        except Exception:
+            pass
+        try:
+            if keep_past:
+                self.db.clear_diaries_from(today, "%02d:00" % start)
+            else:
+                self.db.clear_diaries(today)
+        except Exception:
+            pass
+        logger.info("[amo] 出发日日程：%s 点坐车去 %s" % (start, name))
+        return True
+
+    def _log_follow_day(self, city, day):
+        """跟他旅游的每一天记一条（日记用）；同一天只记一次。"""
+        try:
+            log = self.db.kv_get("travel_log", []) or []
+            if not isinstance(log, list):
+                log = []
+            if any(
+                isinstance(x, dict) and x.get("day") == day and x.get("city") == city
+                and not x.get("solo") and not x.get("back") and not x.get("journey")
+                for x in log
+            ):
+                return
+            log.append({"day": day, "hour": "09:00", "city": city})
+            self.db.kv_set("travel_log", log[-10:])
+        except Exception:
+            pass
+
+    def apply_return_overlay(self, city, until_hour=12):
+        """旅游最后一天：0 点到 until_hour 在旅游城市，之后回家。"""
+        name = str(city or "").strip()
+        if not name:
+            return False
+        try:
+            until = max(0, min(23, int(until_hour or 12)))
+        except (TypeError, ValueError):
+            until = 12
+        today = today_str()
+        spots = []
+        try:
+            spots = _city_pick_spots(self.p.scenic_spots(), name, today)
+        except Exception:
+            spots = []
+        his = str(self.db.kv_get("his_city", "") or "").strip() or _CITY_DEFAULT
+        items = _city_travel_events(name, 0, spots=spots, until_hour=until)
+        items += _city_travel_events(his, until, home=True)
+        if not items:
+            return False
+        self.schedule[today] = items
+        self.db.save_schedule(today, items)
+        self.db.kv_set("schedule", self.schedule)
+        try:
+            self.db.clear_diaries(today)
+        except Exception:
+            pass
+        logger.info("[amo] 旅游最后一天：%s 点前在 %s，之后回家" % (until, name))
+        return True
+
+    def apply_travel_overlay(self, city=None):
+        """出行覆盖层：把今天剩下的日程换成「跟他一起在 X」（已过去的时段不动）。
+
+        只在换城时调用；写库 + 清掉今天剩余时段的小日记，让它们按新日程重算。
+        """
+        travel = self.db.kv_get("travel", {}) or {}
+        name = str(city or (travel.get("city") if isinstance(travel, dict) else "") or "").strip()
+        if not name:
+            return False
+        if not self.p.cfg_bool("city_travel_schedule", True):
+            return False
+        today = today_str()
+        from_hour = datetime.now().hour
+        home = name == _CITY_DEFAULT
+        existing = self.schedule.get(today) or self.db.get_schedule(today) or []
+        if not existing:
+            from_hour = 0
+        if home and from_hour >= 22:
+            logger.info("[amo] 超过 22 点才回去，今晚住酒店，今天日程不再改")
+            return False
+        keep = []
+        for item in existing:
+            try:
+                hour = int(str(item.get("start") or "0")[:2])
+            except Exception:
+                hour = 0
+            if hour < from_hour:
+                keep.append(item)
+        spots = []
+        if not home:
+            try:
+                spots = _city_pick_spots(self.p.scenic_spots(), name, today)
+            except Exception as exc:
+                logger.debug("[amo] 出行景点挑选失败: %s" % exc)
+        merged = keep + _city_travel_events(
+            name, from_hour, home=home, weekday=date.today().weekday() < 5, spots=spots,
+        )
+        if not merged:
+            return False
+        self.schedule[today] = merged
+        self.db.save_schedule(today, merged)
+        self.db.kv_set("schedule", self.schedule)
+        try:
+            ctx = dict(self.schedule_ctx.get(today) or {})
+            if ctx:
+                ctx["city"] = name
+                ctx["location"] = name
+                if home:
+                    ctx["home"] = "他桌面上"
+                    ctx["workplace"] = str((self.schedule_profile or {}).get("workplace") or "")
+                    ctx.pop("scenic", None)
+                else:
+                    ctx["home"] = name + "·酒店房间"
+                    ctx["workplace"] = "（旅游中，不上班）"
+                    if spots:
+                        ctx["scenic"] = spots[0]
+                self.schedule_ctx[today] = ctx
+                self.db.kv_set("schedule_ctx", self.schedule_ctx)
+        except Exception:
+            pass
+        try:
+            self.db.clear_diaries_from(today, "%02d:00" % from_hour)
+        except Exception:
+            pass
+        logger.info("[amo] 出行日程已写入：%s 起在 %s%s" % (
+            "%02d:00" % from_hour, name, "（回家）" if home else "",
+        ))
+        return True
 
     def schedule_context(self, day=None):
         day = str(day or today_str())
@@ -3562,6 +3989,21 @@ class LLMService:
             relation_network = ""
         if relation_network:
             system = system + "\n【关系网】\n" + relation_network
+        try:
+            trip = self.p.db.kv_get("wander_trip", {}) or {}
+            if (
+                isinstance(trip, dict) and trip.get("city") and not trip.get("announced")
+                and str(trip.get("day") or "") <= today_str() <= str(trip.get("return_day") or "")
+            ):
+                spots = trip.get("spots") or []
+                spot = str(spots[0]) if spots else ""
+                system = system + (
+                    "\n【旅游中】你现在一个人在 " + str(trip["city"]) + " 旅游"
+                    + ("，今天去了" + spot if spot else "")
+                    + "。主动跟他分享今天看到的、吃到的、天气；别报公司/上班，也别编景点。"
+                )
+        except Exception:
+            pass
 
         def build_task(duplicate_hint=""):
             if not _pg_compose_task:
@@ -3614,6 +4056,7 @@ class LLMService:
             "只从 [他] 开头的行里提取；[我] 开头的内容是角色自己的事，不能算成用户的事实。\n"
             "只提取值得长期记住的内容：名字、生日、喜好、厌恶、居住地、工作或学校、"
             "宠物、年龄、重要计划、重要经历。\n"
+            "位置类事实统一写成「他现在在X」；只有他明确说了搬/住/定居，才写「他住在X」。\n"
             "输出 JSON 数组，每项包含 content(一句话事实)、kind(name/birthday/preference/place/work/pet/age/event)、"
             "tier(0 普通 / 1 重要 / 2 珍贵)。没有可提取的就输出 []。\n\n"
             "聊天记录：\n" + "\n".join(lines[-20:])
@@ -8733,6 +9176,15 @@ class HumanCorePlugin(Star):
         uid = self._canonical_uid(event)
         profile = self.db.get_profile(uid)
         relation = profile.get("relation", "普通")
+        try:
+            await self._maybe_follow_city(event, uid, profile)
+        except Exception as exc:
+            logger.debug("[amo] 城市跟随失败: %s" % exc)
+        wander_text = ""
+        try:
+            wander_text = await self._maybe_wander(event, uid, profile)
+        except Exception as exc:
+            logger.debug("[amo] 旅游意愿失败: %s" % exc)
         snap = self.state.snapshot()
         _, memory_text = await self._recall(uid, event.message_str or "", event)
         self_name, self_uid, self_qq_nick, self_display = await self._self_identity(event)
@@ -8813,6 +9265,48 @@ class HumanCorePlugin(Star):
             "【长度】默认只回 1-2 句，能一句说清就一句；不要解释、不要列点、不要总结，不要写成客服长文。",
             "【人格】保持上面的人格设定，不要变成通用助手或客服；即使回答咨询也要用自己的口吻。",
         ]
+        try:
+            city_block = _city_block(self.db.kv_get("his_city", "") or "")
+        except Exception:
+            city_block = ""
+        if city_block:
+            parts.append(city_block)
+        try:
+            travel_row = self.db.kv_get("travel", {}) or {}
+            if (
+                isinstance(travel_row, dict)
+                and str(travel_row.get("city") or "").strip()
+                and str(travel_row.get("start_day") or "") <= today_str()
+            ):
+                travel_city = str(travel_row["city"])
+                try:
+                    travel_spots = _city_pick_spots(self.scenic_spots(), travel_city, today_str())
+                except Exception:
+                    travel_spots = []
+                travel_text = _city_travel_block(
+                    travel_city, weekday=date.today().weekday() < 5, spots=travel_spots,
+                )
+                if travel_text:
+                    parts.append(travel_text)
+        except Exception:
+            pass
+        try:
+            he_city = str(self.db.kv_get("he_city", "") or "").strip()
+            my_city = str(self.db.kv_get("his_city", "") or "").strip()
+            _tv = self.db.kv_get("travel", {}) or {}
+            _tv_active = bool(
+                isinstance(_tv, dict) and str(_tv.get("city") or "").strip()
+                and str(_tv.get("start_day") or "") <= today_str()
+            )
+            if he_city and he_city != my_city and not _tv_active:
+                parts.append(
+                    "【他在】他现在在 " + he_city + "，你还在 " + (my_city or "东莞")
+                    + "上班；你有点想他，但没过去。"
+                )
+        except Exception:
+            pass
+        if wander_text:
+            parts.append(wander_text)
         if is_group:
             target = str(getattr(event, "heartflow_target", "") or "")
             angle = str(getattr(event, "heartflow_angle", "") or "")
@@ -9339,6 +9833,9 @@ class HumanCorePlugin(Star):
         if now_ts() - to_float(getattr(self, "_last_diary_check", 0), 0) > 300:
             self._last_diary_check = now_ts()
             self._spawn(self._maybe_daily_diary())
+        if now_ts() - to_float(getattr(self, "_last_solo_return", 0), 0) > 120:
+            self._last_solo_return = now_ts()
+            self._spawn(self._maybe_solo_return())
         if now_ts() - to_float(getattr(self, "_last_milestone_check", 0), 0) > 300:
             self._last_milestone_check = now_ts()
             self._spawn(self._maybe_milestone_archive())
@@ -9532,6 +10029,42 @@ class HumanCorePlugin(Star):
             text = str(text or "").strip()
             if text:
                 lines.append(str(hour)[:5] + " " + text[:160])
+        try:
+            log = self.db.kv_get("travel_log", []) or []
+            for entry in log[-10:]:
+                if not isinstance(entry, dict):
+                    continue
+                if str(entry.get("day") or "") != day.isoformat():
+                    continue
+                city = str(entry.get("city") or "").strip()
+                hour = str(entry.get("hour") or "").strip()
+                if city and hour:
+                    if entry.get("journey"):
+                        lines.append(hour + " 她坐车去" + city + "陪他，路上约 2 小时")
+                    elif entry.get("solo"):
+                        if entry.get("back"):
+                            lines.append(hour + " 她自己从" + city + "旅游回来了")
+                        else:
+                            lines.append(hour + " 她自己出门去" + city + "旅游，晚上住酒店")
+                    elif entry.get("back"):
+                        lines.append(hour + " 跟他从" + city + "回来了")
+                    else:
+                        lines.append(hour + " 跟他出门到了" + city + "，晚上住酒店")
+        except Exception:
+            pass
+        try:
+            rejects = self.db.kv_get("follow_reject_log", []) or []
+            for entry in rejects[-5:]:
+                if not isinstance(entry, dict):
+                    continue
+                if str(entry.get("day") or "") != day.isoformat():
+                    continue
+                city = str(entry.get("city") or "").strip()
+                hour = str(entry.get("hour") or "").strip()
+                if city:
+                    lines.append(hour + " 她说想陪他去" + city + "，他说让她好好上班，她闷闷不乐")
+        except Exception:
+            pass
         return lines
 
     async def _generate_daily_diary(self, day):
@@ -11332,6 +11865,477 @@ class HumanCorePlugin(Star):
         except Exception as exc:
             logger.debug("[amo] 城市名解析失败: %s" % exc)
             return None
+
+    async def _maybe_follow_city(self, event, uid, profile):
+        """他到了某地：她问「我来陪你吧」；同意就跟去（路上约 2 小时），拒绝就闷闷不乐。"""
+        if not self.cfg_bool("city_follow_enabled", True):
+            return ""
+        try:
+            if not event.is_private_chat():
+                return ""
+        except Exception:
+            return ""
+        if str(profile.get("relation") or "") != "相恋":
+            return ""
+        text = str(event.message_str or "")
+        now = now_ts()
+        offer = self.db.kv_get("follow_offer", {}) or {}
+        offer = offer if isinstance(offer, dict) else {}
+        if offer and now - to_float(offer.get("ts"), 0) > 1800:
+            self.db.kv_set("follow_offer", {})
+            offer = {}
+        travel = self.db.kv_get("travel", {}) or {}
+        travel = travel if isinstance(travel, dict) else {}
+        if travel.get("city") and re.search(r"(回来吧|回家吧|别玩了|该回来了|我回东莞)", text):
+            await self._end_follow_trip(uid)
+            return "【回家】他说回来了：自然应一句「好，我这就回」，别拖，也别说还没玩够。"
+        if travel.get("city"):
+            return ""
+        if self.db.kv_get("wander_trip", {}):
+            return ""
+        if _follow_invite(text):
+            city = str(self.db.kv_get("he_city", "") or "").strip()
+            if not city:
+                return "【邀请】他让你过去，但你不知道他在哪个城市：先问一句他在哪。"
+            if city == _CITY_DEFAULT:
+                return "【邀请】他让你过去，可你俩都在东莞：自然回一句“我不就在你旁边吗”之类的。"
+            self.db.kv_set("follow_declined", {})
+            return await self._start_follow_trip(uid, {
+                "city": city, "id": "",
+                "tomorrow": datetime.now().hour >= 22,
+            })
+        if offer.get("city"):
+            if _wander_agree(text):
+                return await self._start_follow_trip(uid, offer)
+            if _follow_refuse(text):
+                return await self._reject_follow_trip(uid, offer)
+        old_he = str(self.db.kv_get("he_city", "") or "").strip()
+        old = str(self.db.kv_get("his_city", "") or "").strip()
+        hit = _city_detect(text, prefer_city=old or old_he)
+        if not hit:
+            return ""
+        name = str(hit.get("name") or "").strip()
+        declined = self.db.kv_get("follow_declined", {}) or {}
+        declined_city = str(declined.get("city") or "") if isinstance(declined, dict) else ""
+        if not name or name == old_he:
+            if declined_city and declined_city == name:
+                return "【别重复提】你之前问过要不要去陪他，他没让；别再主动提这事，按他说的上班就好。"
+            return ""
+        if name == _CITY_DEFAULT:
+            self.db.kv_set("he_city", name)
+            self.db.kv_set("follow_declined", {})
+            return ""
+        # 到了新的城市：之前"被拒过"的标记作废，可以再问一次
+        self.db.kv_set("follow_declined", {})
+        tomorrow = datetime.now().hour >= 22
+        self.db.kv_set("he_city", name)
+        self.db.kv_set("wander_offer", {})
+        self.db.kv_set("follow_offer", {
+            "ts": now, "city": name, "id": str(hit.get("id") or ""), "tomorrow": tomorrow,
+        })
+        return _follow_block(True, name, tomorrow)
+
+    async def _start_follow_trip(self, uid, offer):
+        """同意跟去：定出发日/出发时间，当天或次日先坐 2 小时车再玩。"""
+        city = str(offer.get("city") or "").strip()
+        if not city:
+            self.db.kv_set("follow_offer", {})
+            return ""
+        tomorrow = bool(offer.get("tomorrow"))
+        start = (date.today() + timedelta(days=1)) if tomorrow else date.today()
+        start_hour = 9 if tomorrow else datetime.now().hour
+        spots = []
+        try:
+            spots = _city_pick_spots(self.scenic_spots(), city, start.isoformat())
+        except Exception:
+            spots = []
+        trip = {
+            "city": city,
+            "id": str(offer.get("id") or ""),
+            "from": str(self.db.kv_get("his_city", "") or ""),
+            "start_day": start.isoformat(),
+            "start_hour": start_hour,
+            "spots": [dict(x) for x in spots][:4],
+            "phase": "journey",
+        }
+        self.db.kv_set("travel", trip)
+        self.db.kv_set("follow_offer", {})
+        self.db.kv_set("follow_declined", {})
+        try:
+            content = "她 %s 坐车去 %s 陪他（路上约 2 小时）" % (start.isoformat(), city)
+            if not await self._write_memory_checked(uid, content, "event", 1):
+                logger.warning("[amo] 跟随记忆没写进去")
+        except Exception as exc:
+            logger.warning("[amo] 跟随记忆写入失败: %s" % exc)
+        try:
+            log = self.db.kv_get("travel_log", []) or []
+            if not isinstance(log, list):
+                log = []
+            log.append({"day": start.isoformat(), "hour": "%02d:00" % start_hour,
+                        "city": city, "journey": True})
+            self.db.kv_set("travel_log", log[-10:])
+        except Exception:
+            pass
+        if not tomorrow:
+            self.db.kv_set("his_city", city)
+            hit = self._city_lookup(city)
+            if hit:
+                try:
+                    await self._switch_weather_city(hit)
+                except Exception as exc:
+                    logger.warning("[amo] 跟随天气切换失败: %s" % exc)
+            try:
+                self.state.apply_follow_start(city, start_hour, spots, keep_past=True)
+            except Exception as exc:
+                logger.warning("[amo] 跟随日程失败: %s" % exc)
+            trip["phase"] = "touring"
+            self.db.kv_set("travel", trip)
+        plan = _wander_follow_agree_text(city, random)
+        when = "明天一早" if tomorrow else "现在"
+        return (
+            "【出发】他同意了：你" + when + "出发去 " + city + " 陪他，路上约 2 小时，到了再找他。"
+            "照这个意思说一句（别报公司/上班）：" + plan
+        )
+
+    async def _reject_follow_trip(self, uid, offer):
+        """他让她好好上班：她闷闷不乐，日程不变，日记记一笔。"""
+        city = str(offer.get("city") or "").strip()
+        self.db.kv_set("follow_offer", {})
+        self.db.kv_set("follow_declined", {"city": city, "day": today_str()})
+        try:
+            self.state.nudge(委屈=10, 郁闷=8, 开心=-6)
+        except Exception:
+            pass
+        try:
+            content = "她说想去%s陪他，他让她好好上班，她闷闷不乐" % city
+            if not await self._write_memory_checked(uid, content, "event", 1):
+                logger.warning("[amo] 被拒记忆没写进去")
+        except Exception as exc:
+            logger.warning("[amo] 被拒记忆失败: %s" % exc)
+        try:
+            log = self.db.kv_get("follow_reject_log", []) or []
+            if not isinstance(log, list):
+                log = []
+            log.append({"day": today_str(), "hour": "%02d:00" % datetime.now().hour, "city": city})
+            self.db.kv_set("follow_reject_log", log[-10:])
+        except Exception:
+            pass
+        return _follow_block(False, city)
+
+    async def _end_follow_trip(self, uid):
+        """结束跟随：回家、恢复城市/天气/日程、写回来记忆。"""
+        trip = self.db.kv_get("travel", {}) or {}
+        city = str(trip.get("city") or "") if isinstance(trip, dict) else ""
+        self.db.kv_set("travel", {})
+        home = _CITY_DEFAULT
+        self.db.kv_set("his_city", home)
+        self.db.kv_set("he_city", home)
+        hit = self._city_lookup(home)
+        if hit:
+            try:
+                await self._switch_weather_city(hit)
+            except Exception:
+                pass
+        try:
+            self.state.apply_travel_overlay(home)
+        except Exception:
+            pass
+        try:
+            content = "她 %s 从 %s 回来了" % (today_str(), city)
+            await self._write_memory_checked(uid, content, "event", 1)
+        except Exception:
+            pass
+        try:
+            log = self.db.kv_get("travel_log", []) or []
+            if isinstance(log, list):
+                log.append({
+                    "day": today_str(), "hour": "%02d:00" % datetime.now().hour,
+                    "city": city, "back": True,
+                })
+                self.db.kv_set("travel_log", log[-10:])
+        except Exception:
+            pass
+
+    async def _switch_weather_city(self, hit):
+        """按城市跟随的结果改 weather_city / 显示名，并立刻刷一次天气。"""
+        city_id = str(hit.get("id") or "").strip()
+        name = str(hit.get("name") or "").strip()
+        if not city_id or not name:
+            return
+        changed = False
+        if str(self.config.get("weather_city") or "") != city_id:
+            self.config["weather_city"] = city_id
+            changed = True
+        if self.cfg_str("weather_city_name", "").strip() != name:
+            self.config["weather_city_name"] = name
+            changed = True
+        if not changed:
+            return
+        try:
+            save = getattr(self.config, "save_config", None)
+            if callable(save):
+                save()
+        except Exception as exc:
+            logger.warning("[amo] 城市跟随：保存天气城市失败: %s" % exc)
+        await self.state.refresh_weather(force=True)
+
+    async def _maybe_wander(self, event, uid, profile):
+        """她自己出去玩：问意愿 → 同意 → 定行程；旅行中让他叫回来。"""
+        if not self.cfg_bool("wander_enabled", True):
+            return ""
+        try:
+            if not event.is_private_chat():
+                return ""
+        except Exception:
+            return ""
+        if str(profile.get("relation") or "") != "相恋":
+            return ""
+        if self.db.kv_get("travel", {}) or self.db.kv_get("follow_offer", {}):
+            return ""
+        text = str(event.message_str or "")
+        now = now_ts()
+        trip = self.db.kv_get("wander_trip", {}) or {}
+        trip = trip if isinstance(trip, dict) else {}
+        if trip.get("city") and re.search(r"(回来吧|回家吧|别玩了|早点回来|该回来了)", text):
+            await self._end_solo_trip(uid, "他让你回来")
+            return "【旅游】他让你回来：自然应一句“好，我收拾下就回”，别拖，也别说还没玩够。"
+        offer = self.db.kv_get("wander_offer", {}) or {}
+        offer = offer if isinstance(offer, dict) else {}
+        if offer and now - to_float(offer.get("ts"), 0) > 1800:
+            self.db.kv_set("wander_offer", {})
+            offer = {}
+        if _wander_question(text):
+            if (
+                self.db.kv_get("travel", {})
+                or self.db.kv_get("follow_offer", {})
+                or self.db.kv_get("wander_trip", {})
+            ):
+                return ""
+            today = today_str()
+            count = 0
+            if str(self.db.kv_get("wander_asked_day", "") or "") == today:
+                try:
+                    count = int(self.db.kv_get("wander_ask_count", 0) or 0)
+                except (TypeError, ValueError):
+                    count = 0
+            limit = _wander_ask_limit(self.cfg_bool("wander_ask_three_times", False))
+            if count >= limit:
+                return (
+                    "【旅游提议】今天已经问过 " + str(count) + " 次了（一天最多 " + str(limit)
+                    + " 次），别再重新决定、别再报新城市；按之前说的自然接一句。"
+                )
+            self.db.kv_set("wander_asked_day", today)
+            self.db.kv_set("wander_ask_count", count + 1)
+            low, tired = _wander_assess(self.state.mood, self.state.health_info())
+            want = _wander_want(
+                low, tired, random,
+                self.cfg_float("wander_prob_low", 0.85),
+                self.cfg_float("wander_prob_good", 0.15),
+            )
+            city, spots = "", []
+            if want:
+                city, spots = _wander_pick(
+                    self.scenic_spots(), random, count=4,
+                    exclude_city=str(self.db.kv_get("his_city", "") or ""),
+                )
+                want = bool(city)
+            if not want:
+                self.db.kv_set("wander_offer", {"ts": now, "want": False})
+            else:
+                self.db.kv_set("wander_offer", {
+                    "ts": now, "want": True, "city": city,
+                    "spots": [str(x.get("name") or "") for x in spots][:4],
+                    "spot_rows": spots[:4],
+                })
+            return _wander_offer_block(bool(want), city, spots)
+        if offer.get("want") and _wander_agree(text):
+            return await self._start_solo_trip(uid, offer)
+        if offer.get("want") and _wander_refuse(text):
+            self.db.kv_set("wander_offer", {})
+            try:
+                self.state.nudge(委屈=5, 郁闷=4)
+            except Exception:
+                pass
+            return (
+                "【不出去了】他说这次不让你去：你有点失落，但别闹，用自己的口吻说一句："
+                + _wander_solo_refuse_text(random)
+            )
+        if trip.get("city") and not trip.get("announced"):
+            start = str(trip.get("day") or "")
+            ret = str(trip.get("return_day") or start)
+            if start and start <= today_str() <= ret:
+                try:
+                    day_no = (date.today() - date.fromisoformat(start)).days + 1
+                except Exception:
+                    day_no = 1
+                return _wander_solo_block(str(trip["city"]), trip.get("spots") or [], day_no=day_no)
+        return ""
+
+    async def _start_solo_trip(self, uid, offer):
+        """确认出发：>=22 点明天走，否则现在就走。"""
+        city = str(offer.get("city") or "").strip()
+        spots = [x for x in (offer.get("spot_rows") or []) if isinstance(x, dict)]
+        if not city:
+            self.db.kv_set("wander_offer", {})
+            return ""
+        tomorrow = datetime.now().hour >= 22
+        start = (date.today() + timedelta(days=1)) if tomorrow else date.today()
+        days = max(1, min(3, _wander_trip_days(random)))
+        if days == 1 and not tomorrow and datetime.now().hour >= 17:
+            days = 2  # 傍晚才走，别刚出门就回家
+        return_day = start + timedelta(days=days - 1)
+        return_hour = 21 if days == 1 else 12
+        hit = self._city_lookup(city)
+        trip = {
+            "city": city,
+            "id": str((hit or {}).get("id") or ""),
+            "day": start.isoformat(),
+            "days": days,
+            "return_day": return_day.isoformat(),
+            "return_hour": return_hour,
+            "spots": [str(x.get("name") or "") for x in spots][:4],
+            "phase": "planned",
+        }
+        self.db.kv_set("wander_trip", trip)
+        self.db.kv_set("wander_offer", {})
+        try:
+            content = "她 %s 一个人去 %s 旅游（他同意了，玩 %d 天）" % (start.isoformat(), city, days)
+            if not await self._write_memory_checked(uid, content, "event", 1):
+                logger.warning("[amo] 旅游记忆没写进去")
+        except Exception as exc:
+            logger.warning("[amo] 旅游记忆写入失败: %s" % exc)
+        try:
+            log = self.db.kv_get("travel_log", []) or []
+            if not isinstance(log, list):
+                log = []
+            log.append({
+                "day": start.isoformat(), "hour": "%02d:00" % datetime.now().hour,
+                "city": city, "solo": True,
+            })
+            self.db.kv_set("travel_log", log[-10:])
+        except Exception:
+            pass
+        if not tomorrow:
+            if hit:
+                try:
+                    await self._switch_weather_city(hit)
+                except Exception as exc:
+                    logger.warning("[amo] 旅游天气切换失败: %s" % exc)
+            try:
+                self.state.apply_travel_overlay(city)
+            except Exception as exc:
+                logger.warning("[amo] 旅游日程失败: %s" % exc)
+            trip["phase"] = "applied"
+            self.db.kv_set("wander_trip", trip)
+        agree = _wander_solo_agree_text(city, random)
+        plan = _wander_plan_text(city, spots, tomorrow, random)
+        when = "明天" if tomorrow else "现在"
+        back_text = "第 %d 天中午回来" % days if days > 1 else "当晚回来"
+        return (
+            "【出发】他同意了：你" + when + "去 " + city + " 旅游（一个人），玩 %d 天，%s。"
+            % (days, back_text) + "先照这个说一句：" + agree + " 再说安排：" + plan
+            + " 别说成跟他一起；白天自己去景点，晚上住酒店。"
+        )
+
+    async def _maybe_solo_return(self):
+        """旅游最后一天到点回家：换天气、报平安、写记忆/日记。"""
+        trip = self.db.kv_get("wander_trip", {}) or {}
+        if not isinstance(trip, dict) or not trip.get("city") or trip.get("announced"):
+            return
+        ret_day = str(trip.get("return_day") or "")
+        if not ret_day or today_str() != ret_day:
+            return
+        try:
+            hour = int(trip.get("return_hour") or 12)
+        except (TypeError, ValueError):
+            hour = 12
+        if datetime.now().hour < hour:
+            return
+        city = str(trip["city"])
+        his = str(self.db.kv_get("his_city", "") or "").strip() or _CITY_DEFAULT
+        hit = self._city_lookup(his)
+        if hit:
+            try:
+                await self._switch_weather_city(hit)
+            except Exception as exc:
+                logger.warning("[amo] 回来天气切换失败: %s" % exc)
+        try:
+            self.state.apply_travel_overlay(his)
+        except Exception as exc:
+            logger.warning("[amo] 回来日程失败: %s" % exc)
+        umo = self._last_umo or self._first_private_umo()
+        try:
+            if umo:
+                await self._send_to_umo(umo, random.choice((
+                    "我回来啦，刚到家。",
+                    "到家啦，你在干嘛呢？",
+                    "我回来了，你吃饭了没？",
+                )))
+        except Exception as exc:
+            logger.warning("[amo] 回来报平安失败: %s" % exc)
+        try:
+            uid = ""
+            try:
+                rows = self.db.list_profiles(limit=1) or []
+                uid = str((rows[0] or {}).get("uid") or "") if rows else ""
+            except Exception:
+                uid = ""
+            if uid:
+                if not await self._write_memory_checked(
+                    uid, "她 %s 从 %s 旅游回来了" % (today_str(), city), "event", 1,
+                ):
+                    logger.warning("[amo] 回来记忆没写进去")
+        except Exception as exc:
+            logger.warning("[amo] 回来记忆失败: %s" % exc)
+        try:
+            log = self.db.kv_get("travel_log", []) or []
+            if isinstance(log, list):
+                log.append({
+                    "day": today_str(), "hour": "%02d:00" % datetime.now().hour,
+                    "city": city, "solo": True, "back": True,
+                })
+                self.db.kv_set("travel_log", log[-10:])
+        except Exception:
+            pass
+        trip["announced"] = True
+        self.db.kv_set("wander_trip", trip)
+        logger.info("[amo] 旅游回来：%s" % city)
+
+    async def _end_solo_trip(self, uid, reason=""):
+        """结束 solo 旅游：清状态、记回来、天气换回他在的城市、日程回家。"""
+        trip = self.db.kv_get("wander_trip", {}) or {}
+        if not isinstance(trip, dict) or not trip.get("city"):
+            return
+        city = str(trip["city"])
+        self.db.kv_set("wander_trip", {})
+        try:
+            content = "她 %s 从 %s 旅游回来了" % (today_str(), city)
+            if not await self._write_memory_checked(uid, content, "event", 1):
+                logger.warning("[amo] 回来记忆没写进去")
+        except Exception as exc:
+            logger.warning("[amo] 回来记忆写入失败: %s" % exc)
+        try:
+            log = self.db.kv_get("travel_log", []) or []
+            if not isinstance(log, list):
+                log = []
+            log.append({
+                "day": today_str(), "hour": "%02d:00" % datetime.now().hour,
+                "city": city, "solo": True, "back": True,
+            })
+            self.db.kv_set("travel_log", log[-10:])
+        except Exception:
+            pass
+        his = str(self.db.kv_get("his_city", "") or "").strip() or _CITY_DEFAULT
+        hit = self._city_lookup(his)
+        if hit:
+            try:
+                await self._switch_weather_city(hit)
+            except Exception as exc:
+                logger.warning("[amo] 回来天气切换失败: %s" % exc)
+        try:
+            self.state.apply_travel_overlay(his)
+        except Exception as exc:
+            logger.warning("[amo] 回来日程失败: %s" % exc)
 
     def _sync_weather_city_config(self):
         """配置里填了中文城市名时，自动换算并回填 LocationID（幂等）。"""
