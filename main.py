@@ -414,7 +414,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.6.0"
+PLUGIN_VERSION = "6.6.2"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -4469,7 +4469,6 @@ class HumanCorePlugin(Star):
         self._data_missing_logged = False
         self._data_warn_scheduled = False
         self._group_times = {}
-        self._buffers = {}
         self._private_buffers = {}
         self._last_reply_at = {}
         self._last_umo = ""
@@ -5910,9 +5909,11 @@ class HumanCorePlugin(Star):
         return len(speakers)
 
     def _should_quote_group(self, umo):
-        """群聊要不要引用原消息：只看最近聊天人数有没有超过阈值。
+        """群聊要不要引用原消息：人数过阈值后按概率引用。
 
-        没有单独的开关键；阈值填 0 就是不引用。
+        人数没到阈值（人少）就不引用；到了阈值也不该句句引用——
+        真人只在需要指代时才引用，所以再加一层概率。
+        `quote_group_probability`：1.0 = 旧行为（一直引用），0 = 从不引用。
         """
         try:
             threshold = self.cfg_int("quote_group_speaker_threshold", 3)
@@ -5921,7 +5922,14 @@ class HumanCorePlugin(Star):
         if threshold <= 0:
             return False
         try:
-            return self._group_speaker_count(umo) >= threshold
+            if self._group_speaker_count(umo) < threshold:
+                return False
+            prob = self.cfg_float("quote_group_probability", 0.4)
+            if prob <= 0:
+                return False
+            if prob >= 1:
+                return True
+            return random.random() < prob
         except Exception:
             return False
 
@@ -8559,68 +8567,6 @@ class HumanCorePlugin(Star):
         except Exception:
             pass
         return True
-
-    def _buffer_group(self, event, text, profile):
-        umo = event.unified_msg_origin
-        now = now_ts()
-        buffer = self._buffers.get(umo)
-        if buffer is None:
-            buffer = {"texts": [], "started": now, "task": None}
-            self._buffers[umo] = buffer
-        buffer["texts"].append(text)
-        buffer["event"] = event
-        buffer["profile"] = profile
-        buffer["message_id"] = getattr(event.message_obj, "message_id", None)
-        buffer["updated"] = now
-        if len(buffer["texts"]) > 6:
-            buffer["texts"] = buffer["texts"][-6:]
-        if buffer.get("task") is not None:
-            try:
-                buffer["task"].cancel()
-            except Exception:
-                pass
-        delay = self.cfg_float("debounce_seconds", 2.5)
-        max_wait = self.cfg_float("debounce_max_wait", 7.0)
-        remain = buffer["started"] + max_wait - now
-        delay = max(0.4, min(delay, remain))
-        buffer["task"] = self._spawn(self._debounced_group(umo, delay))
-
-    async def _debounced_group(self, umo, delay):
-        try:
-            await asyncio.sleep(delay)
-        except asyncio.CancelledError:
-            return
-        buffer = self._buffers.pop(umo, None)
-        if not buffer:
-            return
-        event = buffer.get("event")
-        profile = buffer.get("profile") or {}
-        if event is None:
-            return
-        text = " ".join(buffer.get("texts") or [])[-400:]
-        snap = self.state.snapshot()
-        recent = self._recent(umo, 12)
-        result = await self.gate.should_reply_group(
-            umo, event.get_group_id(), text, recent, False, profile, snap
-        )
-        if self.cfg_bool("debug_log", False):
-            logger.debug("[amo] 群聊插话判定: %s" % json.dumps(result, ensure_ascii=False))
-        if not result["reply"]:
-            return
-        memories, memory_text = await self._recall(self._canonical_uid(event), text, event)
-        reply = await self._compose_reply(event, text, snap, profile, memories, memory_text, True)
-        if not reply:
-            return
-        try:
-            if hasattr(event, "send_typing"):
-                await event.send_typing()
-        except Exception:
-            pass
-        await self._send_to_umo(
-            umo, reply,
-            quote_id=buffer.get("message_id"),
-            group=True,
-        )
 
     def _schedule_delayed_reply(self, event, profile):
         umo = event.unified_msg_origin

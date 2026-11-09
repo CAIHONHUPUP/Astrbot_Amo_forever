@@ -64,5 +64,25 @@ class LeakTests(unittest.TestCase):
         self.assertFalse(attribution_leak(user, reply))
 
 
+class PainLeakTests(unittest.TestCase):
+    """伤痛归属：他说「脸疼」，她不能回「我脸不疼了」。"""
+
+    def test_pain_leak_detected(self):
+        self.assertTrue(attribution_leak("我被扇了耳光，脸疼", "我脸不疼了"))
+        self.assertTrue(attribution_leak("我头好痛", "我今天头有点痛，先睡了"))
+
+    def test_event_leak_detected(self):
+        self.assertTrue(attribution_leak("我今天被打了", "我也被打过，没什么"))
+
+    def test_sympathy_is_not_leak(self):
+        self.assertFalse(attribution_leak("我今天有点累", "我心疼你"))
+        self.assertFalse(attribution_leak("我被扇了耳光", "我心疼你，别往心里去"))
+        self.assertFalse(attribution_leak("我脸疼", "我看看你的脸有没有事"))
+
+    def test_pain_experience_counts(self):
+        self.assertTrue(first_person_experience("我脸疼"))
+        self.assertTrue(first_person_experience("我今天被打了"))
+
+
 if __name__ == "__main__":
     unittest.main()

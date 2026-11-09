@@ -1327,5 +1327,11 @@
     "description": "日记时间",
     "default": "10:00",
     "hint": "HH:MM，默认 10:00；到点后写「昨天」的日记，错过不自动补（面板「写昨天」可手动补）。"
+  },
+  "quote_group_probability": {
+    "type": "float",
+    "description": "群聊引用原消息的概率",
+    "hint": "不同发言人数达到阈值后，按这个概率引用；1.0=每次都引用（旧行为），0=从不引用。",
+    "default": 0.4
   }
 }
