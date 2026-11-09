@@ -503,8 +503,9 @@
       <section class="card">
         <div class="row between">
           <div class="label" id="diaryTitle">选择一篇日记</div>
+          <button class="tab" id="diaryClose" type="button" hidden>关闭</button>
         </div>
-        <pre id="diaryText" style="white-space:pre-wrap;line-height:1.8;margin:0;font-family:inherit"></pre>
+        <pre id="diaryText" style="white-space:pre-wrap;line-height:1.8;margin:0;font-family:inherit">从上面的年 / 月 / 日里点一天，就能读那天的日记。</pre>
       </section>
     </div>
 
@@ -1567,6 +1568,7 @@
     async function readDiary(date) {
       const textEl = document.getElementById("diaryText");
       document.getElementById("diaryTitle").textContent = date;
+      document.getElementById("diaryClose").hidden = false;
       textEl.textContent = "读取中…";
       try {
         const data = objectFrom(await call("diary/read", { date })) || {};
@@ -1576,6 +1578,13 @@
       }
     }
 
+    function closeDiary() {
+      document.getElementById("diaryClose").hidden = true;
+      document.getElementById("diaryTitle").textContent = "选择一篇日记";
+      document.getElementById("diaryText").textContent = "从上面的年 / 月 / 日里点一天，就能读那天的日记。";
+    }
+
+    document.getElementById("diaryClose").addEventListener("click", closeDiary);
     document.getElementById("diaryRefresh").addEventListener("click", () => loadDiary());
     document.getElementById("diaryOpen").addEventListener("click", async () => {
       try {
@@ -2317,6 +2326,22 @@
       } catch (error) {}
     }
 
+    function weatherBriefText(weather) {
+      if (!weather || !weather.city) return "天气：还没取到";
+      const parts = [weather.city];
+      if (weather.text) parts.push(weather.text);
+      if (weather.temp !== undefined && weather.temp !== null && weather.temp !== "") {
+        parts.push(weather.temp + "℃");
+      }
+      if (weather.humidity) parts.push("湿度 " + weather.humidity + "%");
+      if (weather.wind) parts.push(weather.wind);
+      let text = "天气：" + parts.join(" · ");
+      if (weather.source === "simulate") {
+        text += "（模拟数据，配好和风 Key 才是真实天气）";
+      }
+      return text;
+    }
+
     function buildCityRow() {
       const row = document.createElement("div");
       row.className = "setting-row";
@@ -2332,8 +2357,12 @@
         + (current.value
           ? (currentName.value ? currentName.value + "（" + current.value + "）" : current.value)
           : "跟随日程城市");
+      const weatherLine = document.createElement("div");
+      weatherLine.className = "hint";
+      weatherLine.textContent = "天气：读取中…";
       left.appendChild(name);
       left.appendChild(hint);
+      left.appendChild(weatherLine);
       row.appendChild(left);
 
       const control = document.createElement("div");
@@ -2359,7 +2388,11 @@
             if (item.key === "weather_city_name") item.value = result.name;
           });
           input.value = "";
-          toast("已切到 " + (result.name || result.id) + "（" + result.id + "）");
+          let done = "已切到 " + (result.name || result.id) + "（" + result.id + "）";
+          if (result.weather && result.weather.temp !== undefined && result.weather.temp !== null) {
+            done += " · " + result.weather.temp + "℃" + (result.weather.text || "");
+          }
+          toast(done);
           renderSettings();
         } catch (error) {
           toast(error.message || "设置失败", true);
@@ -2378,6 +2411,12 @@
       control.appendChild(button);
       control.appendChild(list);
       row.appendChild(control);
+      call("weather/brief")
+        .then((result) => {
+          const brief = objectFrom(result) || {};
+          weatherLine.textContent = weatherBriefText(brief.weather);
+        })
+        .catch(() => { weatherLine.textContent = "天气：读取失败"; });
       return row;
     }
 

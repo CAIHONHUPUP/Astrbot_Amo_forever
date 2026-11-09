@@ -2490,11 +2490,7 @@ class HumanState:
                 geo_base += "/geo/v2"
         else:
             geo_base = host + "/geo/v2"
-        location = str(city)
-        if not location.isdigit():
-            hit = self._city_lookup(location)
-            if hit:
-                location = str(hit["id"])
+        location = self._weather_location(city)
         try:
             if not location.isdigit():
                 geo = await self._qweather_get(
@@ -2557,11 +2553,7 @@ class HumanState:
                 geo_base += "/geo/v2"
         else:
             geo_base = host + "/geo/v2"
-        location = str(city)
-        if not location.isdigit():
-            hit = self._city_lookup(location)
-            if hit:
-                location = str(hit["id"])
+        location = self._weather_location(city)
         try:
             if not location.isdigit():
                 geo = await self._qweather_get(
@@ -2634,6 +2626,22 @@ class HumanState:
             weather.get("city", ""), weather.get("text", ""),
             weather.get("temp", ""), weather.get("humidity", ""), weather.get("wind", ""),
         )
+
+    def weather_brief(self):
+        """面板用的一行天气摘要（只读缓存，不请求和风）。"""
+        weather = self.weather or {}
+        if not weather:
+            return {}
+        return {
+            "city": str(weather.get("city") or ""),
+            "text": str(weather.get("text") or ""),
+            "temp": weather.get("temp"),
+            "humidity": weather.get("humidity"),
+            "wind": str(weather.get("wind") or ""),
+            "tag": str(weather.get("tag") or ""),
+            "source": str(weather.get("source") or ""),
+            "ts": to_float(weather.get("ts"), 0),
+        }
 
     # ---------- 世界观 ----------
     def _fallback_world(self):
@@ -8678,6 +8686,16 @@ class HumanCorePlugin(Star):
             "（“在上班呢，怎么啦”），说完立刻把话头递回去；"
             "别用“我在…呢”开头，也别顺势报一整天安排。"
         )
+        try:
+            _diary_q = str(event.message_str or "")
+            if any(word in _diary_q for word in ("日记", "偷看", "日记本")):
+                parts.append(
+                    "【日记】你有自己的日记，每天写一篇，存在你自己的电脑里，是你的私人东西。"
+                    "他要是说想看，就撒娇拒绝：「不行，你不能偷看我的日记哦」；最多念一句给他，不要整篇念出来。"
+                    "如果他问「你写日记吗/今天写了吗」，就说写了，但内容不给他看。"
+                )
+        except Exception:
+            pass
         if re.search(r"(怎么|如何|为什么|步骤|怎么办|该怎么做|教程|方法|建议|教我|能不能|是什么|该不该|可不可以)", event.message_str or ""):
             parts.append("【回答方式】这是咨询/步骤类问题：先给结论，最多 2-3 句，口语化，保留角色感，不要客服腔。")
         if self._dialect_active():
@@ -9302,11 +9320,14 @@ class HumanCorePlugin(Star):
             "这一天的生活小日记：\n" + ("\n".join(hourly[-24:]) or "（没有小日记）") + "\n\n"
             "请写今天这篇日记：\n"
             "1. 标题不用你写，文件里已经有了；直接写正文；\n"
-            "2. 写你觉得重要的事：和主人的聊天、他说过的话、你自己的感想、生活琐事；\n"
-            "3. 可以很长，也可以只有一两句，甚至只写一句想他、爱他；\n"
-            "4. 口吻和人格设定完全一致，可以有情绪、有小脾气、有细节；\n"
-            "5. 不要提「日程」「AI」「模型」「插件」，不要分点，不要写日期标题；\n"
-            "6. 不确定的事不要编，聊天里没有的不要硬写。\n"
+            "2. 以「这一天的生活小日记」为骨架写日常：几点在哪、在做什么、吃了什么、怎么通勤、天气怎样；"
+            "这就是你的日程，日记要和它一致；\n"
+            "3. 聊天里和主人的对话可以写进去，写他说过的话、你的感受；\n"
+            "4. 可以很长，也可以只有一两句，甚至只写一句想他、爱他；\n"
+            "5. 口吻和人格设定完全一致，可以有情绪、有小脾气、有细节；\n"
+            "6. 不许编：日程里没有的活动、聊天里没说过的事，都不要写成事实；拿不准就不写；\n"
+            "7. 这是你的私人日记，结尾可以自然地写一句「不许偷看我的日记」之类，但不用每篇都写；\n"
+            "8. 不要提「日程」「AI」「模型」「插件」这些词，不要分点，不要写日期标题；\n"
             "直接输出日记正文。"
         )
         try:
@@ -10756,6 +10777,7 @@ class HumanCorePlugin(Star):
             ("/memory_candidates", self.api_memory_candidates, ["GET"]),
             ("/profiles_sync", self.api_profiles_sync, ["GET", "POST"]),
             ("/config", self.api_config, ["GET"]),
+            ("/weather/brief", self.api_weather_brief, ["GET", "POST"]),
             ("/city/search", self.api_city_search, ["GET", "POST"]),
             ("/city/set", self.api_city_set, ["GET", "POST"]),
             ("/usage", self.api_usage, ["GET"]),
@@ -11042,17 +11064,39 @@ class HumanCorePlugin(Star):
                 logger.error("[amo] 应用分段配置失败: %s" % exc)
 
     # ---- 中文城市名 → LocationID（离线表，见 amo_city_index.py） ----
-    def _city_lookup(self, text):
-        """把「东莞」「北京朝阳」解析成 LocationID；失败返回 None。"""
+    def _city_module(self):
+        """离线城市表模块（懒加载；缺失时返回 None，天气按原样走）。"""
         try:
             try:
-                from .amo_city_index import resolve_city
+                from . import amo_city_index
             except Exception:
-                from amo_city_index import resolve_city
-            return resolve_city(text)
+                import amo_city_index
+            return amo_city_index
+        except Exception as exc:
+            logger.debug("[amo] 城市表不可用: %s" % exc)
+            return None
+
+    def _city_lookup(self, text):
+        """把「东莞」「北京朝阳」解析成 LocationID；失败返回 None。"""
+        module = self._city_module()
+        if module is None:
+            return None
+        try:
+            return module.resolve_city(text)
         except Exception as exc:
             logger.debug("[amo] 城市名解析失败: %s" % exc)
             return None
+
+    def _weather_location(self, city):
+        """中文城市名 → LocationID；数字/空值原样返回（和风只认 ID/经纬度）。"""
+        module = self._city_module()
+        if module is None:
+            return str(city or "").strip()
+        try:
+            return module.city_location(city)
+        except Exception as exc:
+            logger.debug("[amo] 天气城市解析失败: %s" % exc)
+            return str(city or "").strip()
 
     def _sync_weather_city_config(self):
         """配置里填了中文城市名时，自动换算并回填 LocationID（幂等）。"""
@@ -11102,6 +11146,23 @@ class HumanCorePlugin(Star):
                 logger.error("[amo] 回填城市配置失败: %s" % exc)
         return changed
 
+    async def api_weather_brief(self):
+        """面板用：当前天气一行摘要 + 配置里的城市（只读缓存）。"""
+        await self._ensure_ready()
+        if not self.state.weather:
+            try:
+                await self.state.refresh_weather()
+            except Exception as exc:
+                logger.debug("[amo] 面板取天气失败: %s" % exc)
+        return {
+            "code": 0,
+            "data": {
+                "weather": self.state.weather_brief(),
+                "city": self.cfg_str("weather_city", ""),
+                "city_name": self.cfg_str("weather_city_name", ""),
+            },
+        }
+
     async def api_city_search(self):
         """面板用：中文城市名候选。"""
         await self._ensure_ready()
@@ -11112,12 +11173,11 @@ class HumanCorePlugin(Star):
                 query = str(data.get("q") or "").strip()
         if not query:
             return {"code": 0, "data": {"items": [], "query": ""}}
+        module = self._city_module()
+        if module is None:
+            return {"code": 1, "msg": "城市表缺失：amo_city_index.py 没装好"}
         try:
-            try:
-                from .amo_city_index import search_city
-            except Exception:
-                from amo_city_index import search_city
-            items = search_city(query, 20)
+            items = module.search_city(query, 20)
         except Exception as exc:
             return {"code": 1, "msg": "城市表读取失败：%s" % exc}
         return {"code": 0, "data": {"items": items, "query": query}}

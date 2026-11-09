@@ -82,7 +82,21 @@ def read_diary(root: str, day: date) -> str:
         with open(path, "r", encoding="utf-8") as fp:
             return fp.read()
     except OSError:
-        return ""
+        pass
+    # 兜底：拷贝过来的日记如果文件名被改过，就按 年/月/日 目录找第一份 txt
+    day_dir = os.path.dirname(path)
+    try:
+        for file_name in sorted(os.listdir(day_dir), reverse=True):
+            if not file_name.endswith(".txt") or file_name.endswith(".tmp"):
+                continue
+            try:
+                with open(os.path.join(day_dir, file_name), "r", encoding="utf-8") as fp:
+                    return fp.read()
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return ""
 
 
 def list_tree(root: str) -> Dict[str, Any]:
@@ -109,10 +123,20 @@ def list_tree(root: str) -> Dict[str, Any]:
                 day_dir = os.path.join(month_dir, day_name)
                 if not os.path.isdir(day_dir):
                     continue
+                day_files = []
                 for file_name in sorted(os.listdir(day_dir), reverse=True):
-                    match = _FILE_RE.match(file_name)
-                    if not match:
+                    if not file_name.endswith(".txt") or file_name.endswith(".tmp"):
                         continue
+                    match = _FILE_RE.match(file_name)
+                    if match:
+                        day_date = date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+                    else:
+                        # 兜底：只要放在 年/月/日 目录里的 txt 都算，
+                        # 这样换电脑整个文件夹拷过来、哪怕文件名被改过也能读。
+                        try:
+                            day_date = date(int(year_name), int(month_name), int(day_name))
+                        except ValueError:
+                            continue
                     path = os.path.join(day_dir, file_name)
                     try:
                         size = os.path.getsize(path)
@@ -120,14 +144,20 @@ def list_tree(root: str) -> Dict[str, Any]:
                             text = fp.read()
                     except OSError:
                         continue
+                    day_files.append((day_date, path, text, size))
+                seen_dates = set()
+                for day_date, path, text, size in day_files:
+                    day_text = day_str(day_date)
+                    if day_text in seen_dates:
+                        continue
+                    seen_dates.add(day_text)
                     total += 1
-                    day_text = day_str(date(int(match.group(1)), int(match.group(2)), int(match.group(3))))
                     if day_text > latest:
                         latest = day_text
                     days.append({
                         "date": day_text,
-                        "day": int(match.group(3)),
-                        "title": title_for(date(int(match.group(1)), int(match.group(2)), int(match.group(3)))),
+                        "day": day_date.day,
+                        "title": title_for(day_date),
                         "chars": len(text),
                         "size": size,
                         "path": path,
