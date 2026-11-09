@@ -578,26 +578,31 @@
   </div>
   <div class="modal" id="neuronModal" hidden>
     <div class="modal-card" style="max-width:780px;width:min(94vw,780px)">
-      <div class="row" style="display:flex;align-items:center;gap:10px">
-        <strong style="flex:1">关系图谱</strong>
-        <span class="hint">点节点高亮，拖动可拽</span>
-        <button class="ghost" id="btnNeuronClose">关闭</button>
+      <div class="row" style="display:flex;align-items:center;gap:8px">
+        <strong id="neuronTitle" style="flex:1;cursor:pointer" title="双击管理关系">关系图谱</strong>
+        <span class="hint" id="neuronHint" style="font-size:12px">拖动旋转 · 双击标题管理</span>
+        <button class="ghost" id="btnNeuronClose" style="padding:5px 9px;font-size:12px">关闭</button>
       </div>
-      <canvas id="neuronCanvas" style="width:100%;height:340px;display:block;margin-top:8px"></canvas>
-      <div class="hint" id="neuronLegend"></div>
-      <div class="row" style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-        <select id="nRelA" style="flex:1;min-width:120px"></select>
-        <select id="nRelB" style="flex:1;min-width:120px"></select>
-        <select id="nRelType">
-          <option>家人</option><option>恋人</option><option selected>朋友</option>
-          <option>同事</option><option>同学</option><option>熟人</option>
-          <option>陌生人</option><option>仇人</option>
-        </select>
-        <button class="primary" id="btnNeuronAdd">添加</button>
+      <div id="neuronView">
+        <canvas id="neuronCanvas" style="width:100%;height:min(240px,36vh);display:block;margin-top:8px"></canvas>
+        <div class="hint" id="neuronLegend"></div>
       </div>
-      <input id="nRelNote" placeholder="备注（可选）" style="margin-top:8px;width:100%">
-      <div class="hint">这里改完会同时写进记忆终端，面板那边只做展示。</div>
-      <div id="neuronList" class="list" style="margin-top:8px;max-height:200px;overflow:auto"></div>
+      <div id="neuronEdit" hidden>
+        <div class="hint" style="margin-top:8px">管理员修改关系（同时写进记忆终端）</div>
+        <div class="row" style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <select id="nRelA" style="flex:1;min-width:120px"></select>
+          <select id="nRelB" style="flex:1;min-width:120px"></select>
+          <select id="nRelType">
+            <option>家人</option><option>恋人</option><option selected>朋友</option>
+            <option>同事</option><option>同学</option><option>熟人</option>
+            <option>陌生人</option><option>仇人</option>
+          </select>
+          <button class="primary" id="btnNeuronAdd">添加</button>
+        </div>
+        <input id="nRelNote" placeholder="备注（可选）" style="margin-top:8px;width:100%">
+        <div id="neuronList" class="list" style="margin-top:8px;max-height:200px;overflow:auto"></div>
+        <button class="ghost" id="btnNeuronBack" style="margin-top:8px">返回图谱</button>
+      </div>
     </div>
   </div>
 
@@ -2524,11 +2529,12 @@
       }
     }
 
-    function normalizeNeuronGraph(graph) {
+    function normalizeNeuronGraph(graph, radius) {
       let maxR = 0;
       graph.nodes.forEach((node) => { maxR = Math.max(maxR, Math.hypot(node.x, node.y, node.z)); });
       if (maxR > 0.01) {
-        const scale = 120 / maxR;
+        const target = Math.max(40, Number(radius) || 120);
+        const scale = target / maxR;
         graph.nodes.forEach((node) => { node.x *= scale; node.y *= scale; node.z *= scale; });
       }
     }
@@ -2630,27 +2636,27 @@
         ctx.fillStyle = "#9a8fa3";
         ctx.font = "12px system-ui, sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText("还没有关系，下面加一条试试", canvas.clientWidth / 2, canvas.clientHeight / 2);
+        ctx.fillText("还没有关系，双击标题可以手动添加", canvas.clientWidth / 2, canvas.clientHeight / 2);
         if (legend) legend.textContent = "";
         return;
       }
       // 节点多的时候少跑几轮，打开面板别卡住
       const iterations = graph.nodes.length > 400 ? 40 : (graph.nodes.length > 220 ? 90 : 180);
       settleNeuronGraph(graph, iterations);
-      normalizeNeuronGraph(graph);
+      // 按画布实际大小定球半径，小屏（手机）也不会顶出边框
+      normalizeNeuronGraph(graph, Math.min(canvas.clientWidth || 560, canvas.clientHeight || 240) * 0.34);
 
       if (legend) {
         const kinds = [...new Set(graph.links.map((link) => link.relation))];
         legend.innerHTML = kinds.map((kind) =>
           '<span style="display:inline-block;margin-right:10px"><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' +
-          neuronColor(kind) + ';margin-right:4px"></i>' + kind + "</span>").join("") +
-          '<span style="color:#9a8fa3">拖动旋转 · 滚轮缩放 · 双击回正</span>';
+          neuronColor(kind) + ';margin-right:4px"></i>' + kind + "</span>").join("");
       }
 
       let width = 0, height = 0, dpr = 1;
       const fit = () => {
         const w = canvas.clientWidth || (canvas.parentElement.clientWidth - 28);
-        const h = canvas.clientHeight || 340;
+        const h = canvas.clientHeight || 240;
         dpr = window.devicePixelRatio || 1;
         if (w !== width || h !== height) {
           width = w; height = h;
@@ -2778,10 +2784,23 @@
       });
     }
 
-    async function openNeuron() {
+    function setNeuronMode(edit) {
+      const view = document.getElementById("neuronView");
+      const editBox = document.getElementById("neuronEdit");
+      const title = document.getElementById("neuronTitle");
+      const hint = document.getElementById("neuronHint");
+      if (!view || !editBox) return;
+      view.hidden = !!edit;
+      editBox.hidden = !edit;
+      if (title) title.textContent = edit ? "关系管理" : "关系图谱";
+      if (hint) hint.textContent = edit ? "改完会同步到记忆终端" : "拖动旋转 · 双击标题管理";
+    }
+
+    async function openNeuron(keepEdit) {
       const modal = document.getElementById("neuronModal");
       modal.hidden = false;
       document.getElementById("btnNeuron").classList.add("on");
+      if (!keepEdit) setNeuronMode(false);
       try {
         const data = objectFrom(await call("relations")) || {};
         const edges = Array.isArray(data.edges) ? data.edges : (Array.isArray(data.items) ? data.items : []);
@@ -2805,7 +2824,13 @@
     document.getElementById("btnNeuronClose").addEventListener("click", () => {
       document.getElementById("neuronModal").hidden = true;
       document.getElementById("btnNeuron").classList.remove("on");
+      setNeuronMode(false);
     });
+    document.getElementById("neuronTitle").addEventListener("dblclick", () => {
+      const editing = document.getElementById("neuronEdit").hidden === false;
+      setNeuronMode(!editing);
+    });
+    document.getElementById("btnNeuronBack").addEventListener("click", () => setNeuronMode(false));
     document.getElementById("btnNeuronAdd").addEventListener("click", async () => {
       const a_uid = document.getElementById("nRelA").value;
       const b_uid = document.getElementById("nRelB").value;
@@ -2819,7 +2844,7 @@
         await call("relation_save", { a_uid, b_uid, relation, note });
         document.getElementById("nRelNote").value = "";
         toast("已添加");
-        openNeuron();
+        openNeuron(true);
       } catch (error) {
         toast("添加失败：" + error.message, true);
       }
