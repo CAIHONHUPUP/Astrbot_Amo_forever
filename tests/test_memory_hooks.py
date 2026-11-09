@@ -168,7 +168,10 @@ class HubTests(unittest.TestCase):
         self.assertTrue(hub.should_recall("你还记得我喜欢什么吗"))
         self.assertTrue(hub.should_recall("昨天那个事"))
         self.assertTrue(hub.should_recall("随便聊聊", private=True))
-        # 群聊：只在第 4、8… 轮召回
+        # 群聊：短消息无论哪一轮都召回
+        self.assertTrue(hub.should_recall("猫", private=False))
+        self.assertTrue(hub.should_recall("上班", private=False))
+        # 群聊：长消息只在第 4、8… 轮召回
         self.assertTrue(hub.should_recall("随便聊聊", private=False))
         hub.turn = 1
         self.assertFalse(hub.should_recall("随便聊聊", private=False))

@@ -174,7 +174,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.3.8"
+PLUGIN_VERSION = "6.4.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -7323,6 +7323,8 @@ class HumanCorePlugin(Star):
                     private = bool(event.is_private_chat()) if event is not None else True
                 except Exception:
                     private = True
+                if not private and len(str(text or "").strip()) <= 3:
+                    limit = min(limit, 2)   # 群聊短消息只补 2 条，避免一句“猫”塞满提示词
                 if hub.should_recall(text, private):
                     scope = "private"
                     group_id = ""

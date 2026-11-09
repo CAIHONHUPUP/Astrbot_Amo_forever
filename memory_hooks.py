@@ -580,6 +580,10 @@ class MemoryHub:
             return True
         if private:
             return True
+        if 0 < len(body.strip()) <= 3:
+            # 短消息（“猫”“茶”“上班”）也要检索一次：
+            # 群聊原来只靠关键词/抽样，两三个字永远不会触发，用户会以为“短词查不到记忆”。
+            return True
         every = int(_number(self.rt.cfg("recall_sample_every", 8), 8) or 8)
         if every <= 1:
             return True
