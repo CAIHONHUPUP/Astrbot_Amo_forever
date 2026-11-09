@@ -5,6 +5,48 @@
     "default": "",
     "hint": "天气里显示的城市名；填数字 ID 时用它显示中文（填 101281601、这里填东莞）。用中文城市名设置时会自动填好。"
   },
+  "city_follow_enabled": {
+    "type": "bool",
+    "description": "他换城市时她跟着换（只认「我在X / 我到X / 我回X」）",
+    "default": true,
+    "hint": "私聊里他说「我在清远 / 我到广州了 / 我回东莞」这类明确说法时，把她所在的城市改成那里；只是聊天提到城市不算，重名要写清楚（深圳南山）。"
+  },
+  "city_follow_weather": {
+    "type": "bool",
+    "description": "跟着换城市时同时换天气城市",
+    "default": true,
+    "hint": "开启后换城会改 weather_city 并立刻刷一次天气（每次真正换城才请求一次和风）；关掉则只改说话，天气还留在面板设的城市。"
+  },
+  "city_travel_schedule": {
+    "type": "bool",
+    "description": "去别的城市时按「出行」改今天的日程",
+    "default": true,
+    "hint": "他说「我在清远/我到广州了」时，把今天剩下的日程换成到了、找吃的、逛、住酒店（不上班），日记也按这个写；说「我回东莞」恢复。关掉就只跟随说话，不动日程。"
+  },
+  "wander_enabled": {
+    "type": "bool",
+    "description": "她会自己提出想出去玩（心情/劳累判定）",
+    "default": true,
+    "hint": "他问「你最近想出去玩吗」时，按心情和劳累程度决定：低落/累大概率想去（报一个真实景点城市）；心情好不累就说想留在他身边。他同意后，22 点前当天出发，22 点后第二天出发；第二天日程变成该城市旅游，日记和记忆跟着写。"
+  },
+  "wander_prob_low": {
+    "type": "float",
+    "description": "低落/累时答应出去玩的概率（0-1）",
+    "default": 0.85,
+    "hint": "问「你最近想出去玩吗」时：心情低落或很累，她想去玩的概率。填 0.85 就是大概率想去；0 表示永远不想去。"
+  },
+  "wander_prob_good": {
+    "type": "float",
+    "description": "心情好时答应出去玩的概率（0-1）",
+    "default": 0.15,
+    "hint": "心情好、不累时，她想去玩的概率。默认 0.15（小概率），其余会说想留在你身边。"
+  },
+  "wander_ask_three_times": {
+    "type": "bool",
+    "description": "一天可以问三次想不想旅游（关=一天一次）",
+    "default": false,
+    "hint": "打开：同一天最多问 3 次「想不想出去玩」，每次都会重新判定；关闭：一天只生效 1 次。"
+  },
   "weather_alert_enabled": {
     "type": "bool",
     "description": "明晚天气变坏时提醒一次",
@@ -198,7 +240,7 @@
   "memory_provider": {
     "type": "string",
     "description": "记忆能力来源",
-    "hint": "auto：自动选可用的（优先「我想永远记住你」）；也可以填 amo_data / memory_companion / livingmemory 强制指定。",
+    "hint": "auto：自动选可用的（现在就是「我想永远记住你」）；也可以填 amo_data 强制指定。",
     "default": "auto"
   },
   "ctx_window": {
@@ -223,43 +265,6 @@
     "description": "外挂记忆插件检索超时（秒）",
     "hint": "调用牢记等插件的检索接口时的上限；超时自动退回旧的库内检索，不会卡住回复。",
     "default": 3
-  },
-  "memory_inject_livingmemory": {
-    "type": "bool",
-    "description": "把 livingmemory 的记忆也注入提示词",
-    "default": false,
-    "hint": "默认关闭：livingmemory 自己会把检索结果注入（BM25+向量+图），再注入一次会重复；只有把 livingmemory 当纯存储用时才打开"
-  },
-  "livingmemory_owner_ids": {
-    "type": "string",
-    "description": "livingmemory 里算作本人的 ID（逗号分隔）",
-    "default": "",
-    "hint": "跨平台用：QQ 号 + 飞书 openid 等。留空时只按当前 uid 匹配"
-  },
-  "companion_memory_plugin_name": {
-    "type": "string",
-    "description": "挂载的记忆插件",
-    "default": "auto",
-    "hint": "auto=自动检测已安装的插件；面板会列出你装的所有插件，选哪个就用哪个的记忆和画像。",
-    "_special": "select_memory_plugin"
-  },
-  "companion_profile_sync": {
-    "type": "bool",
-    "description": "从挂载插件自动补全用户画像",
-    "hint": "只补名字/生日/关系，不覆盖你手动设置的关系",
-    "default": true
-  },
-  "companion_memory_include_profile": {
-    "type": "bool",
-    "description": "读取挂载插件画像",
-    "hint": "strong_memories / boundaries / speaking_style 等",
-    "default": true
-  },
-  "companion_memory_include_important": {
-    "type": "bool",
-    "description": "读取挂载插件记忆",
-    "hint": "worldbook_member_profiles.important_memories 等长期记忆，不限条数",
-    "default": true
   },
   "chat_log_days": {
     "type": "int",
@@ -1254,5 +1259,73 @@
     "type": "int",
     "description": "【礼物】逛街提示每天最多几次",
     "default": 1
+  },
+  "time_recall_enabled": {
+    "type": "bool",
+    "description": "【时间回看】按时间问就回看当时的聊天",
+    "hint": "他问「昨天下午/前天/上周三」时，去记忆终端（我想永远记住你）取那段时间的聊天再回答；只带内容，不给每条消息打时间戳。",
+    "default": true
+  },
+  "time_recall_limit": {
+    "type": "int",
+    "description": "【时间回看】最多带几条",
+    "default": 6
+  },
+  "daily_digest_enabled": {
+    "type": "bool",
+    "description": "【阶段记忆】每天把昨天聊天压成一条长期记忆",
+    "hint": "上午（默认 6 点后）用模型把昨天聊到的事、约定、他的状态总结成 2-4 句写进记忆终端，供以后召回。",
+    "default": true
+  },
+  "daily_digest_hour": {
+    "type": "int",
+    "description": "【阶段记忆】几点之后总结昨天",
+    "default": 6
+  },
+  "auto_learn_minutes": {
+    "type": "int",
+    "description": "【长期记忆】自动提炼间隔（分钟）",
+    "hint": "从最近私聊里抽事实的间隔，默认 15 分钟（原来是写死 30 分钟）。",
+    "default": 15
+  },
+  "memory_inject_max_chars": {
+    "type": "int",
+    "description": "【注入】每轮记忆最多多少个字",
+    "hint": "防止一次塞太多记忆挤占对话；按行截断，默认 1200 字。",
+    "default": 1200
+  },
+  "milestone_enabled": {
+    "type": "bool",
+    "description": "【里程碑】每 N 轮私聊压成一条长期记忆",
+    "hint": "攒够 N 轮（他说的话）就让模型把这段聊到的事压成 2-4 句写进记忆终端；原始聊天不删。",
+    "default": true
+  },
+  "milestone_every_turns": {
+    "type": "int",
+    "description": "【里程碑】每多少轮归档一次",
+    "default": 20
+  },
+  "milestone_min_messages": {
+    "type": "int",
+    "description": "【里程碑】至少多少条消息才归档",
+    "default": 12
+  },
+  "diary_enabled": {
+    "type": "bool",
+    "description": "写日记",
+    "default": true,
+    "hint": "每天 10 点前后用昨天的聊天和日程小日记写一篇，保存成 txt。"
+  },
+  "diary_dir": {
+    "type": "string",
+    "description": "日记保存文件夹",
+    "default": "D:\\dafeiyu\\日记",
+    "hint": "按 年/月/日 自动建子文件夹，文件名是「我的日记YYYY年MM月DD日.txt」；日记不参与插件备份。"
+  },
+  "diary_time": {
+    "type": "string",
+    "description": "日记时间",
+    "default": "10:00",
+    "hint": "HH:MM，默认 10:00；到点后写「昨天」的日记，错过不自动补（面板「写昨天」可手动补）。"
   }
 }

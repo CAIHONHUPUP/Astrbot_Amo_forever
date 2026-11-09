@@ -219,13 +219,20 @@ class ChatState:
 # 工具函数
 # ============================================================
 def clamp_score(v: Any, min_val: float = SCORE_MIN, max_val: float = SCORE_MAX,
-                default: float = SCORE_DEFAULT) -> float:
-    """分数限制在范围内"""
+                default: float = SCORE_DEFAULT, allow_zero: bool = False) -> float:
+    """分数限制在范围内。
+
+    allow_zero=True 时 0 是合法值（面板 slider 的 min 就是 0）：
+    以前 `val <= 0` 一律当解析失败回退 default，于是「权重拖到 0」「阈值拖到 0」
+    在面板上看起来生效、实际还是 0.2 / 0.6。
+    """
     try:
         val = float(v)
-        return default if val <= 0 else max(min_val, min(max_val, val))
     except (TypeError, ValueError):
         return default
+    if allow_zero and val == 0:
+        return 0.0
+    return default if val <= 0 else max(min_val, min(max_val, val))
 
 def safe_extract_score(data: Dict[str, Any], key: str,
                        min_val: float = SCORE_MIN, max_val: float = SCORE_MAX) -> float:
@@ -353,24 +360,45 @@ def _build_rules_section(judge_rules: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 def _extract_weights_from_rules(judge_rules: List[Dict[str, Any]]) -> Dict[str, float]:
-    """从配置中提取各维度权重并归一化"""
+    """从配置中提取各维度权重并归一化。
+
+    只对**已知维度**归一化：以前先除以 total 再 `if k in weights` 过滤，
+    只要 judge_rules 里混进一个自定义维度名（如把 dimension_name 改成 mood），
+    已知维度的权重和就小于 1，overall 被系统性压低（甚至 extracted 全是未知维时
+    返回空字典、sum=0），表现为「心流永远不触发」。
+    """
     weights = {"relevance": 0.25, "willingness": 0.2, "social": 0.2, "timing": 0.15, "continuity": 0.2}
     extracted: Dict[str, float] = {}
+    unknown: List[str] = []
     for item in judge_rules:
+        if not isinstance(item, dict):
+            continue
         name = str(item.get("dimension_name", "")).strip()
         w = item.get("weight")
-        if name and w is not None:
-            try: extracted[name] = float(w)
-            except (TypeError, ValueError): pass
+        if not name or w is None:
+            continue
+        try:
+            value = float(w)
+        except (TypeError, ValueError):
+            continue
+        if name not in weights:
+            unknown.append(name)
+            continue
+        if value >= 0:
+            extracted[name] = value
+    if unknown:
+        logger.warning("[心流] judge_rules 里有未知维度（已忽略）：%s" % "、".join(sorted(set(unknown))))
+    total = sum(extracted.values())
+    if extracted and total > 0:
+        return {k: v / total for k, v in extracted.items()}
     if extracted:
-        total = sum(extracted.values())
-        if total > 0: return {k: v / total for k, v in extracted.items() if k in weights}
+        logger.warning("[心流] judge_rules 权重全为 0，回退默认权重")
     return weights
 
 def _validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
     """验证并规范化配置"""
     v = dict(config or {})
-    v["reply_threshold"] = clamp_score(v.get("reply_threshold", 0.6), 0.0, 1.0, 0.6)
+    v["reply_threshold"] = clamp_score(v.get("reply_threshold", 0.6), 0.0, 1.0, 0.6, allow_zero=True)
     limits = {
         "context_messages_count": (1, 50, 5), "judge_context_count": (1, 50, 5),
         "judge_max_retries": (0, 10, 3), "immersive_mode_duration": (0, 300, 30),
@@ -401,7 +429,7 @@ def _validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
             cleaned_rules.append({
                 "dimension_name": str(item.get("dimension_name", "")).strip(),
                 "dimension_display": str(item.get("dimension_display", "")).strip(),
-                "weight": clamp_score(item.get("weight", 0.2), 0.0, 1.0, 0.2),
+                "weight": clamp_score(item.get("weight", 0.2), 0.0, 1.0, 0.2, allow_zero=True),
                 "low_desc": str(item.get("low_desc", "")), "high_desc": str(item.get("high_desc", "")),
             })
     v["judge_rules"] = cleaned_rules
@@ -459,9 +487,9 @@ class HeartflowEngine:
         for item in self.config.get("group_threshold_configs", []):
             chat_id = str(item.get("chat_id", "")).strip()
             if chat_id:
-                g_reply = clamp_score(item.get("reply_threshold", self.reply_threshold), 0.0, 1.0, self.reply_threshold)
-                g_max = clamp_score(item.get("dynamic_threshold_max", self.dynamic_threshold_max), 0.0, 1.0, self.dynamic_threshold_max)
-                g_min = clamp_score(item.get("dynamic_threshold_min", self.dynamic_threshold_min), 0.0, 1.0, self.dynamic_threshold_min)
+                g_reply = clamp_score(item.get("reply_threshold", self.reply_threshold), 0.0, 1.0, self.reply_threshold, allow_zero=True)
+                g_max = clamp_score(item.get("dynamic_threshold_max", self.dynamic_threshold_max), 0.0, 1.0, self.dynamic_threshold_max, allow_zero=True)
+                g_min = clamp_score(item.get("dynamic_threshold_min", self.dynamic_threshold_min), 0.0, 1.0, self.dynamic_threshold_min, allow_zero=True)
                 if g_min > g_max: g_min = max(0.0, g_max - 0.1)
                 self.group_threshold_configs[chat_id] = {
                     "reply_threshold": g_reply,
@@ -1253,7 +1281,9 @@ class HeartflowEngine:
             if debounce_state.get("trigger_sender_id") == str(event.get_sender_id()):
                 # 触发者发的消息：追加文本（非文本用占位符），不重置计时
                 text_content = event.message_str.strip() if event.message_str else "[非文本消息]"
-                debounce_state["pending_msgs"].append(text_content)
+                # 防抖期间的可能无限追加：留最近 30 条就够合并用了
+                if len(debounce_state["pending_msgs"]) < 30:
+                    debounce_state["pending_msgs"].append(text_content)
                 self._log_detail(f"[心流] ⏳ 防抖中收到触发者消息，已追加: {umo}")
             else:
                 # 其他人发的消息：完全忽略
@@ -1345,34 +1375,35 @@ class HeartflowEngine:
                         }
                     logger.info(f"[心流] ⏳ 触发防抖等待 ({self.debounce_delay}s) | 触发者: {event.get_sender_name()}")
 
-                    # 防抖等待循环
-                    while True:
+                    # 防抖等待 + 清理放 try/finally：等待期间被取消/抛异常也不会留下 active=True 的死状态
+                    try:
+                        while True:
+                            with self._lock:
+                                debounce_state = self._debounce_states.get(debounce_key)
+                            if not debounce_state:
+                                break
+                            elapsed = time.time() - debounce_state["start_time"]
+                            # 达到基础延迟立即触发，或达到最大等待时间强制触发
+                            if elapsed >= self.debounce_delay or elapsed >= self.max_debounce_wait or debounce_state.get("cancelled"):
+                                break
+                            await asyncio.sleep(min(self.debounce_delay - elapsed, 0.5))
+
+                        # 检查是否被取消
                         with self._lock:
                             debounce_state = self._debounce_states.get(debounce_key)
-                        if not debounce_state:
-                            break
-                        elapsed = time.time() - debounce_state["start_time"]
-                        # 达到基础延迟立即触发，或达到最大等待时间强制触发
-                        if elapsed >= self.debounce_delay or elapsed >= self.max_debounce_wait or debounce_state.get("cancelled"):
-                            break
-                        await asyncio.sleep(min(self.debounce_delay - elapsed, 0.5))
-
-                    # 检查是否被取消
-                    with self._lock:
-                        debounce_state = self._debounce_states.get(debounce_key)
-                        if debounce_state and debounce_state.get("cancelled"):
+                            cancelled = bool(debounce_state and debounce_state.get("cancelled"))
+                        if cancelled:
                             logger.debug(f"[心流] 🚫 防抖被取消: {umo}")
-                            self._debounce_states.pop(debounce_key, None)
                             self._set_judgment_paused(umo, paused=False)
                             return
 
-                    # 合并消息（只有触发者的消息）
-                    final_msgs = debounce_state["pending_msgs"] if debounce_state else [event.message_str]
-                    event.message_str = "\n".join(final_msgs)
-                    
-                    with self._lock:
-                        self._debounce_states.pop(debounce_key, None)
-                    logger.debug(f"[心流] ✅ 防抖结束，准备回复（合并{len(final_msgs)}条）")
+                        # 合并消息（只有触发者的消息）
+                        final_msgs = debounce_state["pending_msgs"] if debounce_state else [event.message_str]
+                        event.message_str = "\n".join(final_msgs)
+                        logger.debug(f"[心流] ✅ 防抖结束，准备回复（合并{len(final_msgs)}条）")
+                    finally:
+                        with self._lock:
+                            self._debounce_states.pop(debounce_key, None)
 
                 event.is_at_or_wake_command = True
                 setattr(event, "heartflow_triggered", True)

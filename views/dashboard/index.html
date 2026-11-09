@@ -143,6 +143,10 @@
     .tab { flex: 0 0 auto; border: 0; background: transparent; color: var(--muted); text-align: center; padding: 9px 10px; border-radius: 10px; font-size: 13px; cursor: pointer; white-space: nowrap; min-width: 0; }
     .tab.active { background: var(--card); color: var(--pink); box-shadow: none; }
     .tab-panel { display: flex; flex-direction: column; gap: 14px; width: 100%; min-width: 0; }
+    .diary-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
+    .diary-actions button { padding: 4px 9px; min-height: 0; font-size: 12px; border-radius: 8px;
+      background: transparent; color: var(--muted); border: 1px solid var(--line); line-height: 1.4; }
+    .diary-actions button:hover { color: var(--text); background: var(--hover); }
     .tab-panel[hidden] { display: none; }
     .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
     .row.between { justify-content: space-between; }
@@ -353,6 +357,7 @@
       <button class="tab" data-tab="settings" data-group="私聊">私聊</button>
       <button class="tab" data-tab="settings" data-group="心流">心流</button>
       <button class="tab" data-tab="settings" data-group="分段">分段</button>
+      <button class="tab" data-tab="diary">日记</button>
       <button class="tab" data-tab="usage">用量</button>
       </nav>
       <button class="tabnav-arrow right" type="button" aria-label="向后">›</button>
@@ -440,6 +445,7 @@
         </div>
         <div class="form-grid">
           <label>UID<input id="pUid" class="input" placeholder="用户 ID" /></label>
+          <div id="pLinks" class="sub" style="grid-column:1/-1;margin-top:-6px"></div>
           <label>名字<input id="pName" class="input" placeholder="名字" /></label>
           <label>称呼<input id="pAlias" class="input" placeholder="例如：宝贝、老大" /></label>
           <label>生日<input id="pBirthday" class="input" placeholder="MM-DD" /></label>
@@ -477,6 +483,43 @@
         <div id="giftWishes" class="profile-list"><div class="sub">加载中…</div></div>
         <div class="label" style="margin-top:16px">收到的礼物</div>
         <div id="giftList" class="profile-list"><div class="sub">加载中…</div></div>
+      </section>
+    </div>
+
+    <div id="tab-diary" class="tab-panel" hidden>
+      <section class="card">
+        <div class="row between" style="align-items:center">
+          <div class="label">大肥鱼的日记</div>
+          <div class="diary-actions">
+            <button id="diaryWrite" type="button">写昨天</button>
+            <button id="diaryImport" type="button">导入文件夹</button>
+            <button id="diaryRefresh" type="button">刷新</button>
+            <button id="diaryOpen" type="button">打开文件夹</button>
+          </div>
+        </div>
+        <div class="sub" id="diaryStats">读取中…</div>
+        <div class="sub" id="diaryRoot"></div>
+      </section>
+      <section class="card">
+        <div id="diaryTree" class="list"><div class="sub">读取中…</div></div>
+      </section>
+      <section class="card">
+        <div class="row between">
+          <div class="label" id="diaryTitle">选择一篇日记</div>
+          <button class="tab" id="diaryClose" type="button" hidden>关闭</button>
+        </div>
+        <pre id="diaryText" style="white-space:pre-wrap;line-height:1.8;margin:0;font-family:inherit">从上面的年 / 月 / 日里点一天，就能读那天的日记。</pre>
+      </section>
+      <section class="card">
+        <div class="sub" style="line-height:1.7;margin-top:0">
+          <strong style="color:#d94a86">注意</strong><br>
+          · 按 <code>年/月/日</code> 存放，文件「我的日记YYYY年MM月DD日.txt」<br>
+          · <strong style="color:#d94a86">换电脑</strong>：整个「日记」文件夹放回 <code>diary_dir</code>
+          （默认 <code>D:\dafeiyu\日记</code>）即可读，日期按文件夹解析<br>
+          · <strong style="color:#d94a86">日记不参与插件备份</strong>，自己额外留一份<br>
+          · 文件名改过也能按日期目录读，但建议保持原名<br>
+          · 旧日记点 <strong style="color:#d94a86">「导入文件夹」</strong>，按日期合并，已存在不覆盖
+        </div>
       </section>
     </div>
 
@@ -766,7 +809,7 @@
           }
           if (result && typeof result === "object") {
             if (result.status === "error" || result.success === false || result.code === 1) {
-              errors.push(result.message || result.msg || "接口返回错误");
+              errors.push(action + " 接口返回错误：" + (result.message || result.msg || "未知错误"));
               continue;
             }
             // 403/405 这类说明桥接没走 POST（老版本 AstrBot 可能只有 apiGet）：
@@ -778,14 +821,14 @@
             return result;
           }
           if (result !== undefined && result !== null) {
-            errors.push(typeof result === "string" ? result.slice(0, 120) : "接口返回格式异常");
+            errors.push(action + " 接口返回格式异常：" + (typeof result === "string" ? result.slice(0, 120) : "无法解析"));
           }
         } catch (error) {
-          errors.push(error.message || String(error));
+          errors.push(action + " 接口请求失败：" + (error.message || String(error)));
           if (String(error.message || "").indexOf("超时") >= 0) break;
         }
       }
-      return { __error: errors[0] || "桥接调用失败" };
+      return { __error: errors.find((item) => item.indexOf("404") < 0) || errors[0] || "桥接调用失败" };
     }
 
     async function httpCall(action, payload) {
@@ -822,14 +865,22 @@
             let data = null;
             try { data = text ? JSON.parse(text) : null; } catch (error) { data = null; }
             if (data && (data.code === 0 || data.data !== undefined || data.status === "ok")) return data;
-            if (data && (data.message || data.msg)) errors.push(data.message || data.msg);
-            else errors.push("HTTP " + response.status);
+            const detail = (data && (data.message || data.msg)) || "";
+            errors.push({
+              status: response.status,
+              text: action + " 接口 " + response.status + (detail ? "：" + detail : ""),
+            });
           } catch (error) {
-            errors.push(error.message || String(error));
+            errors.push({
+              status: 0,
+              text: action + " 接口请求失败：" + (error.message || String(error)),
+            });
           }
         }
       }
-      throw new Error(errors[0] || "无法连接插件接口");
+      // 多个 base 会依次试；优先报真正出错的那个，而不是路由不存在造成的 404
+      const meaningful = errors.find((item) => item.status !== 404) || errors[0];
+      throw new Error(meaningful ? meaningful.text : "无法连接插件接口");
     }
 
     // 写操作在后端只接受 POST：这里强制带上 body，避免面板按钮变成 GET 被拒
@@ -837,7 +888,7 @@
       "schedule_regen", "kb_regen", "scenic_kb_regen", "worldview_regen",
       "mood_update", "config_save", "profile_save", "profile_delete",
       "relation_save", "relation_delete", "memory_add", "memory_delete",
-      "say", "city_set", "profiles_sync",
+      "say", "city_set", "profiles_sync", "diary/open", "diary/write",
     ]);
 
     async function call(action, payload) {
@@ -1479,6 +1530,119 @@
       });
     }
 
+    function diaryDayString(offset) {
+      const d = new Date();
+      d.setDate(d.getDate() + Number(offset || 0));
+      const pad = (n) => String(n).padStart(2, "0");
+      return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+    }
+
+    async function loadDiary() {
+      const statsEl = document.getElementById("diaryStats");
+      statsEl.textContent = "读取中…";
+      try {
+        const tree = objectFrom(await call("diary/tree")) || {};
+        const total = Number(tree.total || 0);
+        statsEl.textContent = "已写 " + total + " 篇" + (tree.latest ? " · 最近 " + tree.latest : "");
+        document.getElementById("diaryRoot").textContent = tree.root ? "保存位置：" + tree.root + "（不参与插件备份）" : "";
+        renderDiaryTree(tree);
+      } catch (error) {
+        statsEl.textContent = "读取失败：" + (error && error.message ? error.message : "接口未就绪");
+      }
+    }
+
+    function renderDiaryTree(tree) {
+      const box = document.getElementById("diaryTree");
+      box.textContent = "";
+      const years = Array.isArray(tree.years) ? tree.years : [];
+      if (!years.length) {
+        box.innerHTML = '<div class="sub">还没有日记，点「写昨天」生成第一篇。</div>';
+        return;
+      }
+      years.forEach((year) => {
+        const yearBox = document.createElement("details");
+        yearBox.open = year === years[0];
+        const yearTitle = document.createElement("summary");
+        const count = (year.months || []).reduce((n, m) => n + ((m.days || []).length), 0);
+        yearTitle.textContent = year.year + " 年（" + count + " 篇）";
+        yearBox.appendChild(yearTitle);
+        (year.months || []).forEach((month) => {
+          const monthBox = document.createElement("details");
+          monthBox.open = year === years[0] && month === (year.months || [])[0];
+          const monthTitle = document.createElement("summary");
+          monthTitle.textContent = month.month + " 月（" + ((month.days || []).length) + " 篇）";
+          monthBox.appendChild(monthTitle);
+          (month.days || []).forEach((day) => {
+            const btn = document.createElement("button");
+            btn.className = "ghost";
+            btn.type = "button";
+            btn.style.display = "block";
+            btn.textContent = day.date + "（" + (day.chars || 0) + " 字）";
+            btn.addEventListener("click", () => readDiary(day.date));
+            monthBox.appendChild(btn);
+          });
+          yearBox.appendChild(monthBox);
+        });
+        box.appendChild(yearBox);
+      });
+    }
+
+    async function readDiary(date) {
+      const textEl = document.getElementById("diaryText");
+      document.getElementById("diaryTitle").textContent = date;
+      document.getElementById("diaryClose").hidden = false;
+      textEl.textContent = "读取中…";
+      try {
+        const data = objectFrom(await call("diary/read", { date })) || {};
+        textEl.textContent = data.text || "（这篇是空的）";
+      } catch (error) {
+        textEl.textContent = "读取失败：" + (error && error.message ? error.message : "接口未就绪");
+      }
+    }
+
+    function closeDiary() {
+      document.getElementById("diaryClose").hidden = true;
+      document.getElementById("diaryTitle").textContent = "选择一篇日记";
+      document.getElementById("diaryText").textContent = "从上面的年 / 月 / 日里点一天，就能读那天的日记。";
+    }
+
+    document.getElementById("diaryClose").addEventListener("click", closeDiary);
+    document.getElementById("diaryImport").addEventListener("click", async () => {
+      const path = window.prompt("把要导入的日记文件夹路径粘贴进来（里面要有 年/月/日 结构，或「我的日记YYYY年MM月DD日.txt」）：", "");
+      if (!path) return;
+      try {
+        const data = objectFrom(await call("diary/import", { path: path.trim() })) || {};
+        toast("已导入 " + (data.copied || 0) + " 篇（跳过 " + (data.skipped || 0) + "，失败 " + (data.failed || 0) + "）");
+        loadDiary();
+      } catch (error) {
+        toast("导入失败：" + (error && error.message ? error.message : "接口未就绪"), true);
+      }
+    });
+    document.getElementById("diaryRefresh").addEventListener("click", () => loadDiary());
+    document.getElementById("diaryOpen").addEventListener("click", async () => {
+      try {
+        const data = objectFrom(await call("diary/open")) || {};
+        toast(data.opened ? "已打开日记文件夹" : "服务器没有打开文件夹（路径：" + (data.root || "") + "）", !data.opened);
+      } catch (error) { toast("打开失败：" + error.message, true); }
+    });
+    document.getElementById("diaryWrite").addEventListener("click", async () => {
+      const date = diaryDayString(-1);
+      const button = document.getElementById("diaryWrite");
+      button.disabled = true;
+      button.textContent = "写中…";
+      try {
+        const data = objectFrom(await call("diary/write", { date })) || {};
+        toast("已写：" + (data.date || date));
+        await loadDiary();
+        await readDiary(data.date || date);
+      } catch (error) {
+        toast("写日记失败：" + (error && error.message ? error.message : "接口未就绪"), true);
+      } finally {
+        button.disabled = false;
+        button.textContent = "写昨天";
+      }
+    });
+
     async function loadUsage(force) {
       const setText = (id, text) => {
         const el = document.getElementById(id);
@@ -1622,6 +1786,7 @@
       if (name === "schedule") loadSchedule();
       if (name === "profiles") loadProfiles();
       if (name === "gift") loadGift();
+      if (name === "diary") loadDiary();
       if (name === "usage") loadUsage();
       if (name === "settings") {
         if (group) settingsGroupFilter = group;
@@ -1762,6 +1927,19 @@
       document.getElementById("pRelation").value = profile.relation || "普通";
       document.getElementById("pAffection").value = Number(profile.affection || 0);
       document.getElementById("pNotes").value = profile.notes || "";
+      const linksBox = document.getElementById("pLinks");
+      linksBox.textContent = "";
+      call("profile/links", { uid: currentProfileUid, platform: profile.platform || "" })
+        .then((res) => {
+          const links = ((res && res.data && res.data.links) || [])
+            .filter((item) => item.uid && item.uid !== currentProfileUid);
+          if (links.length) {
+            linksBox.textContent = "关联身份：" + links.map((item) =>
+              (item.label || item.platform) + " " + item.uid + (item.name ? "（" + item.name + "）" : "")
+            ).join(" · ");
+          }
+        })
+        .catch(() => {});
       document.getElementById("profileMemories").textContent = "";
       document.getElementById("profileListCard").hidden = true;
       document.getElementById("profileEditor").hidden = false;
@@ -2181,6 +2359,22 @@
       } catch (error) {}
     }
 
+    function weatherBriefText(weather) {
+      if (!weather || !weather.city) return "天气：还没取到";
+      const parts = [weather.city];
+      if (weather.text) parts.push(weather.text);
+      if (weather.temp !== undefined && weather.temp !== null && weather.temp !== "") {
+        parts.push(weather.temp + "℃");
+      }
+      if (weather.humidity) parts.push("湿度 " + weather.humidity + "%");
+      if (weather.wind) parts.push(weather.wind);
+      let text = "天气：" + parts.join(" · ");
+      if (weather.source === "simulate") {
+        text += "（模拟数据，配好和风 Key 才是真实天气）";
+      }
+      return text;
+    }
+
     function buildCityRow() {
       const row = document.createElement("div");
       row.className = "setting-row";
@@ -2196,8 +2390,12 @@
         + (current.value
           ? (currentName.value ? currentName.value + "（" + current.value + "）" : current.value)
           : "跟随日程城市");
+      const weatherLine = document.createElement("div");
+      weatherLine.className = "hint";
+      weatherLine.textContent = "天气：读取中…";
       left.appendChild(name);
       left.appendChild(hint);
+      left.appendChild(weatherLine);
       row.appendChild(left);
 
       const control = document.createElement("div");
@@ -2223,7 +2421,11 @@
             if (item.key === "weather_city_name") item.value = result.name;
           });
           input.value = "";
-          toast("已切到 " + (result.name || result.id) + "（" + result.id + "）");
+          let done = "已切到 " + (result.name || result.id) + "（" + result.id + "）";
+          if (result.weather && result.weather.temp !== undefined && result.weather.temp !== null) {
+            done += " · " + result.weather.temp + "℃" + (result.weather.text || "");
+          }
+          toast(done);
           renderSettings();
         } catch (error) {
           toast(error.message || "设置失败", true);
@@ -2242,6 +2444,12 @@
       control.appendChild(button);
       control.appendChild(list);
       row.appendChild(control);
+      call("weather/brief")
+        .then((result) => {
+          const brief = objectFrom(result) || {};
+          weatherLine.textContent = weatherBriefText(brief.weather);
+        })
+        .catch(() => { weatherLine.textContent = "天气：读取失败"; });
       return row;
     }
 
@@ -2648,9 +2856,17 @@
 
       if (legend) {
         const kinds = [...new Set(graph.links.map((link) => link.relation))];
-        legend.innerHTML = kinds.map((kind) =>
-          '<span style="display:inline-block;margin-right:10px"><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' +
-          neuronColor(kind) + ';margin-right:4px"></i>' + kind + "</span>").join("");
+        legend.textContent = "";
+        kinds.forEach((kind) => {
+          const span = document.createElement("span");
+          span.style.cssText = "display:inline-block;margin-right:10px";
+          const dot = document.createElement("i");
+          dot.style.cssText = "display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;background:" +
+            String(neuronColor(kind) || "transparent");
+          span.appendChild(dot);
+          span.appendChild(document.createTextNode(String(kind)));
+          legend.appendChild(span);
+        });
       }
 
       let width = 0, height = 0, dpr = 1;
@@ -2742,16 +2958,27 @@
 
 
     function fillNeuronSelects(profiles) {
-      const options = (profiles || []).map((item) => {
-        const uid = String(item.uid || "");
-        const name = item.name || item.alias || uid;
-        return '<option value="' + uid + '">' + name + "（" + uid + "）</option>";
-      }).join("");
+      const items = profiles || [];
       ["nRelA", "nRelB"].forEach((id) => {
         const select = document.getElementById(id);
         if (!select) return;
         const keep = select.value;
-        select.innerHTML = options || '<option value="">还没有画像</option>';
+        select.textContent = "";
+        if (!items.length) {
+          const empty = document.createElement("option");
+          empty.value = "";
+          empty.textContent = "还没有画像";
+          select.appendChild(empty);
+          return;
+        }
+        items.forEach((item) => {
+          const uid = String(item.uid || "");
+          const name = String(item.name || item.alias || uid);
+          const option = document.createElement("option");
+          option.value = uid;
+          option.textContent = name + "（" + uid + "）";
+          select.appendChild(option);
+        });
         if (keep) select.value = keep;
       });
     }

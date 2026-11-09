@@ -115,6 +115,190 @@ except Exception:
         _pg_analyze_rows = _pg_compose_task = _pg_near_duplicate = None
 
 try:
+    from .time_recall import looks_like_time_query as _looks_like_time_query, render_time_block as _render_time_block
+except Exception:
+    try:
+        from time_recall import looks_like_time_query as _looks_like_time_query, render_time_block as _render_time_block
+    except Exception:
+        def _looks_like_time_query(*args, **kwargs):
+            return False
+
+        def _render_time_block(*args, **kwargs):
+            return ""
+
+try:
+    from .diary_lines import (
+        DIARY_WRITTEN_REPLIES as _DIARY_WRITTEN,
+        DIARY_SHOW_REPLIES as _DIARY_SHOW,
+        pick_hints as _diary_pick_hints,
+    )
+except Exception:
+    try:
+        from diary_lines import (
+            DIARY_WRITTEN_REPLIES as _DIARY_WRITTEN,
+            DIARY_SHOW_REPLIES as _DIARY_SHOW,
+            pick_hints as _diary_pick_hints,
+        )
+    except Exception:
+        _DIARY_WRITTEN = ["写了", "写了，不给你看", "写了，秘密"]
+        _DIARY_SHOW = ["不行，你不能偷看我的日记哦", "那是我的日记，才不给你看", "你想得美"]
+
+        def _diary_pick_hints(items, count=8, seed=""):
+            return list(items)[:count]
+
+try:
+    from .diary_engine import (
+        DEFAULT_DIR as _DIARY_DEFAULT_DIR,
+        parse_day as _diary_parse_day,
+        build_prompt as _diary_build_prompt,
+        import_folder as _diary_import_folder,
+        write_diary as _diary_write,
+        read_diary as _diary_read,
+        list_tree as _diary_tree,
+    )
+except Exception:
+    try:
+        from diary_engine import (
+            DEFAULT_DIR as _DIARY_DEFAULT_DIR,
+            parse_day as _diary_parse_day,
+            build_prompt as _diary_build_prompt,
+            import_folder as _diary_import_folder,
+        build_prompt as _diary_build_prompt,
+            write_diary as _diary_write,
+            read_diary as _diary_read,
+            list_tree as _diary_tree,
+                )
+    except Exception:
+        _DIARY_DEFAULT_DIR = ""
+        _diary_parse_day = _diary_write = _diary_read = _diary_tree = _diary_import_folder = None
+
+try:
+    from .milestone import (
+        should_archive as _ms_should_archive,
+        transcript as _ms_transcript,
+        build_prompt as _ms_build_prompt,
+        build_content as _ms_build_content,
+    )
+except Exception:
+    try:
+        from milestone import (
+            should_archive as _ms_should_archive,
+            transcript as _ms_transcript,
+            build_prompt as _ms_build_prompt,
+            build_content as _ms_build_content,
+        )
+    except Exception:
+        def _ms_should_archive(*args, **kwargs):
+            return False
+
+        def _ms_transcript(*args, **kwargs):
+            return ""
+
+        def _ms_build_prompt(*args, **kwargs):
+            return ""
+
+        def _ms_build_content(*args, **kwargs):
+            return ""
+
+try:
+    from .wander import (
+        assess as _wander_assess,
+        ask_limit as _wander_ask_limit,
+        detect_agreement as _wander_agree,
+        detect_question as _wander_question,
+        detect_follow_invite as _follow_invite,
+        detect_follow_refuse as _follow_refuse,
+        detect_refusal as _wander_refuse,
+        follow_agree_text as _wander_follow_agree_text,
+        follow_block as _follow_block,
+        offer_block as _wander_offer_block,
+        offer_text as _wander_offer_text,
+        pick_destination as _wander_pick,
+        plan_text as _wander_plan_text,
+        solo_agree_text as _wander_solo_agree_text,
+        solo_block as _wander_solo_block,
+        solo_refuse_text as _wander_solo_refuse_text,
+        trip_days as _wander_trip_days,
+        want_travel as _wander_want,
+    )
+except Exception:
+    try:
+        from wander import (
+            assess as _wander_assess,
+            ask_limit as _wander_ask_limit,
+            detect_agreement as _wander_agree,
+            detect_question as _wander_question,
+            detect_follow_invite as _follow_invite,
+            detect_follow_refuse as _follow_refuse,
+            detect_refusal as _wander_refuse,
+            follow_agree_text as _wander_follow_agree_text,
+            follow_block as _follow_block,
+            offer_block as _wander_offer_block,
+            offer_text as _wander_offer_text,
+            pick_destination as _wander_pick,
+            plan_text as _wander_plan_text,
+            solo_agree_text as _wander_solo_agree_text,
+            solo_block as _wander_solo_block,
+            solo_refuse_text as _wander_solo_refuse_text,
+            trip_days as _wander_trip_days,
+            want_travel as _wander_want,
+        )
+    except Exception:
+        def _wander_assess(*args, **kwargs):
+            return (False, False)
+
+        def _wander_agree(*args, **kwargs):
+            return False
+
+        def _wander_question(*args, **kwargs):
+            return False
+
+        def _wander_refuse(*args, **kwargs):
+            return False
+
+        def _follow_block(*args, **kwargs):
+            return ""
+
+        def _follow_invite(*args, **kwargs):
+            return False
+
+        def _follow_refuse(*args, **kwargs):
+            return False
+
+        def _wander_follow_agree_text(*args, **kwargs):
+            return ""
+
+        def _wander_offer_block(*args, **kwargs):
+            return ""
+
+        def _wander_offer_text(*args, **kwargs):
+            return ""
+
+        def _wander_pick(*args, **kwargs):
+            return ("", [])
+
+        def _wander_plan_text(*args, **kwargs):
+            return ""
+
+        def _wander_ask_limit(*args, **kwargs):
+            return 1
+
+        def _wander_solo_agree_text(*args, **kwargs):
+            return ""
+
+        def _wander_solo_block(*args, **kwargs):
+            return ""
+
+        def _wander_solo_refuse_text(*args, **kwargs):
+            return ""
+
+        def _wander_trip_days(*args, **kwargs):
+            return 1
+
+        def _wander_want(*args, **kwargs):
+            return False
+
+try:
     from .memory_hooks import MemoryHub, render_recent_block
 except Exception:
     try:
@@ -146,6 +330,54 @@ except Exception:
         from relation_learn import parse_relations
     except Exception:
         parse_relations = None
+
+try:
+    from .city_follow import (
+        DEFAULT_CITY as _CITY_DEFAULT,
+        detect_city as _city_detect,
+        compose_block as _city_block,
+        travel_block as _city_travel_block,
+        travel_events as _city_travel_events,
+        travel_action as _city_travel_action,
+        travel_to_events as _city_travel_to_events,
+        pick_spots as _city_pick_spots,
+    )
+except Exception:
+    try:
+        from city_follow import (
+            DEFAULT_CITY as _CITY_DEFAULT,
+            detect_city as _city_detect,
+            compose_block as _city_block,
+            travel_block as _city_travel_block,
+            travel_events as _city_travel_events,
+            travel_action as _city_travel_action,
+            travel_to_events as _city_travel_to_events,
+            pick_spots as _city_pick_spots,
+        )
+    except Exception:
+        _CITY_DEFAULT = "东莞"
+
+        def _city_pick_spots(*args, **kwargs):
+            return []
+
+        def _city_travel_to_events(*args, **kwargs):
+            return []
+
+        def _city_travel_action(*args, **kwargs):
+            return "none"
+
+        def _city_detect(*args, **kwargs):
+            return None
+
+        def _city_block(*args, **kwargs):
+            return ""
+
+        def _city_travel_block(*args, **kwargs):
+            return ""
+
+        def _city_travel_events(*args, **kwargs):
+            return []
+
 
 try:
     from .relation_graph import rank_edges as _rank_edges
@@ -1406,7 +1638,8 @@ class AmoDB:
                     proactive_day TEXT DEFAULT '',
                     proactive_count INTEGER DEFAULT 0,
                     relation_at REAL DEFAULT 0,
-                    is_admin INTEGER DEFAULT 0
+                    is_admin INTEGER DEFAULT 0,
+                    profile_updated_at REAL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1466,6 +1699,11 @@ class AmoDB:
                 if "relation_at" not in cols:
                     self.conn.execute("ALTER TABLE profiles ADD COLUMN relation_at REAL DEFAULT 0")
                     self.conn.execute("UPDATE profiles SET relation_at=last_seen WHERE relation_at=0")
+                    self.conn.commit()
+                if "profile_updated_at" not in cols:
+                    # 画像最后一次「本地手动修改」的时间：面板/命令改画像才更新，
+                    # 收消息刷新 last_seen 不算，否则面板改完聊一句就被本地旧值覆盖。
+                    self.conn.execute("ALTER TABLE profiles ADD COLUMN profile_updated_at REAL DEFAULT 0")
                     self.conn.commit()
             except Exception:
                 pass
@@ -1562,7 +1800,7 @@ class AmoDB:
             row = self.conn.execute("SELECT * FROM profiles WHERE uid=?", (uid,)).fetchone()
         return dict(row) if row else {}
 
-    def update_profile(self, uid, **fields):
+    def update_profile(self, uid, mark_local=True, **fields):
         allowed = ("name", "alias", "birthday", "relation", "notes",
                    "affection", "is_admin")
         updates = []
@@ -1573,6 +1811,9 @@ class AmoDB:
                 values.append(value)
         if "relation" in fields:
             updates.append("relation_at=?")
+            values.append(now_ts())
+        if mark_local:
+            updates.append("profile_updated_at=?")
             values.append(now_ts())
         if not updates:
             return False
@@ -2039,6 +2280,14 @@ class AmoDB:
             self.conn.execute("DELETE FROM schedule_diary WHERE day=?", (str(day),))
             self.conn.commit()
 
+    def clear_diaries_from(self, day, hour):
+        """只清某个小时及以后的小日记（换城覆盖日程时用，过去的留着）。"""
+        with self.lock:
+            self.conn.execute(
+                "DELETE FROM schedule_diary WHERE day=? AND hour>=?", (str(day), str(hour))
+            )
+            self.conn.commit()
+
     def purge_diaries(self, days=30):
         cutoff = (date.today() - timedelta(days=max(1, int(days)))).isoformat()
         with self.lock:
@@ -2409,6 +2658,22 @@ class HumanState:
 
         return await asyncio.to_thread(_do)
 
+    def _location_of(self, city):
+        """中文城市名换成 LocationID；数字/坐标/空值原样返回。
+
+        注意：这两个取天气的方法在 HumanState 上，不能调插件的 `_city_lookup`，
+        所以直接用离线表模块的纯函数，模块不在就原样交给上层。
+        """
+        try:
+            try:
+                from .amo_city_index import city_location
+            except Exception:
+                from amo_city_index import city_location
+            return city_location(city)
+        except Exception as exc:
+            logger.debug("[amo] 城市名解析失败: %s" % exc)
+            return str(city or "").strip()
+
     async def _fetch_qweather(self, key, city):
         host = self._weather_base_url(self.p.cfg_str("weather_host", ""))
         if not host:
@@ -2425,13 +2690,10 @@ class HumanState:
                 geo_base += "/geo/v2"
         else:
             geo_base = host + "/geo/v2"
-        location = str(city)
-        if not location.isdigit():
-            hit = self._city_lookup(location)
-            if hit:
-                location = str(hit["id"])
+        location = self._location_of(city)
         try:
-            if not location.isdigit():
+            # 坐标（经度,纬度）和风直接吃，别再去 GeoAPI 换 ID（那会 403）
+            if not location.isdigit() and "," not in location:
                 geo = await self._qweather_get(
                     geo_base + "/city/lookup", {"location": location, "number": 1}
                 )
@@ -2492,13 +2754,10 @@ class HumanState:
                 geo_base += "/geo/v2"
         else:
             geo_base = host + "/geo/v2"
-        location = str(city)
-        if not location.isdigit():
-            hit = self._city_lookup(location)
-            if hit:
-                location = str(hit["id"])
+        location = self._location_of(city)
         try:
-            if not location.isdigit():
+            # 坐标（经度,纬度）和风直接吃，别再去 GeoAPI 换 ID（那会 403）
+            if not location.isdigit() and "," not in location:
                 geo = await self._qweather_get(
                     geo_base + "/city/lookup", {"location": location, "number": 1}
                 )
@@ -2546,6 +2805,9 @@ class HumanState:
             force = True
         if not force and current.get("ts") and now_ts() - current["ts"] < 1800:
             return current
+        # 刚刷过就别再打接口（双击「设置」、面板刷新和后台 tick 撞车）
+        if force and current.get("ts") and now_ts() - to_float(current["ts"], 0) < 3:
+            return current
         old_tag = current.get("tag")
         data = None
         if key:
@@ -2569,6 +2831,22 @@ class HumanState:
             weather.get("city", ""), weather.get("text", ""),
             weather.get("temp", ""), weather.get("humidity", ""), weather.get("wind", ""),
         )
+
+    def weather_brief(self):
+        """面板用的一行天气摘要（只读缓存，不请求和风）。"""
+        weather = self.weather or {}
+        if not weather:
+            return {}
+        return {
+            "city": str(weather.get("city") or ""),
+            "text": str(weather.get("text") or ""),
+            "temp": weather.get("temp"),
+            "humidity": weather.get("humidity"),
+            "wind": str(weather.get("wind") or ""),
+            "tag": str(weather.get("tag") or ""),
+            "source": str(weather.get("source") or ""),
+            "ts": to_float(weather.get("ts"), 0),
+        }
 
     # ---------- 世界观 ----------
     def _fallback_world(self):
@@ -2897,7 +3175,280 @@ class HumanState:
         logger.info("[amo] 生成日程主干 %s：%s" % (
             today, (context or {}).get("event", {}).get("kind", "none"),
         ))
+        try:
+            travel = self.db.kv_get("travel", {}) or {}
+            if isinstance(travel, dict) and str(travel.get("city") or "").strip():
+                city = str(travel["city"])
+                start_day = str(travel.get("start_day") or "")
+                today = today_str()
+                if start_day and today < start_day:
+                    pass
+                elif today == start_day and travel.get("phase") == "journey":
+                    try:
+                        start_hour = int(travel.get("start_hour") or 9)
+                    except (TypeError, ValueError):
+                        start_hour = 9
+                    rows = [x for x in (travel.get("spots") or []) if isinstance(x, dict)]
+                    self.apply_follow_start(city, start_hour, rows, keep_past=False)
+                    self.db.kv_set("his_city", city)
+                    if travel.get("id"):
+                        try:
+                            await self.p._switch_weather_city({
+                                "id": str(travel["id"]), "name": city,
+                            })
+                        except Exception as exc:
+                            logger.debug("[amo] 跟随天气切换失败: %s" % exc)
+                    travel["phase"] = "touring"
+                    self.db.kv_set("travel", travel)
+                else:
+                    self.apply_travel_overlay(city)
+                    self._log_follow_day(city, today)
+        except Exception as exc:
+            logger.debug("[amo] 出行日程覆盖失败: %s" % exc)
+        try:
+            trip = self.db.kv_get("wander_trip", {}) or {}
+            if isinstance(trip, dict) and trip.get("city"):
+                city = str(trip["city"])
+                start_day = str(trip.get("day") or "")
+                ret_day = str(trip.get("return_day") or start_day)
+                today = today_str()
+                if start_day and today < start_day:
+                    pass
+                elif today == start_day:
+                    self.apply_travel_overlay(city)
+                    trip["phase"] = "applied"
+                    self.db.kv_set("wander_trip", trip)
+                    self._log_solo_day(city, today)
+                    if trip.get("id"):
+                        try:
+                            await self.p._switch_weather_city({
+                                "id": str(trip["id"]), "name": city,
+                            })
+                        except Exception as exc:
+                            logger.debug("[amo] 旅游天气切换失败: %s" % exc)
+                elif start_day < today < ret_day:
+                    self.apply_travel_overlay(city)
+                    self._log_solo_day(city, today)
+                elif today == ret_day:
+                    until = int(trip.get("return_hour") or 12)
+                    self.apply_return_overlay(city, until)
+                    self._log_solo_day(city, today)
+                    if datetime.now().hour >= until:
+                        his = str(self.db.kv_get("his_city", "") or "").strip() or _CITY_DEFAULT
+                        hit = self.p._city_lookup(his)
+                        if hit:
+                            try:
+                                await self.p._switch_weather_city(hit)
+                            except Exception:
+                                pass
+                elif today > ret_day:
+                    self.db.kv_set("wander_trip", {})
+                    his = str(self.db.kv_get("his_city", "") or "").strip() or _CITY_DEFAULT
+                    hit = self.p._city_lookup(his)
+                    if hit:
+                        try:
+                            await self.p._switch_weather_city(hit)
+                        except Exception:
+                            pass
+                    self.apply_travel_overlay(his)
+                    try:
+                        rows = self.db.list_profiles(limit=1) or []
+                        uid = str((rows[0] or {}).get("uid") or "") if rows else ""
+                        if uid:
+                            self.p._external_memory_write(
+                                uid, "她 %s 从 %s 旅游回来了" % (today, city), "event", 1,
+                            )
+                    except Exception as exc:
+                        logger.debug("[amo] 回来记忆失败: %s" % exc)
+        except Exception as exc:
+            logger.debug("[amo] 旅游行程推进失败: %s" % exc)
         return items
+
+    def _log_solo_day(self, city, day):
+        """旅游每天记一条（日记用）；同一天只记一次。"""
+        try:
+            log = self.db.kv_get("travel_log", []) or []
+            if not isinstance(log, list):
+                log = []
+            if any(
+                isinstance(x, dict) and x.get("day") == day and x.get("solo") and not x.get("back")
+                for x in log
+            ):
+                return
+            log.append({"day": day, "hour": "09:00", "city": city, "solo": True})
+            self.db.kv_set("travel_log", log[-10:])
+        except Exception:
+            pass
+
+    def apply_follow_start(self, city, start_hour=9, spots=None, keep_past=True):
+        """跟去他那边的出发日：起床 → 出门坐车约 2 小时 → 到达 → 旅游。"""
+        name = str(city or "").strip()
+        if not name:
+            return False
+        if not self.p.cfg_bool("city_travel_schedule", True):
+            return False
+        today = today_str()
+        try:
+            start = max(0, min(21, int(start_hour or 9)))
+        except (TypeError, ValueError):
+            start = 9
+        existing = self.schedule.get(today) or self.db.get_schedule(today) or []
+        keep = []
+        if keep_past:
+            for item in existing:
+                try:
+                    hour = int(str(item.get("start") or "0")[:2])
+                except Exception:
+                    hour = 0
+                if hour < start:
+                    keep.append(item)
+        items = _city_travel_to_events(
+            name, start, spots=spots, weekday=date.today().weekday() < 5, seed=today,
+        )
+        if keep_past:
+            items = [x for x in items if int(str(x.get("start") or "0")[:2]) >= start]
+        merged = keep + items
+        if not merged:
+            return False
+        self.schedule[today] = merged
+        self.db.save_schedule(today, merged)
+        self.db.kv_set("schedule", self.schedule)
+        try:
+            ctx = dict(self.schedule_ctx.get(today) or {})
+            if ctx:
+                ctx["city"] = name
+                ctx["location"] = name
+                ctx["home"] = "他桌面上"
+                ctx["workplace"] = "（在去" + name + "的路上）"
+                self.schedule_ctx[today] = ctx
+                self.db.kv_set("schedule_ctx", self.schedule_ctx)
+        except Exception:
+            pass
+        try:
+            if keep_past:
+                self.db.clear_diaries_from(today, "%02d:00" % start)
+            else:
+                self.db.clear_diaries(today)
+        except Exception:
+            pass
+        logger.info("[amo] 出发日日程：%s 点坐车去 %s" % (start, name))
+        return True
+
+    def _log_follow_day(self, city, day):
+        """跟他旅游的每一天记一条（日记用）；同一天只记一次。"""
+        try:
+            log = self.db.kv_get("travel_log", []) or []
+            if not isinstance(log, list):
+                log = []
+            if any(
+                isinstance(x, dict) and x.get("day") == day and x.get("city") == city
+                and not x.get("solo") and not x.get("back") and not x.get("journey")
+                for x in log
+            ):
+                return
+            log.append({"day": day, "hour": "09:00", "city": city})
+            self.db.kv_set("travel_log", log[-10:])
+        except Exception:
+            pass
+
+    def apply_return_overlay(self, city, until_hour=12):
+        """旅游最后一天：0 点到 until_hour 在旅游城市，之后回家。"""
+        name = str(city or "").strip()
+        if not name:
+            return False
+        try:
+            until = max(0, min(23, int(until_hour or 12)))
+        except (TypeError, ValueError):
+            until = 12
+        today = today_str()
+        spots = []
+        try:
+            spots = _city_pick_spots(self.p.scenic_spots(), name, today)
+        except Exception:
+            spots = []
+        his = str(self.db.kv_get("his_city", "") or "").strip() or _CITY_DEFAULT
+        items = _city_travel_events(name, 0, spots=spots, until_hour=until)
+        items += _city_travel_events(his, until, home=True)
+        if not items:
+            return False
+        self.schedule[today] = items
+        self.db.save_schedule(today, items)
+        self.db.kv_set("schedule", self.schedule)
+        try:
+            self.db.clear_diaries(today)
+        except Exception:
+            pass
+        logger.info("[amo] 旅游最后一天：%s 点前在 %s，之后回家" % (until, name))
+        return True
+
+    def apply_travel_overlay(self, city=None):
+        """出行覆盖层：把今天剩下的日程换成「跟他一起在 X」（已过去的时段不动）。
+
+        只在换城时调用；写库 + 清掉今天剩余时段的小日记，让它们按新日程重算。
+        """
+        travel = self.db.kv_get("travel", {}) or {}
+        name = str(city or (travel.get("city") if isinstance(travel, dict) else "") or "").strip()
+        if not name:
+            return False
+        if not self.p.cfg_bool("city_travel_schedule", True):
+            return False
+        today = today_str()
+        from_hour = datetime.now().hour
+        home = name == _CITY_DEFAULT
+        existing = self.schedule.get(today) or self.db.get_schedule(today) or []
+        if not existing:
+            from_hour = 0
+        if home and from_hour >= 22:
+            logger.info("[amo] 超过 22 点才回去，今晚住酒店，今天日程不再改")
+            return False
+        keep = []
+        for item in existing:
+            try:
+                hour = int(str(item.get("start") or "0")[:2])
+            except Exception:
+                hour = 0
+            if hour < from_hour:
+                keep.append(item)
+        spots = []
+        if not home:
+            try:
+                spots = _city_pick_spots(self.p.scenic_spots(), name, today)
+            except Exception as exc:
+                logger.debug("[amo] 出行景点挑选失败: %s" % exc)
+        merged = keep + _city_travel_events(
+            name, from_hour, home=home, weekday=date.today().weekday() < 5, spots=spots,
+        )
+        if not merged:
+            return False
+        self.schedule[today] = merged
+        self.db.save_schedule(today, merged)
+        self.db.kv_set("schedule", self.schedule)
+        try:
+            ctx = dict(self.schedule_ctx.get(today) or {})
+            if ctx:
+                ctx["city"] = name
+                ctx["location"] = name
+                if home:
+                    ctx["home"] = "他桌面上"
+                    ctx["workplace"] = str((self.schedule_profile or {}).get("workplace") or "")
+                    ctx.pop("scenic", None)
+                else:
+                    ctx["home"] = name + "·酒店房间"
+                    ctx["workplace"] = "（旅游中，不上班）"
+                    if spots:
+                        ctx["scenic"] = spots[0]
+                self.schedule_ctx[today] = ctx
+                self.db.kv_set("schedule_ctx", self.schedule_ctx)
+        except Exception:
+            pass
+        try:
+            self.db.clear_diaries_from(today, "%02d:00" % from_hour)
+        except Exception:
+            pass
+        logger.info("[amo] 出行日程已写入：%s 起在 %s%s" % (
+            "%02d:00" % from_hour, name, "（回家）" if home else "",
+        ))
+        return True
 
     def schedule_context(self, day=None):
         day = str(day or today_str())
@@ -3438,6 +3989,21 @@ class LLMService:
             relation_network = ""
         if relation_network:
             system = system + "\n【关系网】\n" + relation_network
+        try:
+            trip = self.p.db.kv_get("wander_trip", {}) or {}
+            if (
+                isinstance(trip, dict) and trip.get("city") and not trip.get("announced")
+                and str(trip.get("day") or "") <= today_str() <= str(trip.get("return_day") or "")
+            ):
+                spots = trip.get("spots") or []
+                spot = str(spots[0]) if spots else ""
+                system = system + (
+                    "\n【旅游中】你现在一个人在 " + str(trip["city"]) + " 旅游"
+                    + ("，今天去了" + spot if spot else "")
+                    + "。主动跟他分享今天看到的、吃到的、天气；别报公司/上班，也别编景点。"
+                )
+        except Exception:
+            pass
 
         def build_task(duplicate_hint=""):
             if not _pg_compose_task:
@@ -3490,6 +4056,7 @@ class LLMService:
             "只从 [他] 开头的行里提取；[我] 开头的内容是角色自己的事，不能算成用户的事实。\n"
             "只提取值得长期记住的内容：名字、生日、喜好、厌恶、居住地、工作或学校、"
             "宠物、年龄、重要计划、重要经历。\n"
+            "位置类事实统一写成「他现在在X」；只有他明确说了搬/住/定居，才写「他住在X」。\n"
             "输出 JSON 数组，每项包含 content(一句话事实)、kind(name/birthday/preference/place/work/pet/age/event)、"
             "tier(0 普通 / 1 重要 / 2 珍贵)。没有可提取的就输出 []。\n\n"
             "聊天记录：\n" + "\n".join(lines[-20:])
@@ -3781,6 +4348,28 @@ class ReplyGate:
 # 插件主体
 # ---------------------------------------------------------------------------
 
+# 面板写操作路由：只注册 POST + 套 _web_guard。
+# 以前守卫按「methods 里有没有 GET」判断，而写接口全被注册成 GET+POST，于是守卫一次都没执行过。
+WRITE_ROUTES = frozenset({
+    "/config/save", "/config_save",
+    "/profile/save", "/profile_save",
+    "/profile/delete", "/profile_delete",
+    "/relation/save", "/relation_save",
+    "/relation/delete", "/relation_delete",
+    "/memory/add", "/memory_add",
+    "/memory/delete", "/memory_delete",
+    "/mood/update", "/mood_update",
+    "/schedule/regen", "/schedule_regen",
+    "/kb/regen", "/kb_regen",
+    "/scenic_kb/regen", "/scenic_kb_regen",
+    "/worldview/regen", "/worldview_regen",
+    "/say",
+    "/city/set",
+    "/diary/write", "/diary/import", "/diary/open",
+    "/refresh_status",
+})
+
+
 class HumanCorePlugin(Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
@@ -3838,6 +4427,13 @@ class HumanCorePlugin(Star):
         self._init_lock = asyncio.Lock()
         self._running = True
         self._tasks = set()
+        # 数据插件（Astr_Amo_data）可能比 amo 后加载：用这几个标记做一次性补同步，不轮询
+        self._data_synced = False
+        self._data_sync_lock = asyncio.Lock()
+        self._last_data_sync_try = 0.0
+        self._data_found_logged = False
+        self._data_missing_logged = False
+        self._data_warn_scheduled = False
         self._group_times = {}
         self._buffers = {}
         self._private_buffers = {}
@@ -3856,10 +4452,7 @@ class HumanCorePlugin(Star):
         self._config_mtime = 0.0
         self._register_web_apis()
         logger.info("[amo] 我想永远陪伴你 %s loaded; stale web routes purged" % PLUGIN_VERSION)
-        try:
-            self._boot_task = asyncio.create_task(self._ensure_ready())
-        except RuntimeError:
-            self._boot_task = None
+        self._boot_task = self._spawn(self._ensure_ready())
 
     # ---------- 配置 ----------
     def cfg(self, key, default=None):
@@ -4385,10 +4978,27 @@ class HumanCorePlugin(Star):
             return True
         return any(prefix and text.startswith(prefix) for prefix in self._command_prefixes())
 
+    _on_astrbot_loaded_hook = getattr(filter, "on_astrbot_loaded", None)
+
+    if _on_astrbot_loaded_hook is not None:
+        @_on_astrbot_loaded_hook()
+        async def on_astrbot_loaded(self):
+            """所有插件加载完：数据插件要是比 amo 后加载，这里补做一次同步。"""
+            try:
+                await self._ensure_ready()
+                if not self._data_synced and self._data_connected():
+                    await self._sync_with_data_plugin()
+            except Exception as exc:
+                logger.debug("[amo] 加载完成补同步失败: %s" % exc)
+
     def _spawn(self, coro):
         try:
             task = asyncio.create_task(coro)
         except RuntimeError:
+            try:
+                coro.close()
+            except Exception:
+                pass
             return None
         self._tasks.add(task)
 
@@ -4782,7 +5392,10 @@ class HumanCorePlugin(Star):
         if self.cfg_bool("local_chat_cache", False):
             self.db.add_message(umo, uid, name, "user", text)
         try:
-            await self._data_call("add_message", self._data_bot_id(), umo, uid, name, "user", text, platform=self._platform_of(event))
+            await self._data_call(
+                "add_message", self._data_bot_id(), umo, uid, name, "user", text,
+                platform=self._platform_of(event), message_id=self._event_message_id(event),
+            )
         except Exception as exc:
             logger.debug("[amo] 聊天记录同步失败: %s" % exc)
 
@@ -5698,6 +6311,35 @@ class HumanCorePlugin(Star):
         plugin = self._data_plugin()
         return getattr(plugin, "store", None) if plugin is not None else None
 
+    def _data_connected(self):
+        """数据插件此刻在不在：只看内存里的插件表，不读库、不联网。"""
+        plugin = self._data_plugin()
+        if plugin is None:
+            return False
+        return getattr(plugin, "mem", None) is not None or getattr(plugin, "store", None) is not None
+
+    def _note_data_missing(self):
+        """第一次没找到数据插件：记一次日志，并在 60 秒后再确认一次（只提醒一次）。"""
+        if not self._data_missing_logged:
+            self._data_missing_logged = True
+            logger.info("[amo] 未检测到数据插件 Astr_Amo_data，继续用本地库（装好后面板数据为空是正常的）")
+        if not self._data_warn_scheduled:
+            self._data_warn_scheduled = True
+            self._spawn(self._warn_data_missing_later())
+
+    async def _warn_data_missing_later(self, delay=60.0):
+        """启动 60 秒后还没连上数据插件，才升级成一条 warning；连上就不打。"""
+        try:
+            await asyncio.sleep(max(1.0, float(delay)))
+        except asyncio.CancelledError:
+            return
+        if not self._running or self._data_synced or self._data_connected():
+            return
+        logger.warning(
+            "[amo] 数据插件未连接：去「插件」页看 Astr_Amo_data 是不是被停用/加载报错；"
+            "装好后 5 分钟内会自动接上，不用重启"
+        )
+
     def _data_bot_id(self):
         return str(self.cfg_str("data_bot_id", "") or self.bot_name or "default")
 
@@ -5737,6 +6379,19 @@ class HumanCorePlugin(Star):
             return "这里"
         return self.PLATFORM_LABELS.get(key, str(platform).strip())
 
+    @staticmethod
+    def _event_message_id(event):
+        """取平台消息 id（QQ 的 message_id / 飞书的 event id），用于聊天记录去重。"""
+        for holder in (getattr(event, "message_obj", None), event):
+            for attr in ("message_id", "msg_id", "id"):
+                try:
+                    value = getattr(holder, attr, None)
+                except Exception:
+                    value = None
+                if value not in (None, "", 0):
+                    return str(value)[:128]
+        return ""
+
     async def _data_call(self, name, *args, **kwargs):
         mem = self._data_mem()
         if mem is None:
@@ -5745,12 +6400,18 @@ class HumanCorePlugin(Star):
         if not callable(func):
             return None
         try:
-            return await func(*args, **kwargs)
+            return await asyncio.wait_for(
+                func(*args, **kwargs),
+                timeout=max(1.0, self.cfg_float("data_call_timeout_seconds", 15.0)),
+            )
+        except asyncio.TimeoutError:
+            logger.warning("[amo] 数据插件 %s 调用超时，先跳过（不影响这轮回复）" % name)
+            return None
         except TypeError:
-            # 数据插件是旧版（还没有 platform 参数）时退一步，别把聊天记录整个丢掉
-            if "platform" in kwargs:
+            # 数据插件是旧版（还没有 platform / message_id 参数）时退一步，别把聊天记录整个丢掉
+            trimmed = {k: v for k, v in kwargs.items() if k not in ("platform", "message_id")}
+            if trimmed != kwargs:
                 try:
-                    trimmed = {k: v for k, v in kwargs.items() if k != "platform"}
                     return await func(*args, **trimmed)
                 except Exception as exc:
                     logger.debug("[amo] 数据插件 %s 调用失败: %s" % (name, exc))
@@ -5846,11 +6507,21 @@ class HumanCorePlugin(Star):
             except Exception:
                 continue
         # 面板上删掉的关系，本地也同步删掉（终端为准）；
-        # 终端返回空时不删，避免插件没就绪时把本地关系网清空
-        if not remote:
+        # 终端返回空、或远端的边比本地还少时都不删——那多半是换库/重装/恢复残缺备份，
+        # 照删一次就能把本地关系网清空（之后还得靠聊天慢慢沉淀）。
+        try:
+            local_rows = self.db.list_relations()
+        except Exception:
+            local_rows = []
+        if not remote or len(remote) < len(local_rows):
+            if remote:
+                logger.warning(
+                    "[amo] 关系网不同步：远端 %d 条 < 本地 %d 条，先不删本地"
+                    % (len(remote), len(local_rows))
+                )
             return count
         try:
-            for item in self.db.list_relations():
+            for item in local_rows:
                 pair = tuple(sorted([str(item.get("a_uid") or ""), str(item.get("b_uid") or "")]))
                 if pair not in remote:
                     self.db.delete_relation(pair[0], pair[1])
@@ -5896,6 +6567,7 @@ class HumanCorePlugin(Star):
                 remote[uid] = row
         pushed = 0
         failed = 0
+        pulled = 0
         for profile in local:
             if not isinstance(profile, dict):
                 continue
@@ -5915,11 +6587,14 @@ class HumanCorePlugin(Star):
                     and str(old.get("remark") or "") == remark
                 ):
                     continue
-                # 面板刚改过（数据插件里更新时间比本地最后活跃还新）就别用本地覆盖它，
-                # 稍后拉取那一步会把面板的改动写回本地。
+                # 数据插件里更新过（面板手动改了名字/关系）就以远端为准，拉回本地。
+                # 比较基准是 profile_updated_at（本地手动改画像的时间），不是 last_seen：
+                # last_seen 每收一条消息都会刷新，拿它比会把面板改动永远判成「更旧」。
                 remote_at = to_float(old.get("updated_at"), 0)
-                local_at = to_float(profile.get("last_seen"), 0)
+                local_at = to_float(profile.get("profile_updated_at"), 0)
                 if remote_at and remote_at > local_at:
+                    if self._apply_remote_profile(uid, old, profile):
+                        pulled += 1
                     continue
             try:
                 ok = await self._push_profile_to_data(uid, profile)
@@ -5945,8 +6620,8 @@ class HumanCorePlugin(Star):
                     after = []
         total = max(len(after), len(remote))
         message = (
-            "[amo] 画像同步：本地 %d 条 / 数据插件 %d 条，本次补推 %d 条，失败 %d 条"
-            % (len(local), total, pushed, failed)
+            "[amo] 画像同步：本地 %d 条 / 数据插件 %d 条，本次补推 %d 条，拉回 %d 条，失败 %d 条"
+            % (len(local), total, pushed, pulled, failed)
         )
         if failed:
             logger.warning(message)
@@ -5960,6 +6635,51 @@ class HumanCorePlugin(Star):
         else:
             logger.debug(message)
         return pushed
+
+    def _apply_remote_profile(self, uid, remote_row, local_profile):
+        """把数据插件面板改过的画像字段拉回本地（不标记成本地手动修改）。"""
+        fields = {}
+        for src, dst in (("name", "name"), ("alias", "alias"), ("relation", "relation"), ("remark", "notes")):
+            value = str(remote_row.get(src) or "").strip()
+            if value and value != str(local_profile.get(dst) or "").strip():
+                fields[dst] = value
+        if not fields:
+            return False
+        try:
+            self.db.update_profile(uid, mark_local=False, **fields)
+        except Exception as exc:
+            logger.warning("[amo] 拉回画像 %s 失败: %s" % (uid, exc))
+            return False
+        logger.info("[amo] 画像从数据插件拉回：%s %s" % (uid, ",".join(fields.keys())))
+        return True
+
+    async def _time_recall_context(self, event, uid):
+        """按时间回看：他问"昨天下午/前天/上周三"时，去记忆终端取那段时间的聊天。"""
+        if not self.cfg_bool("time_recall_enabled", True):
+            return ""
+        text = str(getattr(event, "message_str", "") or "")
+        if not _looks_like_time_query(text):
+            return ""
+        mem = self._data_mem()
+        if mem is None or not callable(getattr(mem, "recall_messages", None)):
+            return ""
+        try:
+            umo = str(getattr(event, "unified_msg_origin", "") or "")
+            limit = self.cfg_int("time_recall_limit", 6)
+            result = await self._data_call(
+                "recall_messages", self._data_bot_id(), query=text, umo=umo,
+                uid=str(uid), limit=max(4, min(int(limit) * 2, 40)),
+            )
+        except Exception as exc:
+            logger.debug("[amo] 时间回看失败: %s" % exc)
+            return ""
+        if not isinstance(result, dict):
+            return ""
+        messages = result.get("messages") or []
+        label = str(result.get("label") or "")
+        if not label:
+            return ""
+        return _render_time_block(label, messages, max_lines=max(1, int(limit)))
 
     async def _cross_platform_context(self, event, uid):
         """同一个人的其他平台（QQ / 飞书）说过什么，拼成一段给提示词用。"""
@@ -6007,6 +6727,10 @@ class HumanCorePlugin(Star):
         return "\n".join(lines)
 
     async def _push_relation_to_data(self, a_uid, b_uid, relation, note=""):
+        # "bot"/"self" 是插件内部标识，不是真实人物：写进记忆终端会让关系图多出一个
+        # 叫 bot 的节点，所以只推真实的人与人之间的关系。
+        if str(a_uid) in ("bot", "self") or str(b_uid) in ("bot", "self"):
+            return
         await self._data_call(
             "save_relation", self._data_bot_id(), str(a_uid), str(b_uid),
             str(relation or "朋友"), str(note or ""),
@@ -6121,14 +6845,26 @@ class HumanCorePlugin(Star):
         return bool(result)
 
     async def _sync_with_data_plugin(self):
-        """启动时双向同步：首次把本地画像/关系/日程缓存推过去，之后以插件为准补齐本地。"""
+        """启动时双向同步：首次把本地画像/关系/日程缓存推过去，之后以插件为准补齐本地。
+
+        数据插件（Astr_Amo_data）可能比 amo 后加载，所以允许重试：
+        - 本实例只成功同步一次（_data_synced），之后所有调用直接返回，不重复推送；
+        - 启动、on_astrbot_loaded、后台 tick 三处可能同时来，用锁串行，避免重复迁移。
+        """
+        if self._data_synced:
+            return
+        async with self._data_sync_lock:
+            if self._data_synced:
+                return
+            await self._sync_with_data_plugin_once()
+
+    async def _sync_with_data_plugin_once(self):
+        """真正干活的同步；没找到数据插件就只记一笔、安排 60 秒后的一次提醒。"""
         mem = self._data_mem()
         if mem is None and self._data_store() is None:
-            if not getattr(self, "_data_missing_logged", False):
-                self._data_missing_logged = True
-                logger.info("[amo] 未检测到数据插件 Astr_Amo_data，继续用本地库（装好后面板数据为空是正常的）")
+            self._note_data_missing()
             return
-        if not getattr(self, "_data_found_logged", False):
+        if not self._data_found_logged:
             self._data_found_logged = True
             logger.info("[amo] 已连接数据插件 Astr_Amo_data，开始同步")
         bot_id = self._data_bot_id()
@@ -6181,24 +6917,18 @@ class HumanCorePlugin(Star):
                     continue
                 local = self.db.get_profile(uid) or {}
                 if not local:
-                    self.db.touch_profile(uid, str(row.get("name") or ""), "amo_data", "", "", True)
+                    self.db.touch_profile(uid, str(row.get("name") or ""), "", "", "", True)
                     local = self.db.get_profile(uid) or {}
                 # 只有数据插件里的这条更新（面板改过）才覆盖本地，否则以本地为准，
                 # 免得上一条自动改名被旧值顶回去、来回打架。
                 try:
                     remote_at = to_float(row.get("updated_at"), 0)
-                    local_at = to_float(local.get("last_seen"), 0)
+                    local_at = to_float(local.get("profile_updated_at"), 0)
                 except Exception:
                     remote_at = local_at = 0
                 if remote_at and remote_at <= local_at:
                     continue
-                fields = {}
-                for src, dst in (("name", "name"), ("alias", "alias"), ("relation", "relation"), ("remark", "notes")):
-                    value = str(row.get(src) or "").strip()
-                    if value and value != str(local.get(dst) or "").strip():
-                        fields[dst] = value
-                if fields:
-                    self.db.update_profile(uid, **fields)
+                self._apply_remote_profile(uid, row, local)
         except Exception as exc:
             logger.debug("[amo] 拉取画像失败: %s" % exc)
         # 日程/世界观缓存：本地空的才用插件的
@@ -6215,6 +6945,9 @@ class HumanCorePlugin(Star):
                         setattr(self.state, attr, value)
             except Exception:
                 continue
+        # 到这里才算这次启动真的同步完了：以后不再探测、不再重复推
+        self._data_synced = True
+        self._data_missing_logged = False
 
     def _memory_plugin_target(self):
         """能提供检索的对象：优先插件的 service，其次插件本身。"""
@@ -6277,13 +7010,9 @@ class HumanCorePlugin(Star):
             coro = None
             try:
                 coro = self._data_memory_write(uid, content, kind, tier)
-                asyncio.get_running_loop().create_task(coro)
-                logger.debug("[amo] 记忆已交给记忆终端: %s" % content[:40])
-                return True
-            except RuntimeError:
-                # 没有事件循环：交给后面的外挂插件路径，别把这条记忆吞掉
-                if coro is not None:
-                    coro.close()
+                if self._spawn(coro) is not None:
+                    logger.debug("[amo] 记忆已交给记忆终端: %s" % content[:40])
+                    return True
             except Exception as exc:
                 if coro is not None:
                     coro.close()
@@ -7415,8 +8144,28 @@ class HumanCorePlugin(Star):
                 label = "珍贵" if tier >= 2 else ("重要" if tier == 1 else "普通")
             who = str(item.get("name") or "").strip()
             prefix = (who + "：") if (who and source in ("hub", "amo_data")) else ""
-            lines.append("· " + prefix + str(item.get("content", "")) + "（" + label + "）")
-        return memories, "\n".join(lines)
+            # 老记忆里常有"今天/昨晚/刚才"这种相对说法：注入时补一个记录日期，
+            # 免得她把 11-04 的事当成"昨晚"（用户反馈过一次）。
+            body = str(item.get("content", ""))
+            rel_words = ("今天", "今晚", "昨天", "昨晚", "刚才", "刚刚", "前天", "这会儿", "这两天")
+            created = to_int(item.get("created_at"))
+            if created and any(w in body for w in rel_words):
+                try:
+                    day = datetime.fromtimestamp(created)
+                    if day.strftime("%Y-%m-%d") != datetime.now().strftime("%Y-%m-%d"):
+                        body = "（记于 %s）%s" % (day.strftime("%m-%d"), body)
+                except Exception:
+                    pass
+            lines.append("· " + prefix + body + "（" + label + "）")
+        if lines:
+            lines.append("（记忆里出现的『今天/昨晚/刚才』是当时记下的说法，不是现在；对不上就以他刚说的为准。）")
+        text = "\n".join(lines)
+        budget = self.cfg_int("memory_inject_max_chars", 1200)
+        if budget > 0 and len(text) > budget:
+            text = text[:budget]
+            if "\n" in text:
+                text = text.rsplit("\n", 1)[0]
+        return memories, text
 
     # ---------- 消息入口 ----------
     @filter.event_message_type(filter.EventMessageType.ALL)
@@ -8427,6 +9176,15 @@ class HumanCorePlugin(Star):
         uid = self._canonical_uid(event)
         profile = self.db.get_profile(uid)
         relation = profile.get("relation", "普通")
+        try:
+            await self._maybe_follow_city(event, uid, profile)
+        except Exception as exc:
+            logger.debug("[amo] 城市跟随失败: %s" % exc)
+        wander_text = ""
+        try:
+            wander_text = await self._maybe_wander(event, uid, profile)
+        except Exception as exc:
+            logger.debug("[amo] 旅游意愿失败: %s" % exc)
         snap = self.state.snapshot()
         _, memory_text = await self._recall(uid, event.message_str or "", event)
         self_name, self_uid, self_qq_nick, self_display = await self._self_identity(event)
@@ -8438,6 +9196,11 @@ class HumanCorePlugin(Star):
             cross_text = await self._cross_platform_context(event, uid)
         except Exception as exc:
             logger.debug("[amo] 跨平台上下文失败: %s" % exc)
+        time_text = ""
+        try:
+            time_text = await self._time_recall_context(event, uid)
+        except Exception as exc:
+            logger.debug("[amo] 按时间回看失败: %s" % exc)
         try:
             is_group = not event.is_private_chat()
         except Exception:
@@ -8502,6 +9265,39 @@ class HumanCorePlugin(Star):
             "【长度】默认只回 1-2 句，能一句说清就一句；不要解释、不要列点、不要总结，不要写成客服长文。",
             "【人格】保持上面的人格设定，不要变成通用助手或客服；即使回答咨询也要用自己的口吻。",
         ]
+        try:
+            city_block = _city_block(self.db.kv_get("his_city", "") or "")
+        except Exception:
+            city_block = ""
+        if city_block:
+            parts.append(city_block)
+        try:
+            travel_row = self.db.kv_get("travel", {}) or {}
+            if isinstance(travel_row, dict) and str(travel_row.get("city") or "").strip():
+                travel_city = str(travel_row["city"])
+                try:
+                    travel_spots = _city_pick_spots(self.scenic_spots(), travel_city, today_str())
+                except Exception:
+                    travel_spots = []
+                travel_text = _city_travel_block(
+                    travel_city, weekday=date.today().weekday() < 5, spots=travel_spots,
+                )
+                if travel_text:
+                    parts.append(travel_text)
+        except Exception:
+            pass
+        try:
+            he_city = str(self.db.kv_get("he_city", "") or "").strip()
+            my_city = str(self.db.kv_get("his_city", "") or "").strip()
+            if he_city and he_city != my_city and not self.db.kv_get("travel", {}):
+                parts.append(
+                    "【他在】他现在在 " + he_city + "，你还在 " + (my_city or "东莞")
+                    + "上班；你有点想他，但没过去。"
+                )
+        except Exception:
+            pass
+        if wander_text:
+            parts.append(wander_text)
         if is_group:
             target = str(getattr(event, "heartflow_target", "") or "")
             angle = str(getattr(event, "heartflow_angle", "") or "")
@@ -8561,6 +9357,23 @@ class HumanCorePlugin(Star):
             "（“在上班呢，怎么啦”），说完立刻把话头递回去；"
             "别用“我在…呢”开头，也别顺势报一整天安排。"
         )
+        try:
+            _diary_q = str(event.message_str or "")
+            if any(word in _diary_q for word in ("日记", "偷看", "日记本")):
+                _diary_seed = str(_diary_q) + "|" + str(now_ts() // 60)
+                _written_hints = _diary_pick_hints(_DIARY_WRITTEN, 8, _diary_seed)
+                _show_hints = _diary_pick_hints(_DIARY_SHOW, 8, _diary_seed)
+                parts.append(
+                    "【日记】你有自己的日记，每天写一篇，存在你自己的电脑里，是你的私人东西。"
+                    "**不要主动跟他提日记**，不问他就不说；只有他问起（写没写/写日记吗/想看）时才接话。"
+                    "他问写了没，就随口答，别每次都一样（也可以自己造新说法），比如："
+                    + "、".join("「" + item + "」" for item in _written_hints) + "；"
+                    "他说想看，就换着撒娇拒绝（也别每次同一句），比如："
+                    + "、".join("「" + item + "」" for item in _show_hints) + "；"
+                    "最多念一句给他，不要整篇念出来。"
+                )
+        except Exception:
+            pass
         if re.search(r"(怎么|如何|为什么|步骤|怎么办|该怎么做|教程|方法|建议|教我|能不能|是什么|该不该|可不可以)", event.message_str or ""):
             parts.append("【回答方式】这是咨询/步骤类问题：先给结论，最多 2-3 句，口语化，保留角色感，不要客服腔。")
         if self._dialect_active():
@@ -8627,6 +9440,8 @@ class HumanCorePlugin(Star):
             parts.append("【关于对方的记忆】\n" + memory_text)
         if cross_text:
             parts.append(cross_text)
+        if time_text:
+            parts.append(time_text)
         # 私聊最近几句（含她自己说过的话）：防止「刚说完就不认」
         if render_recent_block is not None:
             try:
@@ -8998,6 +9813,23 @@ class HumanCorePlugin(Star):
                 and now_ts() - to_float(getattr(self, "_last_data_probe", 0), 0) > 300):
             self._last_data_probe = now_ts()
             self._spawn(self._sync_with_data_plugin())
+        elif now_ts() - to_float(getattr(self, "_last_digest_check", 0), 0) > 300:
+            self._last_digest_check = now_ts()
+            self._spawn(self._maybe_daily_digest())
+        # 数据插件晚于 amo 加载：它一出现就补做第一次同步（60 秒最多试一次，成功后就停）
+        if (not self._data_synced and self._data_connected()
+                and now_ts() - to_float(getattr(self, "_last_data_sync_try", 0), 0) > 60):
+            self._last_data_sync_try = now_ts()
+            self._spawn(self._sync_with_data_plugin())
+        if now_ts() - to_float(getattr(self, "_last_diary_check", 0), 0) > 300:
+            self._last_diary_check = now_ts()
+            self._spawn(self._maybe_daily_diary())
+        if now_ts() - to_float(getattr(self, "_last_solo_return", 0), 0) > 120:
+            self._last_solo_return = now_ts()
+            self._spawn(self._maybe_solo_return())
+        if now_ts() - to_float(getattr(self, "_last_milestone_check", 0), 0) > 300:
+            self._last_milestone_check = now_ts()
+            self._spawn(self._maybe_milestone_archive())
         elif now_ts() - to_float(getattr(self, "_last_profile_sync", 0), 0) > 600:
             # 画像每 10 分钟对一次账，保证面板和本地不脱节
             self._last_profile_sync = now_ts()
@@ -9077,6 +9909,352 @@ class HumanCorePlugin(Star):
         if now - self._last_ritual >= 60:
             await self._maybe_rituals()
 
+    def _diary_dir(self):
+        return str(self.cfg_str("diary_dir", "") or "").strip() or (_DIARY_DEFAULT_DIR or "")
+
+    def _diary_clock(self):
+        """diary_time 默认 10:00。"""
+        raw = str(self.cfg_str("diary_time", "10:00") or "10:00").strip()
+        try:
+            hour, _, minute = raw.partition(":")
+            return max(0, min(23, int(hour))), max(0, min(59, int(minute or 0)))
+        except (TypeError, ValueError):
+            return 10, 0
+
+    async def _maybe_daily_diary(self):
+        """每天 diary_time（默认 10:00）给「昨天」写一篇日记。"""
+        if not self.cfg_bool("diary_enabled", True) or not callable(_diary_write):
+            return
+        now = datetime.now()
+        hh, mm = self._diary_clock()
+        if (now.hour, now.minute) < (hh, mm):
+            return
+        if getattr(self, "_diary_writing", False):
+            return
+        end_day = (now - timedelta(days=1)).date()
+        try:
+            last_written = str(self.db.kv_get("diary_last_day", "") or "")
+            start_day = (date.fromisoformat(last_written) + timedelta(days=1)) if last_written else end_day
+        except Exception:
+            start_day = end_day
+        if start_day > end_day:
+            return
+        if (end_day - start_day).days > 6:
+            start_day = end_day - timedelta(days=6)
+        days = []
+        cursor = start_day
+        while cursor <= end_day:
+            days.append(cursor)
+            cursor += timedelta(days=1)
+        self._diary_writing = True
+        try:
+            for day in days:
+                guard = "diary_written:" + day.isoformat()
+                attempt_key = "diary_attempt:" + day.isoformat()
+                try:
+                    if self.db.kv_get(guard, ""):
+                        continue
+                    last = to_float(self.db.kv_get(attempt_key, 0), 0)
+                    if last and now_ts() - last < 1800:
+                        continue
+                except Exception:
+                    pass
+                try:
+                    text = await self._generate_daily_diary(day)
+                    if not text:
+                        try:
+                            self.db.kv_set(attempt_key, now_ts())
+                        except Exception:
+                            pass
+                        continue
+                    path = _diary_write(self._diary_dir(), day, text)
+                    try:
+                        self.db.kv_set(guard, path)
+                        self.db.kv_set("diary_last_day", day.isoformat())
+                    except Exception:
+                        pass
+                    logger.info("[amo] 日记已写: %s" % path)
+                except Exception as exc:
+                    logger.warning("[amo] 写日记失败: %s" % exc)
+                    try:
+                        self.db.kv_set(attempt_key, now_ts())
+                    except Exception:
+                        pass
+        finally:
+            self._diary_writing = False
+
+    async def _diary_chat_lines(self, day):
+        """当天聊天 → 「谁：内容」行；取不到就返回空列表。"""
+        day_start = int(datetime.combine(day, datetime.min.time()).timestamp())
+        mem = self._data_mem()
+        if mem is None or not callable(getattr(mem, "messages_between", None)):
+            return []
+        try:
+            rows = await self._data_call(
+                "messages_between", self._data_bot_id(), day_start, day_start + 86400, "", 500,
+            ) or []
+        except Exception as exc:
+            logger.debug("[amo] 日记取聊天失败: %s" % exc)
+            return []
+        lines = []
+        for row in rows:
+            text = str(row.get("content") or "").strip().replace("\n", " ")
+            if not text or str(row.get("role") or "") == "system":
+                continue
+            who = "我" if str(row.get("role") or "") == "bot" else (str(row.get("name") or "") or "他")
+            lines.append(who + "：" + text[:200])
+        return lines
+
+    def _diary_hourly_lines(self, day):
+        """当天每小时小日记 → 「HH:MM 内容」行。"""
+        try:
+            cursor = self.db.conn.execute(
+                "SELECT hour, text FROM schedule_diary WHERE day=? ORDER BY hour ASC",
+                (day.isoformat(),),
+            )
+            rows = cursor.fetchall()
+        except Exception:
+            return []
+        lines = []
+        for hour, text in rows:
+            text = str(text or "").strip()
+            if text:
+                lines.append(str(hour)[:5] + " " + text[:160])
+        try:
+            log = self.db.kv_get("travel_log", []) or []
+            for entry in log[-10:]:
+                if not isinstance(entry, dict):
+                    continue
+                if str(entry.get("day") or "") != day.isoformat():
+                    continue
+                city = str(entry.get("city") or "").strip()
+                hour = str(entry.get("hour") or "").strip()
+                if city and hour:
+                    if entry.get("journey"):
+                        lines.append(hour + " 她坐车去" + city + "陪他，路上约 2 小时")
+                    elif entry.get("solo"):
+                        if entry.get("back"):
+                            lines.append(hour + " 她自己从" + city + "旅游回来了")
+                        else:
+                            lines.append(hour + " 她自己出门去" + city + "旅游，晚上住酒店")
+                    elif entry.get("back"):
+                        lines.append(hour + " 跟他从" + city + "回来了")
+                    else:
+                        lines.append(hour + " 跟他出门到了" + city + "，晚上住酒店")
+        except Exception:
+            pass
+        try:
+            rejects = self.db.kv_get("follow_reject_log", []) or []
+            for entry in rejects[-5:]:
+                if not isinstance(entry, dict):
+                    continue
+                if str(entry.get("day") or "") != day.isoformat():
+                    continue
+                city = str(entry.get("city") or "").strip()
+                hour = str(entry.get("hour") or "").strip()
+                if city:
+                    lines.append(hour + " 她说想陪他去" + city + "，他说让她好好上班，她闷闷不乐")
+        except Exception:
+            pass
+        return lines
+
+    async def _generate_daily_diary(self, day):
+        """用当天的聊天 + 每小时日程小日记，写一篇大肥鱼口吻的日记。"""
+        if not callable(_diary_write):
+            return ""
+        chat_lines = await self._diary_chat_lines(day)
+        hourly_lines = self._diary_hourly_lines(day)
+        if not chat_lines and not hourly_lines:
+            return ""
+        umo = self._last_umo or self._first_private_umo()
+        try:
+            persona = await self.llm.persona(umo)
+        except Exception:
+            persona = ""
+        system = (
+            (persona or "你是一个生活在中国城市的普通女孩，说话自然口语化。") +
+            "\n\n你现在要保持这个人格，用自己的口吻写日记：第一人称、像真人写给自己的，"
+            "不是助手汇报，也不要提 AI、模型、插件、日程表这些词。"
+        )
+        prompt = _diary_build_prompt(day, chat_lines, hourly_lines)
+        try:
+            text = await self.llm.chat_raw(umo, system, prompt)
+        except Exception as exc:
+            logger.warning("[amo] 日记生成失败: %s" % exc)
+            return ""
+        text = str(text or "").strip()
+        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text).strip()
+        text = re.sub(r"^我的日记[^\n]*\n+", "", text)
+        return text if len(text) >= 10 else ""
+
+    async def _maybe_milestone_archive(self):
+        """每 N 轮私聊压成一条「里程碑」记忆；原始聊天不删，只多一条归纳。"""
+        if getattr(self, "_milestone_running", False):
+            return
+        self._milestone_running = True
+        try:
+            await self._milestone_archive_once()
+        finally:
+            self._milestone_running = False
+
+    async def _milestone_archive_once(self):
+        """真正的归档逻辑（外面包了并发锁）。"""
+        if not self.cfg_bool("milestone_enabled", True):
+            return
+        mem = self._data_mem()
+        if mem is None or not callable(getattr(mem, "messages_since", None)):
+            return
+        every = max(2, self.cfg_int("milestone_every_turns", 20))
+        min_messages = max(4, self.cfg_int("milestone_min_messages", 12))
+        try:
+            profiles = self.db.list_profiles(limit=20) or []
+        except Exception:
+            profiles = []
+        for profile in profiles:
+            uid = str(profile.get("uid") or "")
+            home_umo = str(profile.get("private_umo") or "")
+            if not uid or not home_umo:
+                continue
+            if str(profile.get("relation") or "") != "相恋":
+                continue
+            key = "milestone_ts:" + uid
+            try:
+                since = to_int(self.db.kv_get(key, 0))
+            except Exception:
+                since = 0
+            try:
+                rows = await self._data_call("messages_since", self._data_bot_id(), uid, since, 400)
+            except Exception as exc:
+                logger.debug("[amo] 里程碑取聊天失败: %s" % exc)
+                continue
+            if not rows:
+                continue
+            if not since:
+                # 第一次只从"现在"开始记，不把全部历史一次性压成一条。
+                # 注意不能用 rows[-1]（那是本批 400 条里最旧的一条），否则会从历史开始滚。
+                try:
+                    self.db.kv_set(key, now_ts())
+                except Exception:
+                    pass
+                logger.info("[amo] 里程碑起点已设置（从现在开始）: uid=%s" % uid)
+                continue
+            if not _ms_should_archive(rows, every, min_messages):
+                continue
+            body = _ms_transcript(rows)
+            label = datetime.now().strftime("%Y-%m-%d")
+            system = "你是长期记忆整理器。只输出一段中文总结，不要标题、不要分点、不要时间戳。"
+            prompt = _ms_build_prompt(label, body)
+            try:
+                summary = await self.llm.chat_raw(home_umo, system, prompt)
+            except Exception as exc:
+                logger.debug("[amo] 里程碑总结失败: %s" % exc)
+                summary = ""
+            summary = re.sub(r"\s+", " ", str(summary or "")).strip()
+            if len(summary) < 8:
+                continue
+            content = _ms_build_content(label, summary)
+            written = await self._write_memory_checked(uid, content, "milestone", 2)
+            logger.info("[amo] 里程碑归档%s: %s" % ("已写入" if written else "写入失败", content[:80]))
+            if written:
+                try:
+                    last_ts = int(rows[-1].get("created_at") or now_ts())
+                    self.db.kv_set(key, max(last_ts + 1, since))
+                except Exception:
+                    pass
+
+    async def _maybe_daily_digest(self):
+        """每天上午把"昨天"的聊天压成一条长期记忆（阶段记忆）。"""
+        if not self.cfg_bool("daily_digest_enabled", True):
+            return
+        now = datetime.now()
+        if now.hour < max(0, min(23, self.cfg_int("daily_digest_hour", 6))):
+            return
+        today = now.strftime("%Y-%m-%d")
+        guard = "daily_digest:" + today
+        try:
+            if self.db.kv_get(guard, ""):
+                return
+        except Exception:
+            pass
+        mem = self._data_mem()
+        if mem is None or not callable(getattr(mem, "recall_messages", None)):
+            return
+        try:
+            profiles = self.db.list_profiles(limit=20) or []
+        except Exception:
+            profiles = []
+        digest_written = 0
+        digest_failed = 0
+        digest_attempted = 0
+        for profile in profiles:
+            uid = str(profile.get("uid") or "")
+            home_umo = str(profile.get("private_umo") or "")
+            if not uid or not home_umo:
+                continue
+            if str(profile.get("relation") or "") != "相恋":
+                continue
+            try:
+                # 按人取（不限会话）：他上午可能在飞书、晚上在 QQ
+                result = await self._data_call(
+                    "recall_messages", self._data_bot_id(), query="昨天",
+                    umo="", uid=uid, limit=300,
+                )
+            except Exception as exc:
+                logger.debug("[amo] 每日总结取聊天失败: %s" % exc)
+                continue
+            messages = (result or {}).get("messages") or []
+            lines = []
+            for row in messages:
+                text = str(row.get("content") or "").strip().replace("\n", " ")
+                if not text or str(row.get("role") or "") == "system":
+                    continue
+                who = "我" if str(row.get("role") or "") == "bot" else "他"
+                lines.append("[" + who + "] " + text[:120])
+            if len(lines) < 6:
+                continue
+            digest_attempted += 1
+            system = "你是长期记忆整理器。只输出一段中文总结，不要标题、不要分点、不要时间戳。"
+            prompt = (
+                "下面是昨天（" + (now - timedelta(days=1)).strftime("%Y-%m-%d") + "）两人的聊天记录。\n"
+                "请把它压成 2-4 句长期记忆：写清聊到的事、约定、他的状态变化（工作/身体/情绪/计划）。\n"
+                "只写事实，不写「今天/昨天」这类相对时间；不要复述原话；不确定的不要编。\n\n"
+                + "\n".join(lines[-120:])
+            )
+            try:
+                summary = await self.llm.chat_raw(home_umo, system, prompt)
+            except Exception as exc:
+                logger.debug("[amo] 每日总结生成失败: %s" % exc)
+                summary = ""
+            summary = re.sub(r"\s+", " ", str(summary or "")).strip()
+            if len(summary) < 8:
+                # 模型拒答/限流会一直返回空：不计数的话 every-5-min tick 会无限重跑
+                digest_failed += 1
+                continue
+            content = "【" + (now - timedelta(days=1)).strftime("%Y-%m-%d") + "】" + summary[:400]
+            written = await self._write_memory_checked(uid, content, "daily_digest", 2)
+            logger.info("[amo] 每日总结%s: %s" % ("已写入" if written else "写入失败", content[:80]))
+            if written:
+                digest_written += 1
+            else:
+                digest_failed += 1
+        # 只有"确实生成过"或"根本没有足够的聊天"才落 guard；
+        # 生成失败会重试（最多 3 次/天），避免一天都没有阶段记忆。
+        if digest_written or (digest_failed == 0 and digest_attempted == 0):
+            try:
+                self.db.kv_set(guard, today)
+            except Exception:
+                pass
+        elif digest_failed:
+            try:
+                tries = to_int(self.db.kv_get("daily_digest_tries:" + today, 0), 0) + 1
+                self.db.kv_set("daily_digest_tries:" + today, tries)
+                if tries >= 3:
+                    self.db.kv_set(guard, today)
+                    logger.warning("[amo] 每日总结连续失败 %d 次，今天不再重试" % tries)
+            except Exception:
+                pass
+
     def _first_private_umo(self):
         try:
             for profile in self.db.list_profiles(limit=50):
@@ -9098,7 +10276,8 @@ class HumanCorePlugin(Star):
                 continue
             key = "auto_learn_" + uid
             last = to_float(self.db.kv_get(key, 0))
-            if now_ts() - last < 1800:
+            interval = max(5, self.cfg_int("auto_learn_minutes", 15)) * 60
+            if now_ts() - last < interval:
                 continue
             try:
                 profile_row = self.db.get_profile(uid) or {}
@@ -9888,6 +11067,11 @@ class HumanCorePlugin(Star):
                 "dialect_count": len(self._dialect_rows()) if self._dialect_active() else 0,
                 "companion_memory_available": self._companion_plugin() is not None,
             },
+            "data_plugin": {
+                "name": "Astr_Amo_data",
+                "connected": self._data_connected(),
+                "synced": bool(self._data_synced),
+            },
         }
 
     def _format_status(self, data):
@@ -10340,6 +11524,11 @@ class HumanCorePlugin(Star):
         routes = [
             ("/status", self.api_status, ["GET"]),
             ("/get_status", self.api_get_status, ["GET"]),
+            ("/diary/tree", self.api_diary_tree, ["GET", "POST"]),
+            ("/diary/read", self.api_diary_read, ["GET", "POST"]),
+            ("/diary/write", self.api_diary_write, ["POST"]),
+            ("/diary/open", self.api_diary_open, ["GET", "POST"]),
+            ("/diary/import", self.api_diary_import, ["POST"]),
             ("/profiles", self.api_profiles, ["GET", "POST"]),
             ("/get_profile", self.api_get_profile, ["GET", "POST"]),
             ("/profiles/sync", self.api_profiles_sync, ["GET", "POST"]),
@@ -10352,6 +11541,7 @@ class HumanCorePlugin(Star):
             ("/memory_candidates", self.api_memory_candidates, ["GET"]),
             ("/profiles_sync", self.api_profiles_sync, ["GET", "POST"]),
             ("/config", self.api_config, ["GET"]),
+            ("/weather/brief", self.api_weather_brief, ["GET", "POST"]),
             ("/city/search", self.api_city_search, ["GET", "POST"]),
             ("/city/set", self.api_city_set, ["GET", "POST"]),
             ("/usage", self.api_usage, ["GET"]),
@@ -10361,6 +11551,7 @@ class HumanCorePlugin(Star):
             ("/config/save", self.api_config_save, ["GET", "POST"]),
             ("/config_save", self.api_config_save, ["GET", "POST"]),
             ("/profile/save", self.api_profile_save, ["GET", "POST"]),
+            ("/profile/links", self.api_profile_links, ["GET", "POST"]),
             ("/profile_save", self.api_profile_save, ["GET", "POST"]),
             ("/profile/delete", self.api_profile_delete, ["GET", "POST"]),
             ("/profile_delete", self.api_profile_delete, ["GET", "POST"]),
@@ -10399,43 +11590,40 @@ class HumanCorePlugin(Star):
                 self._safe_register("/" + clean + path, handler, methods, path)
         # 不注册无前缀的旧路由，避免和其他插件或 AstrBot 自带路由冲突。
 
-    def _web_guard(self, handler):
-        """写操作的前置检查：拒绝跨站 Origin/Referer，拒绝 GET 触发写。
+    def _web_guard(self, handler, is_write=False):
+        """写操作的前置检查：只收 POST + 拒绝跨站来源。
 
-        这不是完整的鉴权（AstrBot 侧有它自己的登录态），但能挡住
-        <img src>/聊天预览/外链这类最容易被利用的触发方式。
+        这不是完整鉴权（AstrBot 侧有它自己的登录态），而是挡住
+        <img src>/聊天预览/外链/跨站表单这类最容易触发的 CSRF 面。
+
+        - 写路由在 `_safe_register` 里已经只注册 POST，这里再兜一层（防止别的注册路径漏掉）；
+        - `Sec-Fetch-Site: cross-site` 直接 403（浏览器自己标的跨站，最可靠）；
+        - Origin/Referer 与 Host 不一致：带 `same-origin/same-site` 的放行（反向代理/内网穿透下
+          Host 常被改写），没有 Sec-Fetch-Site 的按跨站处理。
         """
         async def wrapper(*args, **kwargs):
             try:
                 method = ""
                 origin = ""
                 host = ""
+                site = ""
+                headers = None
                 if web_request is not None:
                     method = str(getattr(web_request, "method", "") or "").upper()
                     headers = getattr(web_request, "headers", None)
                     if headers is not None:
                         origin = str(headers.get("origin") or headers.get("referer") or "")
                         host = str(headers.get("host") or "")
-                if method and method != "POST":
-                    # 写接口同时注册 GET+POST：老版本 AstrBot 的插件页桥接只有 apiGet，
-                    # 硬禁 GET 会把面板按钮全废掉。这里改成「只挡浏览器导航/图片这类 GET」：
-                    # fetch/XHR（面板桥接走这条）放行，<img src>、<a> 点击、iframe 嵌入拦截。
-                    dest = ""
-                    mode = ""
-                    accept = ""
-                    if headers is not None:
-                        dest = str(headers.get("sec-fetch-dest") or "").lower()
-                        mode = str(headers.get("sec-fetch-mode") or "").lower()
-                        accept = str(headers.get("accept") or "").lower()
-                    if dest in ("image", "document", "iframe", "script", "style", "font", "video", "audio") \
-                            or mode == "navigate" \
-                            or (accept and accept.startswith(("image/", "text/html"))):
-                        logger.warning("[amo] 拒绝浏览器直连的 Web 写操作 GET（dest=%s mode=%s）" % (dest, mode))
-                        return {"code": 403, "msg": "该操作不能用浏览器直接打开"}
-                if origin and host:
+                        site = str(headers.get("sec-fetch-site") or "").strip().lower()
+                if is_write and method and method != "POST":
+                    logger.warning("[amo] 拒绝非 POST 的 Web 写操作（%s）" % method)
+                    return {"code": 403, "msg": "写操作只接受 POST（面板请刷新到最新版）"}
+                if is_write and site == "cross-site":
+                    logger.warning("[amo] 拒绝跨站 Web 写操作（origin=%s）" % origin)
+                    return {"code": 403, "msg": "拒绝跨站请求"}
+                if is_write and origin and host:
                     from urllib.parse import urlparse
                     origin_host = (urlparse(origin).hostname or "").lower()
-                    # 反向代理 / 内网穿透会把 Host 改成内网地址，这里把转发头也算进来
                     allowed_hosts = {(host.split(":")[0] or "").strip().lower()}
                     if headers is not None:
                         for key in ("x-forwarded-host", "x-real-host"):
@@ -10444,19 +11632,28 @@ class HumanCorePlugin(Star):
                                 allowed_hosts.add(value.split(":")[0].strip().lower())
                     allowed_hosts.discard("")
                     if origin_host and allowed_hosts and origin_host not in allowed_hosts:
-                        # 只记日志不拦截：AstrBot 常被 nginx / 内网穿透包一层，Host 与 Origin 不一致是常态，
-                        # 硬拦会把面板所有写操作废掉（上架审核也会当成功能 bug）。
-                        # 真正的 CSRF 防线是「写操作只收 POST」：跨站发 JSON 需要 CORS 预检，浏览器会先拦。
-                        logger.warning("[amo] Web 写操作来源与 Host 不一致（放行）: %s -> %s" % (origin, host))
-
+                        if site in ("same-origin", "same-site"):
+                            logger.debug("[amo] Web 写操作 Host 与 Origin 不一致（同源请求，放行）: %s -> %s"
+                                         % (origin, host))
+                        else:
+                            logger.warning("[amo] 拒绝来源不一致的 Web 写操作: %s -> %s" % (origin, host))
+                            return {"code": 403, "msg": "拒绝来源不一致的请求"}
             except Exception as exc:
                 logger.debug("[amo] Web 守卫检查失败（放行）: %s" % exc)
             return await handler(*args, **kwargs)
         return wrapper
 
     def _safe_register(self, route, handler, methods, desc):
-        if "GET" not in [str(item).upper() for item in (methods or [])]:
-            handler = self._web_guard(handler)
+        # 写接口只收 POST：面板的 WRITE_ACTIONS 已经强制带 body 走 POST，
+        # 老版本面板桥接没有 apiPost 时会收到 405/403，然后自动退回 fetch POST（前端有兜底）。
+        # 读接口不套守卫，避免给状态轮询加额外开销。
+        # 注意：route 带插件名前缀（/Astrbot_Amo_forever/...），WRITE_ROUTES 里存的是不带前缀的
+        # 路径，所以要拿 desc（注册时传的 path）来判定，否则所有写路由都会被漏掉。
+        is_write = str(desc or "") in WRITE_ROUTES
+        if is_write:
+            methods = ["POST"]
+        if is_write:
+            handler = self._web_guard(handler, is_write=True)
         try:
             self.context.register_web_api(route, handler, methods, desc)
             return True
@@ -10637,22 +11834,488 @@ class HumanCorePlugin(Star):
                 logger.error("[amo] 应用分段配置失败: %s" % exc)
 
     # ---- 中文城市名 → LocationID（离线表，见 amo_city_index.py） ----
-    def _city_lookup(self, text):
-        """把「东莞」「北京朝阳」解析成 LocationID；失败返回 None。"""
+    def _city_module(self):
+        """离线城市表模块（懒加载；缺失时返回 None，天气按原样走）。"""
         try:
             try:
-                from .amo_city_index import resolve_city
+                from . import amo_city_index
             except Exception:
-                from amo_city_index import resolve_city
-            return resolve_city(text)
+                import amo_city_index
+            return amo_city_index
+        except Exception as exc:
+            logger.debug("[amo] 城市表不可用: %s" % exc)
+            return None
+
+    def _city_lookup(self, text):
+        """把「东莞」「北京朝阳」解析成 LocationID；失败返回 None。"""
+        module = self._city_module()
+        if module is None:
+            return None
+        try:
+            return module.resolve_city(text)
         except Exception as exc:
             logger.debug("[amo] 城市名解析失败: %s" % exc)
             return None
 
+    async def _maybe_follow_city(self, event, uid, profile):
+        """他到了某地：她问「我来陪你吧」；同意就跟去（路上约 2 小时），拒绝就闷闷不乐。"""
+        if not self.cfg_bool("city_follow_enabled", True):
+            return ""
+        try:
+            if not event.is_private_chat():
+                return ""
+        except Exception:
+            return ""
+        if str(profile.get("relation") or "") != "相恋":
+            return ""
+        text = str(event.message_str or "")
+        now = now_ts()
+        offer = self.db.kv_get("follow_offer", {}) or {}
+        offer = offer if isinstance(offer, dict) else {}
+        if offer and now - to_float(offer.get("ts"), 0) > 1800:
+            self.db.kv_set("follow_offer", {})
+            offer = {}
+        travel = self.db.kv_get("travel", {}) or {}
+        travel = travel if isinstance(travel, dict) else {}
+        if travel.get("city") and re.search(r"(回来吧|回家吧|别玩了|该回来了|我回东莞)", text):
+            await self._end_follow_trip(uid)
+            return "【回家】他说回来了：自然应一句「好，我这就回」，别拖，也别说还没玩够。"
+        if travel.get("city"):
+            return ""
+        if self.db.kv_get("wander_trip", {}):
+            return ""
+        if _follow_invite(text):
+            city = (
+                str(self.db.kv_get("he_city", "") or "").strip()
+                or str(self.db.kv_get("his_city", "") or "").strip()
+            )
+            if city:
+                self.db.kv_set("follow_declined", {})
+                return await self._start_follow_trip(uid, {
+                    "city": city, "id": "",
+                    "tomorrow": datetime.now().hour >= 22,
+                })
+            return "【邀请】他让你过去，但你不知道他在哪个城市：先问一句他在哪。"
+        if offer.get("city"):
+            if _wander_agree(text):
+                return await self._start_follow_trip(uid, offer)
+            if _follow_refuse(text):
+                return await self._reject_follow_trip(uid, offer)
+        old_he = str(self.db.kv_get("he_city", "") or "").strip()
+        old = str(self.db.kv_get("his_city", "") or "").strip()
+        hit = _city_detect(text, prefer_city=old or old_he)
+        if not hit:
+            return ""
+        name = str(hit.get("name") or "").strip()
+        declined = self.db.kv_get("follow_declined", {}) or {}
+        declined_city = str(declined.get("city") or "") if isinstance(declined, dict) else ""
+        if not name or name == old_he:
+            if declined_city and declined_city == name:
+                return "【别重复提】你之前问过要不要去陪他，他没让；别再主动提这事，按他说的上班就好。"
+            return ""
+        # 到了新的城市：之前"被拒过"的标记作废，可以再问一次
+        self.db.kv_set("follow_declined", {})
+        tomorrow = datetime.now().hour >= 22
+        self.db.kv_set("he_city", name)
+        self.db.kv_set("follow_offer", {
+            "ts": now, "city": name, "id": str(hit.get("id") or ""), "tomorrow": tomorrow,
+        })
+        return _follow_block(True, name, tomorrow)
+
+    async def _start_follow_trip(self, uid, offer):
+        """同意跟去：定出发日/出发时间，当天或次日先坐 2 小时车再玩。"""
+        city = str(offer.get("city") or "").strip()
+        if not city:
+            self.db.kv_set("follow_offer", {})
+            return ""
+        tomorrow = bool(offer.get("tomorrow"))
+        start = (date.today() + timedelta(days=1)) if tomorrow else date.today()
+        start_hour = 9 if tomorrow else datetime.now().hour
+        spots = []
+        try:
+            spots = _city_pick_spots(self.scenic_spots(), city, start.isoformat())
+        except Exception:
+            spots = []
+        trip = {
+            "city": city,
+            "id": str(offer.get("id") or ""),
+            "from": str(self.db.kv_get("his_city", "") or ""),
+            "start_day": start.isoformat(),
+            "start_hour": start_hour,
+            "spots": [dict(x) for x in spots][:4],
+            "phase": "journey",
+        }
+        self.db.kv_set("travel", trip)
+        self.db.kv_set("follow_offer", {})
+        self.db.kv_set("follow_declined", {})
+        try:
+            content = "她 %s 坐车去 %s 陪他（路上约 2 小时）" % (start.isoformat(), city)
+            if not await self._write_memory_checked(uid, content, "event", 1):
+                logger.warning("[amo] 跟随记忆没写进去")
+        except Exception as exc:
+            logger.warning("[amo] 跟随记忆写入失败: %s" % exc)
+        try:
+            log = self.db.kv_get("travel_log", []) or []
+            if not isinstance(log, list):
+                log = []
+            log.append({"day": start.isoformat(), "hour": "%02d:00" % start_hour,
+                        "city": city, "journey": True})
+            self.db.kv_set("travel_log", log[-10:])
+        except Exception:
+            pass
+        if not tomorrow:
+            self.db.kv_set("his_city", city)
+            hit = self._city_lookup(city)
+            if hit:
+                try:
+                    await self._switch_weather_city(hit)
+                except Exception as exc:
+                    logger.warning("[amo] 跟随天气切换失败: %s" % exc)
+            try:
+                self.state.apply_follow_start(city, start_hour, spots, keep_past=True)
+            except Exception as exc:
+                logger.warning("[amo] 跟随日程失败: %s" % exc)
+            trip["phase"] = "touring"
+            self.db.kv_set("travel", trip)
+        plan = _wander_follow_agree_text(city, random)
+        when = "明天一早" if tomorrow else "现在"
+        return (
+            "【出发】他同意了：你" + when + "出发去 " + city + " 陪他，路上约 2 小时，到了再找他。"
+            "照这个意思说一句（别报公司/上班）：" + plan
+        )
+
+    async def _reject_follow_trip(self, uid, offer):
+        """他让她好好上班：她闷闷不乐，日程不变，日记记一笔。"""
+        city = str(offer.get("city") or "").strip()
+        self.db.kv_set("follow_offer", {})
+        self.db.kv_set("follow_declined", {"city": city, "day": today_str()})
+        try:
+            self.state.nudge(委屈=10, 郁闷=8, 开心=-6)
+        except Exception:
+            pass
+        try:
+            content = "她说想去%s陪他，他让她好好上班，她闷闷不乐" % city
+            if not await self._write_memory_checked(uid, content, "event", 1):
+                logger.warning("[amo] 被拒记忆没写进去")
+        except Exception as exc:
+            logger.warning("[amo] 被拒记忆失败: %s" % exc)
+        try:
+            log = self.db.kv_get("follow_reject_log", []) or []
+            if not isinstance(log, list):
+                log = []
+            log.append({"day": today_str(), "hour": "%02d:00" % datetime.now().hour, "city": city})
+            self.db.kv_set("follow_reject_log", log[-10:])
+        except Exception:
+            pass
+        return _follow_block(False, city)
+
+    async def _end_follow_trip(self, uid):
+        """结束跟随：回家、恢复城市/天气/日程、写回来记忆。"""
+        trip = self.db.kv_get("travel", {}) or {}
+        city = str(trip.get("city") or "") if isinstance(trip, dict) else ""
+        self.db.kv_set("travel", {})
+        home = _CITY_DEFAULT
+        self.db.kv_set("his_city", home)
+        self.db.kv_set("he_city", home)
+        hit = self._city_lookup(home)
+        if hit:
+            try:
+                await self._switch_weather_city(hit)
+            except Exception:
+                pass
+        try:
+            self.state.apply_travel_overlay(home)
+        except Exception:
+            pass
+        try:
+            content = "她 %s 从 %s 回来了" % (today_str(), city)
+            await self._write_memory_checked(uid, content, "event", 1)
+        except Exception:
+            pass
+
+    async def _switch_weather_city(self, hit):
+        """按城市跟随的结果改 weather_city / 显示名，并立刻刷一次天气。"""
+        city_id = str(hit.get("id") or "").strip()
+        name = str(hit.get("name") or "").strip()
+        if not city_id or not name:
+            return
+        changed = False
+        if str(self.config.get("weather_city") or "") != city_id:
+            self.config["weather_city"] = city_id
+            changed = True
+        if self.cfg_str("weather_city_name", "").strip() != name:
+            self.config["weather_city_name"] = name
+            changed = True
+        if not changed:
+            return
+        try:
+            save = getattr(self.config, "save_config", None)
+            if callable(save):
+                save()
+        except Exception as exc:
+            logger.warning("[amo] 城市跟随：保存天气城市失败: %s" % exc)
+        await self.state.refresh_weather(force=True)
+
+    async def _maybe_wander(self, event, uid, profile):
+        """她自己出去玩：问意愿 → 同意 → 定行程；旅行中让他叫回来。"""
+        if not self.cfg_bool("wander_enabled", True):
+            return ""
+        try:
+            if not event.is_private_chat():
+                return ""
+        except Exception:
+            return ""
+        if str(profile.get("relation") or "") != "相恋":
+            return ""
+        if self.db.kv_get("travel", {}):
+            return ""
+        text = str(event.message_str or "")
+        now = now_ts()
+        trip = self.db.kv_get("wander_trip", {}) or {}
+        trip = trip if isinstance(trip, dict) else {}
+        if trip.get("city") and re.search(r"(回来吧|回家吧|别玩了|早点回来|该回来了)", text):
+            await self._end_solo_trip(uid, "他让你回来")
+            return "【旅游】他让你回来：自然应一句“好，我收拾下就回”，别拖，也别说还没玩够。"
+        offer = self.db.kv_get("wander_offer", {}) or {}
+        offer = offer if isinstance(offer, dict) else {}
+        if offer and now - to_float(offer.get("ts"), 0) > 1800:
+            self.db.kv_set("wander_offer", {})
+            offer = {}
+        if _wander_question(text):
+            if (
+                self.db.kv_get("travel", {})
+                or self.db.kv_get("follow_offer", {})
+                or self.db.kv_get("wander_trip", {})
+            ):
+                return ""
+            today = today_str()
+            count = 0
+            if str(self.db.kv_get("wander_asked_day", "") or "") == today:
+                try:
+                    count = int(self.db.kv_get("wander_ask_count", 0) or 0)
+                except (TypeError, ValueError):
+                    count = 0
+            limit = _wander_ask_limit(self.cfg_bool("wander_ask_three_times", False))
+            if count >= limit:
+                return (
+                    "【旅游提议】今天已经问过 " + str(count) + " 次了（一天最多 " + str(limit)
+                    + " 次），别再重新决定、别再报新城市；按之前说的自然接一句。"
+                )
+            self.db.kv_set("wander_asked_day", today)
+            self.db.kv_set("wander_ask_count", count + 1)
+            low, tired = _wander_assess(self.state.mood, self.state.health_info())
+            want = _wander_want(
+                low, tired, random,
+                self.cfg_float("wander_prob_low", 0.85),
+                self.cfg_float("wander_prob_good", 0.15),
+            )
+            city, spots = "", []
+            if want:
+                city, spots = _wander_pick(
+                    self.scenic_spots(), random, count=4,
+                    exclude_city=str(self.db.kv_get("his_city", "") or ""),
+                )
+                want = bool(city)
+            if not want:
+                self.db.kv_set("wander_offer", {"ts": now, "want": False})
+            else:
+                self.db.kv_set("wander_offer", {
+                    "ts": now, "want": True, "city": city,
+                    "spots": [str(x.get("name") or "") for x in spots][:2],
+                    "spot_rows": spots[:2],
+                })
+            return _wander_offer_block(bool(want), city, spots)
+        if offer.get("want") and _wander_agree(text):
+            return await self._start_solo_trip(uid, offer)
+        if offer.get("want") and _wander_refuse(text):
+            self.db.kv_set("wander_offer", {})
+            try:
+                self.state.nudge(委屈=5, 郁闷=4)
+            except Exception:
+                pass
+            return (
+                "【不出去了】他说这次不让你去：你有点失落，但别闹，用自己的口吻说一句："
+                + _wander_solo_refuse_text(random)
+            )
+        if trip.get("city") and not trip.get("announced"):
+            start = str(trip.get("day") or "")
+            ret = str(trip.get("return_day") or start)
+            if start and start <= today_str() <= ret:
+                try:
+                    day_no = (date.today() - date.fromisoformat(start)).days + 1
+                except Exception:
+                    day_no = 1
+                return _wander_solo_block(str(trip["city"]), trip.get("spots") or [], day_no=day_no)
+        return ""
+
+    async def _start_solo_trip(self, uid, offer):
+        """确认出发：>=22 点明天走，否则现在就走。"""
+        city = str(offer.get("city") or "").strip()
+        spots = [x for x in (offer.get("spot_rows") or []) if isinstance(x, dict)]
+        if not city:
+            self.db.kv_set("wander_offer", {})
+            return ""
+        tomorrow = datetime.now().hour >= 22
+        start = (date.today() + timedelta(days=1)) if tomorrow else date.today()
+        days = max(1, min(3, _wander_trip_days(random)))
+        return_day = start + timedelta(days=days - 1)
+        return_hour = 21 if days == 1 else 12
+        hit = self._city_lookup(city)
+        trip = {
+            "city": city,
+            "id": str((hit or {}).get("id") or ""),
+            "day": start.isoformat(),
+            "days": days,
+            "return_day": return_day.isoformat(),
+            "return_hour": return_hour,
+            "spots": [str(x.get("name") or "") for x in spots][:4],
+            "phase": "planned",
+        }
+        self.db.kv_set("wander_trip", trip)
+        self.db.kv_set("wander_offer", {})
+        try:
+            content = "她 %s 一个人去 %s 旅游（他同意了，玩 %d 天）" % (start.isoformat(), city, days)
+            if not await self._write_memory_checked(uid, content, "event", 1):
+                logger.warning("[amo] 旅游记忆没写进去")
+        except Exception as exc:
+            logger.warning("[amo] 旅游记忆写入失败: %s" % exc)
+        try:
+            log = self.db.kv_get("travel_log", []) or []
+            if not isinstance(log, list):
+                log = []
+            log.append({
+                "day": start.isoformat(), "hour": "%02d:00" % datetime.now().hour,
+                "city": city, "solo": True,
+            })
+            self.db.kv_set("travel_log", log[-10:])
+        except Exception:
+            pass
+        if not tomorrow:
+            if hit:
+                try:
+                    await self._switch_weather_city(hit)
+                except Exception as exc:
+                    logger.warning("[amo] 旅游天气切换失败: %s" % exc)
+            try:
+                self.state.apply_travel_overlay(city)
+            except Exception as exc:
+                logger.warning("[amo] 旅游日程失败: %s" % exc)
+            trip["phase"] = "applied"
+            self.db.kv_set("wander_trip", trip)
+        agree = _wander_solo_agree_text(city, random)
+        plan = _wander_plan_text(city, spots, tomorrow, random)
+        when = "明天" if tomorrow else "现在"
+        back_text = "第 %d 天中午回来" % days if days > 1 else "当晚回来"
+        return (
+            "【出发】他同意了：你" + when + "去 " + city + " 旅游（一个人），玩 %d 天，%s。"
+            % (days, back_text) + "先照这个说一句：" + agree + " 再说安排：" + plan
+            + " 别说成跟他一起；白天自己去景点，晚上住酒店。"
+        )
+
+    async def _maybe_solo_return(self):
+        """旅游最后一天到点回家：换天气、报平安、写记忆/日记。"""
+        trip = self.db.kv_get("wander_trip", {}) or {}
+        if not isinstance(trip, dict) or not trip.get("city") or trip.get("announced"):
+            return
+        ret_day = str(trip.get("return_day") or "")
+        if not ret_day or today_str() != ret_day:
+            return
+        try:
+            hour = int(trip.get("return_hour") or 12)
+        except (TypeError, ValueError):
+            hour = 12
+        if datetime.now().hour < hour:
+            return
+        city = str(trip["city"])
+        his = str(self.db.kv_get("his_city", "") or "").strip() or _CITY_DEFAULT
+        hit = self._city_lookup(his)
+        if hit:
+            try:
+                await self._switch_weather_city(hit)
+            except Exception as exc:
+                logger.warning("[amo] 回来天气切换失败: %s" % exc)
+        try:
+            self.state.apply_travel_overlay(his)
+        except Exception as exc:
+            logger.warning("[amo] 回来日程失败: %s" % exc)
+        umo = self._last_umo or self._first_private_umo()
+        try:
+            if umo:
+                await self._send_to_umo(umo, random.choice((
+                    "我回来啦，刚到家。",
+                    "到家啦，你在干嘛呢？",
+                    "我回来了，你吃饭了没？",
+                )))
+        except Exception as exc:
+            logger.warning("[amo] 回来报平安失败: %s" % exc)
+        try:
+            uid = ""
+            try:
+                rows = self.db.list_profiles(limit=1) or []
+                uid = str((rows[0] or {}).get("uid") or "") if rows else ""
+            except Exception:
+                uid = ""
+            if uid:
+                if not await self._write_memory_checked(
+                    uid, "她 %s 从 %s 旅游回来了" % (today_str(), city), "event", 1,
+                ):
+                    logger.warning("[amo] 回来记忆没写进去")
+        except Exception as exc:
+            logger.warning("[amo] 回来记忆失败: %s" % exc)
+        try:
+            log = self.db.kv_get("travel_log", []) or []
+            if isinstance(log, list):
+                log.append({
+                    "day": today_str(), "hour": "%02d:00" % datetime.now().hour,
+                    "city": city, "solo": True, "back": True,
+                })
+                self.db.kv_set("travel_log", log[-10:])
+        except Exception:
+            pass
+        trip["announced"] = True
+        self.db.kv_set("wander_trip", trip)
+        logger.info("[amo] 旅游回来：%s" % city)
+
+    async def _end_solo_trip(self, uid, reason=""):
+        """结束 solo 旅游：清状态、记回来、天气换回他在的城市、日程回家。"""
+        trip = self.db.kv_get("wander_trip", {}) or {}
+        if not isinstance(trip, dict) or not trip.get("city"):
+            return
+        city = str(trip["city"])
+        self.db.kv_set("wander_trip", {})
+        try:
+            content = "她 %s 从 %s 旅游回来了" % (today_str(), city)
+            if not await self._write_memory_checked(uid, content, "event", 1):
+                logger.warning("[amo] 回来记忆没写进去")
+        except Exception as exc:
+            logger.warning("[amo] 回来记忆写入失败: %s" % exc)
+        try:
+            log = self.db.kv_get("travel_log", []) or []
+            if not isinstance(log, list):
+                log = []
+            log.append({
+                "day": today_str(), "hour": "%02d:00" % datetime.now().hour,
+                "city": city, "solo": True, "back": True,
+            })
+            self.db.kv_set("travel_log", log[-10:])
+        except Exception:
+            pass
+        his = str(self.db.kv_get("his_city", "") or "").strip() or _CITY_DEFAULT
+        hit = self._city_lookup(his)
+        if hit:
+            try:
+                await self._switch_weather_city(hit)
+            except Exception as exc:
+                logger.warning("[amo] 回来天气切换失败: %s" % exc)
+        try:
+            self.state.apply_travel_overlay(his)
+        except Exception as exc:
+            logger.warning("[amo] 回来日程失败: %s" % exc)
+
     def _sync_weather_city_config(self):
         """配置里填了中文城市名时，自动换算并回填 LocationID（幂等）。"""
         raw = self.cfg_str("weather_city", "").strip()
-        if not raw or raw.isdigit():
+        if not raw or raw.isdigit() or "," in raw:
             return False
         hit = self._city_lookup(raw)
         if not hit:
@@ -10697,6 +12360,23 @@ class HumanCorePlugin(Star):
                 logger.error("[amo] 回填城市配置失败: %s" % exc)
         return changed
 
+    async def api_weather_brief(self):
+        """面板用：当前天气一行摘要 + 配置里的城市（只读缓存）。"""
+        await self._ensure_ready()
+        if not self.state.weather:
+            try:
+                await self.state.refresh_weather()
+            except Exception as exc:
+                logger.debug("[amo] 面板取天气失败: %s" % exc)
+        return {
+            "code": 0,
+            "data": {
+                "weather": self.state.weather_brief(),
+                "city": self.cfg_str("weather_city", ""),
+                "city_name": self.cfg_str("weather_city_name", ""),
+            },
+        }
+
     async def api_city_search(self):
         """面板用：中文城市名候选。"""
         await self._ensure_ready()
@@ -10707,12 +12387,11 @@ class HumanCorePlugin(Star):
                 query = str(data.get("q") or "").strip()
         if not query:
             return {"code": 0, "data": {"items": [], "query": ""}}
+        module = self._city_module()
+        if module is None:
+            return {"code": 1, "msg": "城市表缺失：amo_city_index.py 没装好"}
         try:
-            try:
-                from .amo_city_index import search_city
-            except Exception:
-                from amo_city_index import search_city
-            items = search_city(query, 20)
+            items = module.search_city(query, 20)
         except Exception as exc:
             return {"code": 1, "msg": "城市表读取失败：%s" % exc}
         return {"code": 0, "data": {"items": items, "query": query}}
@@ -10746,10 +12425,14 @@ class HumanCorePlugin(Star):
             except Exception as exc:
                 return {"code": 1, "msg": "保存配置失败：%s" % exc}
         weather = None
-        try:
-            weather = await self.state.refresh_weather(force=True)
-        except Exception as exc:
-            logger.debug("[amo] 切换城市后刷新天气失败: %s" % exc)
+        if not save and self.state.weather:
+            # 城市没变，别为一次「设置」白打接口
+            weather = self.state.weather
+        else:
+            try:
+                weather = await self.state.refresh_weather(force=bool(save))
+            except Exception as exc:
+                logger.debug("[amo] 切换城市后刷新天气失败: %s" % exc)
         return {
             "code": 0,
             "data": {
@@ -11062,6 +12745,31 @@ class HumanCorePlugin(Star):
             edges.append(row)
         return {"code": 0, "data": {"edges": edges, "profiles": profiles, "relations": list(NETWORK_RELATIONS)}}
 
+    async def api_profile_links(self):
+        """面板用：这个 UID 关联了哪些平台身份（QQ / 飞书等）。"""
+        data = await self._body()
+        uid = str(data.get("uid") or "").strip()
+        platform = str(data.get("platform") or "").strip() or "aiocqhttp"
+        if not uid:
+            return {"code": 0, "data": {"links": []}}
+        mem = self._data_mem()
+        if mem is None or not callable(getattr(mem, "person_context", None)):
+            return {"code": 0, "data": {"links": []}}
+        try:
+            detail = await self._data_call("person_context", self._data_bot_id(), platform, uid, 1)
+        except Exception as exc:
+            logger.debug("[amo] 读取关联身份失败: %s" % exc)
+            detail = {}
+        links = []
+        for item in (detail or {}).get("links") or []:
+            links.append({
+                "platform": str(item.get("platform") or ""),
+                "label": str(item.get("label") or item.get("platform") or ""),
+                "uid": str(item.get("uid") or ""),
+                "name": str(item.get("name") or ""),
+            })
+        return {"code": 0, "data": {"links": links}}
+
     async def api_profile_delete(self):
         """面板用：删掉一个人的档案，并把本插件跟他有关的引用清干净。
 
@@ -11202,6 +12910,73 @@ class HumanCorePlugin(Star):
         await self._data_call("delete_relation", self._data_bot_id(), a_uid, b_uid)
         return await self.api_relations()
 
+    async def api_diary_import(self):
+        await self._ensure_ready()
+        payload = await self._body()
+        path = str((payload or {}).get("path") or "").strip()
+        if not path:
+            return {"code": 1, "msg": "缺少文件夹路径"}
+        if len(path.rstrip("\\/")) <= 2:
+            return {"code": 1, "msg": "别整盘导入，请选具体文件夹"}
+        if not callable(_diary_import_folder):
+            return {"code": 1, "msg": "日记模块未加载"}
+        # 递归遍历 + 复制是同步阻塞的，放线程里，别把 AstrBot 事件循环卡住
+        result = await asyncio.to_thread(_diary_import_folder, path, self._diary_dir())
+        if not result.get("ok"):
+            return {"code": 1, "msg": result.get("error") or "导入失败"}
+        return {"code": 0, "data": result}
+
+    async def api_diary_tree(self):
+        await self._ensure_ready()
+        if not callable(_diary_tree):
+            return {"code": 1, "msg": "日记模块未加载"}
+        return {"code": 0, "data": await asyncio.to_thread(_diary_tree, self._diary_dir())}
+
+    async def api_diary_read(self):
+        await self._ensure_ready()
+        payload = await self._body()
+        day = _diary_parse_day((payload or {}).get("date"))
+        if not day:
+            return {"code": 1, "msg": "日期格式应为 YYYY-MM-DD"}
+        text = _diary_read(self._diary_dir(), day) if callable(_diary_read) else ""
+        return {"code": 0, "data": {"date": day.isoformat(), "text": text}}
+
+    async def api_diary_write(self):
+        await self._ensure_ready()
+        payload = await self._body()
+        day = _diary_parse_day((payload or {}).get("date"))
+        if not day:
+            day = (datetime.now() - timedelta(days=1)).date()
+        text = await self._generate_daily_diary(day)
+        if not text:
+            return {"code": 1, "msg": "日记生成失败（没有素材或模型没返回）"}
+        try:
+            path = _diary_write(self._diary_dir(), day, text)
+        except Exception as exc:
+            return {"code": 1, "msg": "写入失败: %s" % exc}
+        try:
+            self.db.kv_set("diary_written:" + day.isoformat(), path)
+        except Exception:
+            pass
+        logger.info("[amo] 日记已写（手动）: %s" % path)
+        return {"code": 0, "data": {"date": day.isoformat(), "path": path, "text": text}}
+
+    async def api_diary_open(self):
+        await self._ensure_ready()
+        root = self._diary_dir()
+        try:
+            os.makedirs(root, exist_ok=True)
+        except Exception:
+            pass
+        opened = False
+        try:
+            if os.name == "nt" and os.path.isdir(root):
+                os.startfile(root)
+                opened = True
+        except Exception as exc:
+            logger.debug("[amo] 打开日记文件夹失败: %s" % exc)
+        return {"code": 0, "data": {"root": root, "opened": opened}}
+
     async def api_dispatch(self, action: str = ""):
         await self._ensure_ready()
         name = (action or "").replace("/", "_").strip("_").lower()
@@ -11289,7 +13064,17 @@ class HumanCorePlugin(Star):
 
     async def api_refresh_status(self):
         await self._ensure_ready()
-        await self.state.refresh_weather(force=True)
+        # 限频：这个接口会强制刷新天气（和风额度），被 <img>/外链或连点触发时不能每次都打出去
+        now = now_ts()
+        last = to_float(getattr(self, "_refresh_status_at", 0), 0)
+        if last and now - last < 5:
+            return {"code": 0, "msg": "刚刚刷新过，请稍候", "data": {"throttled": True}}
+        self._refresh_status_at = now
+        try:
+            await self.state.refresh_weather(force=True)
+        except Exception as exc:
+            logger.warning("[amo] 手动刷新天气失败: %s" % exc)
+            return {"code": 1, "msg": "刷新失败：%s" % exc}
         return {"code": 0, "msg": "刷新成功"}
 
     async def api_profiles(self):

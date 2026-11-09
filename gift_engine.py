@@ -500,9 +500,16 @@ class GiftEngine:
         raw = self._str("gift_big_keywords", DEFAULT_BIG_KEYWORDS) or DEFAULT_BIG_KEYWORDS
         return [item.strip() for item in re.split(r"[,，\s]+", raw) if item.strip()]
 
+    _ACCESSORY_SUFFIX = re.compile(
+        r"(?:壳|套|包|带|膜|保护膜|贴|支架|充电器|数据线|表带|耳机套|挂绳|挂件|钥匙扣)$"
+    )
+
     def classify(self, item):
         """small=小件；valuable=手表/首饰这类贵重小件；vehicle/home/luxury=太贵的（默认不收）。"""
         item = str(item or "")
+        # 「手机壳/电脑包/相机包/表带」是配件，不是手机/电脑/相机本身
+        if self._ACCESSORY_SUFFIX.search(item):
+            return "small"
         if not any(keyword and keyword in item for keyword in self._big_keywords()):
             return "small"
         if any(word in item for word in _VEHICLE_WORDS):
@@ -700,16 +707,29 @@ class GiftEngine:
                 data = json.load(fh)
         except FileNotFoundError:
             data = {}
-        except Exception:
+        except Exception as exc:
+            # 以前这里静默把文件改名成 .broken-* 然后 data={}：
+            # 下一次 _save() 会用空数据覆盖 gifts.json，她视角里礼物/心愿全消失，
+            # 日志里却一条线索都没有。至少留一条 warning。
+            backup_path = self.path + ".broken-%d" % int(time.time())
             try:
-                os.replace(self.path, self.path + ".broken-%d" % int(time.time()))
+                os.replace(self.path, backup_path)
             except Exception:
-                pass
+                backup_path = ""
+            logger.warning(
+                "[amo] gifts.json 解析失败（%s: %s），%s；本次从空数据开始"
+                % (type(exc).__name__, exc,
+                   ("已备份为 " + backup_path) if backup_path else "备份也失败了")
+            )
             data = {}
         if not isinstance(data, dict):
+            logger.warning("[amo] gifts.json 顶层不是对象（%s），已重置" % type(data).__name__)
             data = {}
-        data.setdefault("wishes", [])
-        data.setdefault("gifts", [])
+        for key in ("wishes", "gifts"):
+            if not isinstance(data.get(key), list):
+                if data.get(key) is not None:
+                    logger.warning("[amo] gifts.json 的 %s 不是列表，已重置" % key)
+                data[key] = []
         if not isinstance(data.get("meta"), dict):
             data["meta"] = {}
         self._data = data

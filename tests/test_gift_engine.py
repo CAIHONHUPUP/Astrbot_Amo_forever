@@ -198,6 +198,13 @@ class EngineTests(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
+    def test_accessory_is_small_item(self):
+        # 手机壳/电脑包 是配件，不是手机/电脑本身；当大件会把心愿静默吞掉
+        for item in ("手机壳", "电脑包", "相机包", "表带"):
+            self.assertEqual(self.engine.classify(item), "small", item)
+        for item in ("手机", "电脑", "相机"):
+            self.assertNotEqual(self.engine.classify(item), "small", item)
+
     def test_gift_without_wish_asks(self):
         hint = asyncio.run(self.engine.build_hint(FakeEvent("送给你")))
         self.assertIn("没说是什么", hint)

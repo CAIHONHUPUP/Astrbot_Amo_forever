@@ -46,9 +46,10 @@ class SegmentEngine:
         # 强制分隔符
         self.force_split_symbols = self._parse_symbol_list(cfg.get("force_split_symbols"), default=[])
 
-        # 字数范围
-        self.min_length = self._parse_int(cfg, "min_length", 20)
-        self.max_length = self._parse_int(cfg, "max_length", 50)
+        # 字数范围：max_length 必须 >= 1，否则切分时 cut 永远是 0、remaining 不变，
+        # `while remaining` 会变成死循环（面板把 seg_max_length 填 0 就能复现）。
+        self.min_length = max(0, self._parse_int(cfg, "min_length", 20))
+        self.max_length = max(1, self._parse_int(cfg, "max_length", 50))
         if self.min_length > self.max_length:
             self.min_length = self.max_length
 
@@ -211,12 +212,13 @@ class SegmentEngine:
                 logger.debug(
                     f"[主动消息分段] 识别主动消息共 {len(segments)} 段，首段替换进原链，剩余 {len(segments) - 1} 段后台发送"
                 )
-                return
+                return True  # 已经接管：返回 falsy 会让上游把整段原文再发一遍
 
             full_segmented_text = "\n\n".join(segments)
             result.chain.clear()
 
             last_sent_at = 0.0
+            sent = 0
             await self._wait_segment(event, segments[0], "", 0.0)
             for i, segment in enumerate(segments):
                 if i > 0:
@@ -229,6 +231,7 @@ class SegmentEngine:
                         pass
                 chain.message(segment)
                 await event.send(chain)
+                sent += 1
                 last_sent_at = time.monotonic()
                 await self._set_typing(event, False)
             await self._set_typing(event, False)
@@ -240,6 +243,11 @@ class SegmentEngine:
             return True
 
         except Exception as e:
+            done = int(locals().get("sent", 0) or 0)
+            if done:
+                # 已经发出去一部分了：让上游别再补发整段（否则用户会看到重复）
+                logger.error(f"分段异常（已发出 {done} 段，不再重发整段）。原因：{e}")
+                return True
             logger.error(f"分段异常，发送原消息。原因：{e}")
             return False
 
@@ -366,13 +374,21 @@ class SegmentEngine:
             protected = self._build_protected_ranges(remaining) if self.protect_paired_symbols else []
             split_idx, char_len = self._find_split_point(remaining, protected)
 
+            # 兜底：保证每轮至少前进 1 个字符，否则配置异常（max_length<=0、
+            # 断句符号全被保护区间排除）会让 while 变成死循环。
             if self.keep_symbol:
                 cut = split_idx + char_len
-                seg = remaining[:cut].strip()
-                remaining = remaining[cut:].strip()
             else:
-                seg = remaining[:split_idx].strip()
-                remaining = remaining[split_idx + char_len:].strip()
+                cut = split_idx
+            if cut <= 0:
+                cut = min(len(remaining), max(1, self.max_length))
+                char_len = 0
+            if cut >= len(remaining):
+                segments.append(remaining.strip())
+                break
+            seg = remaining[:cut].strip()
+            # keep_symbol=False 时断句符号本身丢掉；按长度兜底切的时候 char_len 已归零
+            remaining = remaining[cut + (0 if self.keep_symbol else char_len):].strip()
 
             if seg:
                 segments.append(seg)
@@ -402,12 +418,22 @@ class SegmentEngine:
         return self.max_length, 0
 
     def _rfind_symbol(self, text: str, start: int, end: int, protected: List[tuple]) -> Optional[Tuple[int, int]]:
-        """在 text[start:end] 中反向查找第一个匹配的分段符号。"""
+        """在 text[start:end] 中反向查找最靠后的分段符号。
+
+        以前按 split_symbols 的列表顺序返回「第一个有命中的符号」，而默认配置里
+        "\\n\\n"、"\n" 排在 "。" 前面，导致明明后面还有句号却在更早的换行处切、
+        分段明显偏短。现在收集所有符号的 rfind，取下标最大的；同下标取更长的符号
+        （"……" 优先于 "。"）。
+        """
+        best: Optional[Tuple[int, int]] = None
         for symbol in self.split_symbols:
             idx = text.rfind(symbol, start, end)
-            if idx != -1 and not self._in_protected_range(idx, protected):
-                return idx, self._get_split_char_len(text, idx, symbol)
-        return None
+            if idx == -1 or self._in_protected_range(idx, protected):
+                continue
+            char_len = self._get_split_char_len(text, idx, symbol)
+            if best is None or idx > best[0] or (idx == best[0] and char_len > best[1]):
+                best = (idx, char_len)
+        return best
 
     def _find_symbol_forward(self, text: str, start: int, end: int, protected: List[tuple]) -> Optional[Tuple[int, int]]:
         """在 text[start:end] 中正向查找第一个匹配的分段符号。"""

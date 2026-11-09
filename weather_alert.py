@@ -77,11 +77,43 @@ EVENING = "evening"
 
 
 def parse_clock(value, default_hour: int, default_minute: int = 0) -> int:
-    """把 "08:00" 解析成当天第几分钟；空值或非法值退回默认时间。"""
-    try:
-        hour, minute = [int(x) for x in str(value).strip().split(":")[:2]]
-    except (TypeError, ValueError, AttributeError):
+    """把 "08:00" / "8" / "晚上8点" 解析成当天第几分钟；空值或非法值退回默认时间。
+
+    面板里的时间字段是自由文本，用户填 "20"（只写小时）或 "晚上8点" 很常见。
+    以前只认 "H:MM"，单段时 `[int(x) for x in parts[:2]]` 直接 ValueError、
+    静默退回默认值（填 "8" 恰好还是 08:00，填 "21" 就悄悄变成 20:00）。
+    """
+    text = str(value or "").strip().replace("：", ":").replace("．", ".").replace("。", ".")
+    if not text:
         return default_hour * 60 + default_minute
+    # 去掉「晚上 / 早上 / 上午 / 下午 / 中午 / 凌晨」这类时段词，
+    # 下午/晚上 1-11 点按 24 小时制 +12。
+    period = ""
+    for word in ("凌晨", "早上", "上午", "中午", "下午", "傍晚", "晚上", "夜里"):
+        if text.startswith(word):
+            text = text[len(word):].strip()
+            period = word
+            break
+    text = (text.replace("时", ":").replace("点", ":").replace("分", "")
+                .replace("小时", ":").strip().rstrip(":"))
+    parts = [p for p in text.split(":") if p.strip() != ""]
+    if not parts:
+        return default_hour * 60 + default_minute
+    try:
+        hour = int(float(parts[0]))
+        minute = int(float(parts[1])) if len(parts) > 1 else 0
+    except (TypeError, ValueError):
+        return default_hour * 60 + default_minute
+    if period in ("下午", "傍晚", "晚上", "夜里") and 1 <= hour <= 11:
+        hour += 12
+    elif period == "中午" and 1 <= hour <= 2:
+        hour += 12
+    if period in ("晚上", "夜里", "凌晨") and hour == 12:
+        # 「晚上12点」是午夜 00:00，不是中午
+        hour = 0
+    if hour == 24 and minute == 0:
+        hour = 23
+        minute = 59
     if not (0 <= hour <= 23 and 0 <= minute <= 59):
         return default_hour * 60 + default_minute
     return hour * 60 + minute
@@ -154,12 +186,21 @@ def forecast_brief(now, today, tomorrow) -> str:
     now = now or {}
     now_text = str(now.get("text") or "").strip()
     if now_text:
-        parts.append(
-            ("现在 %s %s %s℃ 湿度%s%% %s" % (
-                str(now.get("city") or "").strip(), now_text, now.get("temp", ""),
-                now.get("humidity", ""), str(now.get("wind") or "").strip(),
-            )).replace("  ", " ").strip()
-        )
+        # 和风的 now.temp / humidity 缺字段时可能是 None，直接 % 拼会得到「None℃」
+        # 并原样进 <amo_state>，和「只按数据答、不许编温度」的规则打架。
+        now_temp = _num(now.get("temp"))
+        now_hum = _num(now.get("humidity"))
+        bits = ["现在", str(now.get("city") or "").strip(), now_text]
+        if now_temp is not None:
+            bits.append("%d℃" % now_temp)
+        if now_hum is not None:
+            bits.append("湿度%d%%" % now_hum)
+        wind = str(now.get("wind") or "").strip()
+        if wind:
+            bits.append(wind)
+        line = " ".join(part for part in bits if part)
+        if line:
+            parts.append(line)
 
     today = today or {}
     tomorrow = tomorrow or {}
