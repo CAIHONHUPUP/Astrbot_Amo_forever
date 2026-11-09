@@ -166,7 +166,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.3.0"
+PLUGIN_VERSION = "6.3.2"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -3444,6 +3444,8 @@ class LLMService:
         system = "你是记忆提取器。只输出 JSON 数组，不要输出其他文字。"
         prompt = (
             "请从下面的聊天中提取关于用户“" + name + "”的长期事实。\n"
+            "聊天里每一行都带说话人标记：[他] 是用户本人说的，[我] 是角色自己说的。\n"
+            "只从 [他] 开头的行里提取；[我] 开头的内容是角色自己的事，不能算成用户的事实。\n"
             "只提取值得长期记住的内容：名字、生日、喜好、厌恶、居住地、工作或学校、"
             "宠物、年龄、重要计划、重要经历。\n"
             "输出 JSON 数组，每项包含 content(一句话事实)、kind(name/birthday/preference/place/work/pet/age/event)、"
@@ -8494,16 +8496,17 @@ class HumanCorePlugin(Star):
         if cross_text:
             parts.append(cross_text)
         # 私聊最近几句（含她自己说过的话）：防止「刚说完就不认」
-        if not is_group and render_recent_block is not None:
+        if render_recent_block is not None:
             try:
-                rows_now = self._recent(umo, 10)
+                rows_now = self._recent(umo, 6 if is_group else 10)
                 body_now = (event.message_str or "").strip()
                 rows_now = [
                     row for row in rows_now
                     if not (str(row.get("role")) == "user"
                             and str(row.get("content") or "").strip() == body_now)
                 ]
-                recent_text = render_recent_block(rows_now[-8:], "你", 8)
+                keep = 4 if is_group else 8
+                recent_text = render_recent_block(rows_now[-keep:], "你", keep)
             except Exception:
                 recent_text = ""
             if recent_text:
@@ -8882,10 +8885,19 @@ class HumanCorePlugin(Star):
             if now_ts() - last < 1800:
                 continue
             try:
+                profile_row = self.db.get_profile(uid) or {}
+                home_umo = str(profile_row.get("private_umo") or "").strip()
                 rows = await self._recent_by_uid(uid, 20)
-                lines = [row.get("name", "") + "：" + row.get("content", "") for row in rows]
+                lines = []
+                for row in rows:
+                    row_umo = str(row.get("umo") or "").strip()
+                    if home_umo and row_umo and row_umo != home_umo:
+                        # 只从私聊里学，别把别的群、别人的话揉进来
+                        continue
+                    who = "我" if str(row.get("role")) == "bot" else "他"
+                    lines.append("[" + who + "] " + str(row.get("content") or ""))
                 facts = await self.llm.extract_facts(
-                    self._last_umo, user.get("name", "") or uid, lines
+                    home_umo or self._last_umo, user.get("name", "") or uid, lines
                 )
                 for fact in facts:
                     self._external_memory_write(
@@ -8942,7 +8954,7 @@ class HumanCorePlugin(Star):
         "greet": [
             "？怎么不理我了？",
             "你是不是没看见我呀。",
-            "醒醒，你的大肥鱼在等你。",
+            "醒醒，在等你呢。",
             "我在这儿呢，你倒是看我一眼呀。",
             "喂喂，人呢？",
         ],
