@@ -3953,6 +3953,13 @@ class HumanCorePlugin(Star):
         self._init_lock = asyncio.Lock()
         self._running = True
         self._tasks = set()
+        # 数据插件（Astr_Amo_data）可能比 amo 后加载：用这几个标记做一次性补同步，不轮询
+        self._data_synced = False
+        self._data_sync_lock = asyncio.Lock()
+        self._last_data_sync_try = 0.0
+        self._data_found_logged = False
+        self._data_missing_logged = False
+        self._data_warn_scheduled = False
         self._group_times = {}
         self._buffers = {}
         self._private_buffers = {}
@@ -4499,6 +4506,19 @@ class HumanCorePlugin(Star):
         if first in ("amo", "陪伴", "c_status", "c_profile", "c_setrel", "learn_and_gate"):
             return True
         return any(prefix and text.startswith(prefix) for prefix in self._command_prefixes())
+
+    _on_astrbot_loaded_hook = getattr(filter, "on_astrbot_loaded", None)
+
+    if _on_astrbot_loaded_hook is not None:
+        @_on_astrbot_loaded_hook()
+        async def on_astrbot_loaded(self):
+            """所有插件加载完：数据插件要是比 amo 后加载，这里补做一次同步。"""
+            try:
+                await self._ensure_ready()
+                if not self._data_synced and self._data_connected():
+                    await self._sync_with_data_plugin()
+            except Exception as exc:
+                logger.debug("[amo] 加载完成补同步失败: %s" % exc)
 
     def _spawn(self, coro):
         try:
@@ -5813,6 +5833,35 @@ class HumanCorePlugin(Star):
         plugin = self._data_plugin()
         return getattr(plugin, "store", None) if plugin is not None else None
 
+    def _data_connected(self):
+        """数据插件此刻在不在：只看内存里的插件表，不读库、不联网。"""
+        plugin = self._data_plugin()
+        if plugin is None:
+            return False
+        return getattr(plugin, "mem", None) is not None or getattr(plugin, "store", None) is not None
+
+    def _note_data_missing(self):
+        """第一次没找到数据插件：记一次日志，并在 60 秒后再确认一次（只提醒一次）。"""
+        if not self._data_missing_logged:
+            self._data_missing_logged = True
+            logger.info("[amo] 未检测到数据插件 Astr_Amo_data，继续用本地库（装好后面板数据为空是正常的）")
+        if not self._data_warn_scheduled:
+            self._data_warn_scheduled = True
+            self._spawn(self._warn_data_missing_later())
+
+    async def _warn_data_missing_later(self, delay=60.0):
+        """启动 60 秒后还没连上数据插件，才升级成一条 warning；连上就不打。"""
+        try:
+            await asyncio.sleep(max(1.0, float(delay)))
+        except asyncio.CancelledError:
+            return
+        if not self._running or self._data_synced or self._data_connected():
+            return
+        logger.warning(
+            "[amo] 数据插件未连接：去「插件」页看 Astr_Amo_data 是不是被停用/加载报错；"
+            "装好后 5 分钟内会自动接上，不用重启"
+        )
+
     def _data_bot_id(self):
         return str(self.cfg_str("data_bot_id", "") or self.bot_name or "default")
 
@@ -6268,14 +6317,26 @@ class HumanCorePlugin(Star):
         return bool(result)
 
     async def _sync_with_data_plugin(self):
-        """启动时双向同步：首次把本地画像/关系/日程缓存推过去，之后以插件为准补齐本地。"""
+        """启动时双向同步：首次把本地画像/关系/日程缓存推过去，之后以插件为准补齐本地。
+
+        数据插件（Astr_Amo_data）可能比 amo 后加载，所以允许重试：
+        - 本实例只成功同步一次（_data_synced），之后所有调用直接返回，不重复推送；
+        - 启动、on_astrbot_loaded、后台 tick 三处可能同时来，用锁串行，避免重复迁移。
+        """
+        if self._data_synced:
+            return
+        async with self._data_sync_lock:
+            if self._data_synced:
+                return
+            await self._sync_with_data_plugin_once()
+
+    async def _sync_with_data_plugin_once(self):
+        """真正干活的同步；没找到数据插件就只记一笔、安排 60 秒后的一次提醒。"""
         mem = self._data_mem()
         if mem is None and self._data_store() is None:
-            if not getattr(self, "_data_missing_logged", False):
-                self._data_missing_logged = True
-                logger.info("[amo] 未检测到数据插件 Astr_Amo_data，继续用本地库（装好后面板数据为空是正常的）")
+            self._note_data_missing()
             return
-        if not getattr(self, "_data_found_logged", False):
+        if not self._data_found_logged:
             self._data_found_logged = True
             logger.info("[amo] 已连接数据插件 Astr_Amo_data，开始同步")
         bot_id = self._data_bot_id()
@@ -6362,6 +6423,9 @@ class HumanCorePlugin(Star):
                         setattr(self.state, attr, value)
             except Exception:
                 continue
+        # 到这里才算这次启动真的同步完了：以后不再探测、不再重复推
+        self._data_synced = True
+        self._data_missing_logged = False
 
     def _memory_plugin_target(self):
         """能提供检索的对象：优先插件的 service，其次插件本身。"""
@@ -9185,6 +9249,11 @@ class HumanCorePlugin(Star):
         elif now_ts() - to_float(getattr(self, "_last_digest_check", 0), 0) > 300:
             self._last_digest_check = now_ts()
             self._spawn(self._maybe_daily_digest())
+        # 数据插件晚于 amo 加载：它一出现就补做第一次同步（60 秒最多试一次，成功后就停）
+        if (not self._data_synced and self._data_connected()
+                and now_ts() - to_float(getattr(self, "_last_data_sync_try", 0), 0) > 60):
+            self._last_data_sync_try = now_ts()
+            self._spawn(self._sync_with_data_plugin())
         if now_ts() - to_float(getattr(self, "_last_diary_check", 0), 0) > 300:
             self._last_diary_check = now_ts()
             self._spawn(self._maybe_daily_diary())
@@ -10361,6 +10430,11 @@ class HumanCorePlugin(Star):
                 "dialect_style": self._dialect_style(),
                 "dialect_count": len(self._dialect_rows()) if self._dialect_active() else 0,
                 "companion_memory_available": self._companion_plugin() is not None,
+            },
+            "data_plugin": {
+                "name": "Astr_Amo_data",
+                "connected": self._data_connected(),
+                "synced": bool(self._data_synced),
             },
         }
 
