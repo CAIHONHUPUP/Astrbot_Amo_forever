@@ -127,6 +127,34 @@ except Exception:
             return ""
 
 try:
+    from .milestone import (
+        should_archive as _ms_should_archive,
+        transcript as _ms_transcript,
+        build_prompt as _ms_build_prompt,
+        build_content as _ms_build_content,
+    )
+except Exception:
+    try:
+        from milestone import (
+            should_archive as _ms_should_archive,
+            transcript as _ms_transcript,
+            build_prompt as _ms_build_prompt,
+            build_content as _ms_build_content,
+        )
+    except Exception:
+        def _ms_should_archive(*args, **kwargs):
+            return False
+
+        def _ms_transcript(*args, **kwargs):
+            return ""
+
+        def _ms_build_prompt(*args, **kwargs):
+            return ""
+
+        def _ms_build_content(*args, **kwargs):
+            return ""
+
+try:
     from .memory_hooks import MemoryHub, render_recent_block
 except Exception:
     try:
@@ -9061,6 +9089,9 @@ class HumanCorePlugin(Star):
         elif now_ts() - to_float(getattr(self, "_last_digest_check", 0), 0) > 300:
             self._last_digest_check = now_ts()
             self._spawn(self._maybe_daily_digest())
+        if now_ts() - to_float(getattr(self, "_last_milestone_check", 0), 0) > 300:
+            self._last_milestone_check = now_ts()
+            self._spawn(self._maybe_milestone_archive())
         elif now_ts() - to_float(getattr(self, "_last_profile_sync", 0), 0) > 600:
             # 画像每 10 分钟对一次账，保证面板和本地不脱节
             self._last_profile_sync = now_ts()
@@ -9139,6 +9170,70 @@ class HumanCorePlugin(Star):
             await self._maybe_proactive()
         if now - self._last_ritual >= 60:
             await self._maybe_rituals()
+
+    async def _maybe_milestone_archive(self):
+        """每 N 轮私聊压成一条「里程碑」记忆；原始聊天不删，只多一条归纳。"""
+        if not self.cfg_bool("milestone_enabled", True):
+            return
+        mem = self._data_mem()
+        if mem is None or not callable(getattr(mem, "messages_since", None)):
+            return
+        every = max(2, self.cfg_int("milestone_every_turns", 20))
+        min_messages = max(4, self.cfg_int("milestone_min_messages", 12))
+        try:
+            profiles = self.db.list_profiles(limit=20) or []
+        except Exception:
+            profiles = []
+        for profile in profiles:
+            uid = str(profile.get("uid") or "")
+            home_umo = str(profile.get("private_umo") or "")
+            if not uid or not home_umo:
+                continue
+            if str(profile.get("relation") or "") != "相恋":
+                continue
+            key = "milestone_ts:" + uid
+            try:
+                since = to_int(self.db.kv_get(key, 0))
+            except Exception:
+                since = 0
+            try:
+                rows = await self._data_call("messages_since", self._data_bot_id(), uid, since, 400)
+            except Exception as exc:
+                logger.debug("[amo] 里程碑取聊天失败: %s" % exc)
+                continue
+            if not rows:
+                continue
+            if not since:
+                # 第一次只从"现在"开始记，不把全部历史一次性压成一条
+                try:
+                    self.db.kv_set(key, int(rows[-1].get("created_at") or now_ts()))
+                except Exception:
+                    pass
+                logger.info("[amo] 里程碑起点已设置: uid=%s" % uid)
+                continue
+            if not _ms_should_archive(rows, every, min_messages):
+                continue
+            body = _ms_transcript(rows)
+            label = datetime.now().strftime("%Y-%m-%d")
+            system = "你是长期记忆整理器。只输出一段中文总结，不要标题、不要分点、不要时间戳。"
+            prompt = _ms_build_prompt(label, body)
+            try:
+                summary = await self.llm.chat_raw(home_umo, system, prompt)
+            except Exception as exc:
+                logger.debug("[amo] 里程碑总结失败: %s" % exc)
+                summary = ""
+            summary = re.sub(r"\s+", " ", str(summary or "")).strip()
+            if len(summary) < 8:
+                continue
+            content = _ms_build_content(label, summary)
+            written = await self._write_memory_checked(uid, content, "milestone", 2)
+            logger.info("[amo] 里程碑归档%s: %s" % ("已写入" if written else "写入失败", content[:80]))
+            if written:
+                try:
+                    last_ts = int(rows[-1].get("created_at") or now_ts())
+                    self.db.kv_set(key, max(last_ts + 1, since))
+                except Exception:
+                    pass
 
     async def _maybe_daily_digest(self):
         """每天上午把"昨天"的聊天压成一条长期记忆（阶段记忆）。"""

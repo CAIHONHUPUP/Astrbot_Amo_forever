@@ -2,6 +2,17 @@
 
 ## 6.6.0
 
+### 里程碑归档：每 20 轮压成一条长期记忆
+
+- 新增 `milestone.py` + `_maybe_milestone_archive()`：按 uid 取「上次归档之后」的聊天
+  （跨平台，`messages_since`），攒够 `milestone_every_turns`（默认 20 轮 = 他说的 20 次）
+  且消息数 ≥ `milestone_min_messages`（默认 12）时，让模型压成 2-4 句写进记忆终端
+  （`kind=milestone`，tier 2）；
+- **原始聊天不删**，只多一条归纳；第一次运行只记录起点（`milestone_ts:<uid>`），
+  不会把历史一次性压掉；
+- 新配置：`milestone_enabled`、`milestone_every_turns`、`milestone_min_messages`。
+
+
 ### 时间回看：按时间问，就回看当时的聊天
 
 - 新增 `time_recall.py`：识别「昨天下午 / 前天 / 上周三 / 11月6号晚上10点 / 最近3天」这类问法；

@@ -1288,5 +1288,21 @@
     "description": "【注入】每轮记忆最多多少个字",
     "hint": "防止一次塞太多记忆挤占对话；按行截断，默认 1200 字。",
     "default": 1200
+  },
+  "milestone_enabled": {
+    "type": "bool",
+    "description": "【里程碑】每 N 轮私聊压成一条长期记忆",
+    "hint": "攒够 N 轮（他说的话）就让模型把这段聊到的事压成 2-4 句写进记忆终端；原始聊天不删。",
+    "default": true
+  },
+  "milestone_every_turns": {
+    "type": "int",
+    "description": "【里程碑】每多少轮归档一次",
+    "default": 20
+  },
+  "milestone_min_messages": {
+    "type": "int",
+    "description": "【里程碑】至少多少条消息才归档",
+    "default": 12
   }
 }
