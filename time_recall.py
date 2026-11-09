@@ -56,8 +56,13 @@ def render_time_block(label: str, messages: Iterable[Dict[str, Any]],
         content = str(row.get("content") or "").strip().replace("\n", " ")
         if not content:
             continue
-        who = "你" if str(row.get("role") or "") == "bot" else "他"
-        items.append("· " + who + "：" + content[:max_chars])
+        role = str(row.get("role") or "")
+        if role in ("summary", "compressed") or str(row.get("name") or "") == "摘要":
+            # 那几天的原始聊天已经被压成摘要：它是整理过的记录，不是"他"当场说的话
+            items.append("· " + content[:max_chars])
+        else:
+            who = "你" if role == "bot" else "他"
+            items.append("· " + who + "：" + content[:max_chars])
         if len(items) >= max(1, int(max_lines)):
             break
     if not items:

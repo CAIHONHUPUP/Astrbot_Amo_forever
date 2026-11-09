@@ -500,9 +500,16 @@ class GiftEngine:
         raw = self._str("gift_big_keywords", DEFAULT_BIG_KEYWORDS) or DEFAULT_BIG_KEYWORDS
         return [item.strip() for item in re.split(r"[,，\s]+", raw) if item.strip()]
 
+    _ACCESSORY_SUFFIX = re.compile(
+        r"(?:壳|套|包|带|膜|保护膜|贴|支架|充电器|数据线|表带|耳机套|挂绳|挂件|钥匙扣)$"
+    )
+
     def classify(self, item):
         """small=小件；valuable=手表/首饰这类贵重小件；vehicle/home/luxury=太贵的（默认不收）。"""
         item = str(item or "")
+        # 「手机壳/电脑包/相机包/表带」是配件，不是手机/电脑/相机本身
+        if self._ACCESSORY_SUFFIX.search(item):
+            return "small"
         if not any(keyword and keyword in item for keyword in self._big_keywords()):
             return "small"
         if any(word in item for word in _VEHICLE_WORDS):

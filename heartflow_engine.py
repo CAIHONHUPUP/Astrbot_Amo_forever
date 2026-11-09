@@ -1253,7 +1253,9 @@ class HeartflowEngine:
             if debounce_state.get("trigger_sender_id") == str(event.get_sender_id()):
                 # 触发者发的消息：追加文本（非文本用占位符），不重置计时
                 text_content = event.message_str.strip() if event.message_str else "[非文本消息]"
-                debounce_state["pending_msgs"].append(text_content)
+                # 防抖期间的可能无限追加：留最近 30 条就够合并用了
+                if len(debounce_state["pending_msgs"]) < 30:
+                    debounce_state["pending_msgs"].append(text_content)
                 self._log_detail(f"[心流] ⏳ 防抖中收到触发者消息，已追加: {umo}")
             else:
                 # 其他人发的消息：完全忽略
@@ -1345,34 +1347,35 @@ class HeartflowEngine:
                         }
                     logger.info(f"[心流] ⏳ 触发防抖等待 ({self.debounce_delay}s) | 触发者: {event.get_sender_name()}")
 
-                    # 防抖等待循环
-                    while True:
+                    # 防抖等待 + 清理放 try/finally：等待期间被取消/抛异常也不会留下 active=True 的死状态
+                    try:
+                        while True:
+                            with self._lock:
+                                debounce_state = self._debounce_states.get(debounce_key)
+                            if not debounce_state:
+                                break
+                            elapsed = time.time() - debounce_state["start_time"]
+                            # 达到基础延迟立即触发，或达到最大等待时间强制触发
+                            if elapsed >= self.debounce_delay or elapsed >= self.max_debounce_wait or debounce_state.get("cancelled"):
+                                break
+                            await asyncio.sleep(min(self.debounce_delay - elapsed, 0.5))
+
+                        # 检查是否被取消
                         with self._lock:
                             debounce_state = self._debounce_states.get(debounce_key)
-                        if not debounce_state:
-                            break
-                        elapsed = time.time() - debounce_state["start_time"]
-                        # 达到基础延迟立即触发，或达到最大等待时间强制触发
-                        if elapsed >= self.debounce_delay or elapsed >= self.max_debounce_wait or debounce_state.get("cancelled"):
-                            break
-                        await asyncio.sleep(min(self.debounce_delay - elapsed, 0.5))
-
-                    # 检查是否被取消
-                    with self._lock:
-                        debounce_state = self._debounce_states.get(debounce_key)
-                        if debounce_state and debounce_state.get("cancelled"):
+                            cancelled = bool(debounce_state and debounce_state.get("cancelled"))
+                        if cancelled:
                             logger.debug(f"[心流] 🚫 防抖被取消: {umo}")
-                            self._debounce_states.pop(debounce_key, None)
                             self._set_judgment_paused(umo, paused=False)
                             return
 
-                    # 合并消息（只有触发者的消息）
-                    final_msgs = debounce_state["pending_msgs"] if debounce_state else [event.message_str]
-                    event.message_str = "\n".join(final_msgs)
-                    
-                    with self._lock:
-                        self._debounce_states.pop(debounce_key, None)
-                    logger.debug(f"[心流] ✅ 防抖结束，准备回复（合并{len(final_msgs)}条）")
+                        # 合并消息（只有触发者的消息）
+                        final_msgs = debounce_state["pending_msgs"] if debounce_state else [event.message_str]
+                        event.message_str = "\n".join(final_msgs)
+                        logger.debug(f"[心流] ✅ 防抖结束，准备回复（合并{len(final_msgs)}条）")
+                    finally:
+                        with self._lock:
+                            self._debounce_states.pop(debounce_key, None)
 
                 event.is_at_or_wake_command = True
                 setattr(event, "heartflow_triggered", True)

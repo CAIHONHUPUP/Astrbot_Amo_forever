@@ -211,12 +211,13 @@ class SegmentEngine:
                 logger.debug(
                     f"[主动消息分段] 识别主动消息共 {len(segments)} 段，首段替换进原链，剩余 {len(segments) - 1} 段后台发送"
                 )
-                return
+                return True  # 已经接管：返回 falsy 会让上游把整段原文再发一遍
 
             full_segmented_text = "\n\n".join(segments)
             result.chain.clear()
 
             last_sent_at = 0.0
+            sent = 0
             await self._wait_segment(event, segments[0], "", 0.0)
             for i, segment in enumerate(segments):
                 if i > 0:
@@ -229,6 +230,7 @@ class SegmentEngine:
                         pass
                 chain.message(segment)
                 await event.send(chain)
+                sent += 1
                 last_sent_at = time.monotonic()
                 await self._set_typing(event, False)
             await self._set_typing(event, False)
@@ -240,6 +242,11 @@ class SegmentEngine:
             return True
 
         except Exception as e:
+            done = int(locals().get("sent", 0) or 0)
+            if done:
+                # 已经发出去一部分了：让上游别再补发整段（否则用户会看到重复）
+                logger.error(f"分段异常（已发出 {done} 段，不再重发整段）。原因：{e}")
+                return True
             logger.error(f"分段异常，发送原消息。原因：{e}")
             return False
 

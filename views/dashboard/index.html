@@ -2856,9 +2856,17 @@
 
       if (legend) {
         const kinds = [...new Set(graph.links.map((link) => link.relation))];
-        legend.innerHTML = kinds.map((kind) =>
-          '<span style="display:inline-block;margin-right:10px"><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' +
-          neuronColor(kind) + ';margin-right:4px"></i>' + kind + "</span>").join("");
+        legend.textContent = "";
+        kinds.forEach((kind) => {
+          const span = document.createElement("span");
+          span.style.cssText = "display:inline-block;margin-right:10px";
+          const dot = document.createElement("i");
+          dot.style.cssText = "display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;background:" +
+            String(neuronColor(kind) || "transparent");
+          span.appendChild(dot);
+          span.appendChild(document.createTextNode(String(kind)));
+          legend.appendChild(span);
+        });
       }
 
       let width = 0, height = 0, dpr = 1;
@@ -2950,16 +2958,27 @@
 
 
     function fillNeuronSelects(profiles) {
-      const options = (profiles || []).map((item) => {
-        const uid = String(item.uid || "");
-        const name = item.name || item.alias || uid;
-        return '<option value="' + uid + '">' + name + "（" + uid + "）</option>";
-      }).join("");
+      const items = profiles || [];
       ["nRelA", "nRelB"].forEach((id) => {
         const select = document.getElementById(id);
         if (!select) return;
         const keep = select.value;
-        select.innerHTML = options || '<option value="">还没有画像</option>';
+        select.textContent = "";
+        if (!items.length) {
+          const empty = document.createElement("option");
+          empty.value = "";
+          empty.textContent = "还没有画像";
+          select.appendChild(empty);
+          return;
+        }
+        items.forEach((item) => {
+          const uid = String(item.uid || "");
+          const name = String(item.name || item.alias || uid);
+          const option = document.createElement("option");
+          option.value = uid;
+          option.textContent = name + "（" + uid + "）";
+          select.appendChild(option);
+        });
         if (keep) select.value = keep;
       });
     }

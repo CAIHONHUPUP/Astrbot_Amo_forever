@@ -58,5 +58,26 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(block.count("· 他："), 3)
 
 
+    def test_summary_rows_are_not_labelled_as_him(self):
+        # 3 天前的聊天会被压成 role=summary 的摘要；它不是"他"当场说的话，不能加「他：」
+        block = render_time_block("11月1号", [
+            {"role": "summary", "name": "摘要",
+             "content": "[2026-11-01 共 20 条 · 他、她] 聊了修 bug 和晚饭"},
+            {"role": "user", "content": "在商场逛"},
+        ])
+        self.assertIn("· [2026-11-01", block)
+        self.assertNotIn("· 他：[2026-11-01", block)
+        self.assertIn("· 他：在商场逛", block)
+
+
+class WiringTests(unittest.TestCase):
+    def test_dynamic_context_calls_time_recall(self):
+        # 之前 _time_recall_context 只有定义、从没被调用（配置和文档都写着已生效）
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "main.py"), encoding="utf-8") as fh:
+            source = fh.read()
+        self.assertIn("await self._time_recall_context(event, uid)", source)
+
+
 if __name__ == "__main__":
     unittest.main()

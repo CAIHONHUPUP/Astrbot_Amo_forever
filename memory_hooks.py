@@ -606,7 +606,8 @@ class MemoryHub:
             return []
         try:
             return await provider.recall(uid, query, limit, scope, group_id) or []
-        except Exception:
+        except Exception as exc:
+            self.rt.logger.warning("[amo] 记忆召回失败（%s）: %s" % (type(exc).__name__, exc))
             return []
 
     async def profile(self, uid):
@@ -615,7 +616,8 @@ class MemoryHub:
             return {}
         try:
             return await provider.profile(uid) or {}
-        except Exception:
+        except Exception as exc:
+            self.rt.logger.warning("[amo] 记忆画像读取失败（%s）: %s" % (type(exc).__name__, exc))
             return {}
 
     async def save_profile(self, uid, **fields):

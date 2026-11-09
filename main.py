@@ -3978,10 +3978,7 @@ class HumanCorePlugin(Star):
         self._config_mtime = 0.0
         self._register_web_apis()
         logger.info("[amo] 我想永远陪伴你 %s loaded; stale web routes purged" % PLUGIN_VERSION)
-        try:
-            self._boot_task = asyncio.create_task(self._ensure_ready())
-        except RuntimeError:
-            self._boot_task = None
+        self._boot_task = self._spawn(self._ensure_ready())
 
     # ---------- 配置 ----------
     def cfg(self, key, default=None):
@@ -4524,6 +4521,10 @@ class HumanCorePlugin(Star):
         try:
             task = asyncio.create_task(coro)
         except RuntimeError:
+            try:
+                coro.close()
+            except Exception:
+                pass
             return None
         self._tasks.add(task)
 
@@ -5909,7 +5910,13 @@ class HumanCorePlugin(Star):
         if not callable(func):
             return None
         try:
-            return await func(*args, **kwargs)
+            return await asyncio.wait_for(
+                func(*args, **kwargs),
+                timeout=max(1.0, self.cfg_float("data_call_timeout_seconds", 15.0)),
+            )
+        except asyncio.TimeoutError:
+            logger.warning("[amo] 数据插件 %s 调用超时，先跳过（不影响这轮回复）" % name)
+            return None
         except TypeError:
             # 数据插件是旧版（还没有 platform 参数）时退一步，别把聊天记录整个丢掉
             if "platform" in kwargs:
@@ -6010,11 +6017,21 @@ class HumanCorePlugin(Star):
             except Exception:
                 continue
         # 面板上删掉的关系，本地也同步删掉（终端为准）；
-        # 终端返回空时不删，避免插件没就绪时把本地关系网清空
-        if not remote:
+        # 终端返回空、或远端的边比本地还少时都不删——那多半是换库/重装/恢复残缺备份，
+        # 照删一次就能把本地关系网清空（之后还得靠聊天慢慢沉淀）。
+        try:
+            local_rows = self.db.list_relations()
+        except Exception:
+            local_rows = []
+        if not remote or len(remote) < len(local_rows):
+            if remote:
+                logger.warning(
+                    "[amo] 关系网不同步：远端 %d 条 < 本地 %d 条，先不删本地"
+                    % (len(remote), len(local_rows))
+                )
             return count
         try:
-            for item in self.db.list_relations():
+            for item in local_rows:
                 pair = tuple(sorted([str(item.get("a_uid") or ""), str(item.get("b_uid") or "")]))
                 if pair not in remote:
                     self.db.delete_relation(pair[0], pair[1])
@@ -6488,13 +6505,9 @@ class HumanCorePlugin(Star):
             coro = None
             try:
                 coro = self._data_memory_write(uid, content, kind, tier)
-                asyncio.get_running_loop().create_task(coro)
-                logger.debug("[amo] 记忆已交给记忆终端: %s" % content[:40])
-                return True
-            except RuntimeError:
-                # 没有事件循环：交给后面的外挂插件路径，别把这条记忆吞掉
-                if coro is not None:
-                    coro.close()
+                if self._spawn(coro) is not None:
+                    logger.debug("[amo] 记忆已交给记忆终端: %s" % content[:40])
+                    return True
             except Exception as exc:
                 if coro is not None:
                     coro.close()
@@ -8669,6 +8682,11 @@ class HumanCorePlugin(Star):
             cross_text = await self._cross_platform_context(event, uid)
         except Exception as exc:
             logger.debug("[amo] 跨平台上下文失败: %s" % exc)
+        time_text = ""
+        try:
+            time_text = await self._time_recall_context(event, uid)
+        except Exception as exc:
+            logger.debug("[amo] 按时间回看失败: %s" % exc)
         try:
             is_group = not event.is_private_chat()
         except Exception:
@@ -8875,6 +8893,8 @@ class HumanCorePlugin(Star):
             parts.append("【关于对方的记忆】\n" + memory_text)
         if cross_text:
             parts.append(cross_text)
+        if time_text:
+            parts.append(time_text)
         # 私聊最近几句（含她自己说过的话）：防止「刚说完就不认」
         if render_recent_block is not None:
             try:
@@ -9361,38 +9381,55 @@ class HumanCorePlugin(Star):
             return
         if getattr(self, "_diary_writing", False):
             return
-        day = (now - timedelta(days=1)).date()
-        guard = "diary_written:" + day.isoformat()
-        attempt_key = "diary_attempt:" + day.isoformat()
+        end_day = (now - timedelta(days=1)).date()
         try:
-            if self.db.kv_get(guard, ""):
-                return
-            last = to_float(self.db.kv_get(attempt_key, 0), 0)
-            if last and now_ts() - last < 1800:
-                return
+            last_written = str(self.db.kv_get("diary_last_day", "") or "")
+            start_day = (date.fromisoformat(last_written) + timedelta(days=1)) if last_written else end_day
         except Exception:
-            pass
+            start_day = end_day
+        if start_day > end_day:
+            return
+        if (end_day - start_day).days > 6:
+            start_day = end_day - timedelta(days=6)
+        days = []
+        cursor = start_day
+        while cursor <= end_day:
+            days.append(cursor)
+            cursor += timedelta(days=1)
         self._diary_writing = True
         try:
-            text = await self._generate_daily_diary(day)
-            if not text:
+            for day in days:
+                guard = "diary_written:" + day.isoformat()
+                attempt_key = "diary_attempt:" + day.isoformat()
                 try:
-                    self.db.kv_set(attempt_key, now_ts())
+                    if self.db.kv_get(guard, ""):
+                        continue
+                    last = to_float(self.db.kv_get(attempt_key, 0), 0)
+                    if last and now_ts() - last < 1800:
+                        continue
                 except Exception:
                     pass
-                return
-            path = _diary_write(self._diary_dir(), day, text)
-            try:
-                self.db.kv_set(guard, path)
-            except Exception:
-                pass
-            logger.info("[amo] 日记已写: %s" % path)
-        except Exception as exc:
-            logger.warning("[amo] 写日记失败: %s" % exc)
-            try:
-                self.db.kv_set(attempt_key, now_ts())
-            except Exception:
-                pass
+                try:
+                    text = await self._generate_daily_diary(day)
+                    if not text:
+                        try:
+                            self.db.kv_set(attempt_key, now_ts())
+                        except Exception:
+                            pass
+                        continue
+                    path = _diary_write(self._diary_dir(), day, text)
+                    try:
+                        self.db.kv_set(guard, path)
+                        self.db.kv_set("diary_last_day", day.isoformat())
+                    except Exception:
+                        pass
+                    logger.info("[amo] 日记已写: %s" % path)
+                except Exception as exc:
+                    logger.warning("[amo] 写日记失败: %s" % exc)
+                    try:
+                        self.db.kv_set(attempt_key, now_ts())
+                    except Exception:
+                        pass
         finally:
             self._diary_writing = False
 
@@ -9467,6 +9504,16 @@ class HumanCorePlugin(Star):
 
     async def _maybe_milestone_archive(self):
         """每 N 轮私聊压成一条「里程碑」记忆；原始聊天不删，只多一条归纳。"""
+        if getattr(self, "_milestone_running", False):
+            return
+        self._milestone_running = True
+        try:
+            await self._milestone_archive_once()
+        finally:
+            self._milestone_running = False
+
+    async def _milestone_archive_once(self):
+        """真正的归档逻辑（外面包了并发锁）。"""
         if not self.cfg_bool("milestone_enabled", True):
             return
         mem = self._data_mem()
@@ -9498,12 +9545,13 @@ class HumanCorePlugin(Star):
             if not rows:
                 continue
             if not since:
-                # 第一次只从"现在"开始记，不把全部历史一次性压成一条
+                # 第一次只从"现在"开始记，不把全部历史一次性压成一条。
+                # 注意不能用 rows[-1]（那是本批 400 条里最旧的一条），否则会从历史开始滚。
                 try:
-                    self.db.kv_set(key, int(rows[-1].get("created_at") or now_ts()))
+                    self.db.kv_set(key, now_ts())
                 except Exception:
                     pass
-                logger.info("[amo] 里程碑起点已设置: uid=%s" % uid)
+                logger.info("[amo] 里程碑起点已设置（从现在开始）: uid=%s" % uid)
                 continue
             if not _ms_should_archive(rows, every, min_messages):
                 continue
@@ -9594,6 +9642,8 @@ class HumanCorePlugin(Star):
                 summary = ""
             summary = re.sub(r"\s+", " ", str(summary or "")).strip()
             if len(summary) < 8:
+                # 模型拒答/限流会一直返回空：不计数的话 every-5-min tick 会无限重跑
+                digest_failed += 1
                 continue
             content = "【" + (now - timedelta(days=1)).strftime("%Y-%m-%d") + "】" + summary[:400]
             written = await self._write_memory_checked(uid, content, "daily_digest", 2)
@@ -11010,8 +11060,9 @@ class HumanCorePlugin(Star):
         return wrapper
 
     def _safe_register(self, route, handler, methods, desc):
-        if "GET" not in [str(item).upper() for item in (methods or [])]:
-            handler = self._web_guard(handler)
+        # 写接口为了兼容老面板桥接都同时注册了 GET+POST，不能按「有没有 GET」决定要不要守卫；
+        # 守卫自己会区分 fetch/XHR 和 <img>/导航，所以统一套上（读接口多这一层也无害）。
+        handler = self._web_guard(handler)
         try:
             self.context.register_web_api(route, handler, methods, desc)
             return True
@@ -11814,23 +11865,29 @@ class HumanCorePlugin(Star):
         return await self.api_relations()
 
     async def api_diary_import(self):
+        await self._ensure_ready()
         payload = await self._body()
         path = str((payload or {}).get("path") or "").strip()
         if not path:
             return {"code": 1, "msg": "缺少文件夹路径"}
+        if len(path.rstrip("\\/")) <= 2:
+            return {"code": 1, "msg": "别整盘导入，请选具体文件夹"}
         if not callable(_diary_import_folder):
             return {"code": 1, "msg": "日记模块未加载"}
-        result = _diary_import_folder(path, self._diary_dir())
+        # 递归遍历 + 复制是同步阻塞的，放线程里，别把 AstrBot 事件循环卡住
+        result = await asyncio.to_thread(_diary_import_folder, path, self._diary_dir())
         if not result.get("ok"):
             return {"code": 1, "msg": result.get("error") or "导入失败"}
         return {"code": 0, "data": result}
 
     async def api_diary_tree(self):
+        await self._ensure_ready()
         if not callable(_diary_tree):
             return {"code": 1, "msg": "日记模块未加载"}
-        return {"code": 0, "data": _diary_tree(self._diary_dir())}
+        return {"code": 0, "data": await asyncio.to_thread(_diary_tree, self._diary_dir())}
 
     async def api_diary_read(self):
+        await self._ensure_ready()
         payload = await self._body()
         day = _diary_parse_day((payload or {}).get("date"))
         if not day:
@@ -11839,6 +11896,7 @@ class HumanCorePlugin(Star):
         return {"code": 0, "data": {"date": day.isoformat(), "text": text}}
 
     async def api_diary_write(self):
+        await self._ensure_ready()
         payload = await self._body()
         day = _diary_parse_day((payload or {}).get("date"))
         if not day:
@@ -11858,6 +11916,7 @@ class HumanCorePlugin(Star):
         return {"code": 0, "data": {"date": day.isoformat(), "path": path, "text": text}}
 
     async def api_diary_open(self):
+        await self._ensure_ready()
         root = self._diary_dir()
         try:
             os.makedirs(root, exist_ok=True)
