@@ -80,6 +80,23 @@ class DiaryEngineTests(unittest.TestCase):
         self.assertEqual(tree["years"][0]["months"][0]["days"][0]["date"], "2026-11-08")
         self.assertIn("随手记的内容", diary_engine.read_diary(self.root, date(2026, 11, 8)))
 
+    def test_build_prompt_grounds_in_schedule(self):
+        prompt = diary_engine.build_prompt(
+            date(2026, 11, 8),
+            ["他：我在修 bug", "我：好"],
+            ["13:00 在工位写报告", "19:30 在家煮番茄蛋汤"],
+        )
+        self.assertIn("2026年11月08日", prompt)
+        self.assertIn("13:00 在工位写报告", prompt)
+        self.assertIn("他：我在修 bug", prompt)
+        self.assertIn("不许编", prompt)
+        self.assertIn("骨架", prompt)
+
+    def test_build_prompt_handles_empty_material(self):
+        prompt = diary_engine.build_prompt(date(2026, 11, 8), [], [])
+        self.assertIn("这天没怎么聊", prompt)
+        self.assertIn("没有小日记", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -130,26 +130,25 @@ try:
     from .diary_engine import (
         DEFAULT_DIR as _DIARY_DEFAULT_DIR,
         parse_day as _diary_parse_day,
+        build_prompt as _diary_build_prompt,
         write_diary as _diary_write,
         read_diary as _diary_read,
         list_tree as _diary_tree,
-        stats as _diary_stats,
-        diary_root as _diary_root,
     )
 except Exception:
     try:
         from diary_engine import (
             DEFAULT_DIR as _DIARY_DEFAULT_DIR,
             parse_day as _diary_parse_day,
+            build_prompt as _diary_build_prompt,
+        build_prompt as _diary_build_prompt,
             write_diary as _diary_write,
             read_diary as _diary_read,
             list_tree as _diary_tree,
-            stats as _diary_stats,
-            diary_root as _diary_root,
-        )
+                )
     except Exception:
         _DIARY_DEFAULT_DIR = ""
-        _diary_parse_day = _diary_write = _diary_read = _diary_tree = _diary_stats = _diary_root = None
+        _diary_parse_day = _diary_write = _diary_read = _diary_tree = None
 
 try:
     from .milestone import (
@@ -2474,6 +2473,22 @@ class HumanState:
 
         return await asyncio.to_thread(_do)
 
+    def _location_of(self, city):
+        """中文城市名换成 LocationID；数字/坐标/空值原样返回。
+
+        注意：这两个取天气的方法在 HumanState 上，不能调插件的 `_city_lookup`，
+        所以直接用离线表模块的纯函数，模块不在就原样交给上层。
+        """
+        try:
+            try:
+                from .amo_city_index import city_location
+            except Exception:
+                from amo_city_index import city_location
+            return city_location(city)
+        except Exception as exc:
+            logger.debug("[amo] 城市名解析失败: %s" % exc)
+            return str(city or "").strip()
+
     async def _fetch_qweather(self, key, city):
         host = self._weather_base_url(self.p.cfg_str("weather_host", ""))
         if not host:
@@ -2490,9 +2505,10 @@ class HumanState:
                 geo_base += "/geo/v2"
         else:
             geo_base = host + "/geo/v2"
-        location = self._weather_location(city)
+        location = self._location_of(city)
         try:
-            if not location.isdigit():
+            # 坐标（经度,纬度）和风直接吃，别再去 GeoAPI 换 ID（那会 403）
+            if not location.isdigit() and "," not in location:
                 geo = await self._qweather_get(
                     geo_base + "/city/lookup", {"location": location, "number": 1}
                 )
@@ -2553,9 +2569,10 @@ class HumanState:
                 geo_base += "/geo/v2"
         else:
             geo_base = host + "/geo/v2"
-        location = self._weather_location(city)
+        location = self._location_of(city)
         try:
-            if not location.isdigit():
+            # 坐标（经度,纬度）和风直接吃，别再去 GeoAPI 换 ID（那会 403）
+            if not location.isdigit() and "," not in location:
                 geo = await self._qweather_get(
                     geo_base + "/city/lookup", {"location": location, "number": 1}
                 )
@@ -2602,6 +2619,9 @@ class HumanState:
         if current_signature != desired_signature:
             force = True
         if not force and current.get("ts") and now_ts() - current["ts"] < 1800:
+            return current
+        # 刚刷过就别再打接口（双击「设置」、面板刷新和后台 tick 撞车）
+        if force and current.get("ts") and now_ts() - to_float(current["ts"], 0) < 3:
             return current
         old_tag = current.get("tag")
         data = None
@@ -8692,8 +8712,9 @@ class HumanCorePlugin(Star):
                 parts.append(
                     "【日记】你有自己的日记，每天写一篇，存在你自己的电脑里，是你的私人东西。"
                     "**不要主动跟他提日记**，不问他就不说；只有他问起（写没写/写日记吗/想看）时才接话。"
-                    "他问写了没，就说「写了，写什么不告诉你」；他说想看，就撒娇拒绝「不行，你不能偷看我的日记哦」；"
-                    "最多念一句给他，不要整篇念出来。"
+                    "他问写了没，就随口答，别每次都一样：「写了」「写了，不给你看」「写了呀，写什么就不告诉你」；"
+                    "他说想看，就换着撒娇拒绝：「不行，你不能偷看我的日记哦」「那是我的日记，才不给你看」"
+                    "「你想得美」「这是我的小秘密」；最多念一句给他，不要整篇念出来。"
                 )
         except Exception:
             pass
@@ -9235,55 +9256,59 @@ class HumanCorePlugin(Star):
             return 10, 0
 
     async def _maybe_daily_diary(self):
-        """每天 10 点前后给「昨天」写一篇日记；错过就跳过，可用面板补。"""
-        if not self.cfg_bool("diary_enabled", True):
-            return
-        if not callable(_diary_write):
+        """每天 diary_time（默认 10:00）给「昨天」写一篇日记。"""
+        if not self.cfg_bool("diary_enabled", True) or not callable(_diary_write):
             return
         now = datetime.now()
         hh, mm = self._diary_clock()
         if (now.hour, now.minute) < (hh, mm):
             return
-        # 只写「昨天」这一篇，避免一次补好几天的量；缺的可以面板手动补
-        for offset in (1,):
-            day = (now - timedelta(days=offset)).date()
-            guard = "diary_written:" + day.isoformat()
-            try:
-                if self.db.kv_get(guard, ""):
-                    continue
-            except Exception:
-                pass
+        if getattr(self, "_diary_writing", False):
+            return
+        day = (now - timedelta(days=1)).date()
+        guard = "diary_written:" + day.isoformat()
+        attempt_key = "diary_attempt:" + day.isoformat()
+        try:
+            if self.db.kv_get(guard, ""):
+                return
+            last = to_float(self.db.kv_get(attempt_key, 0), 0)
+            if last and now_ts() - last < 1800:
+                return
+        except Exception:
+            pass
+        self._diary_writing = True
+        try:
             text = await self._generate_daily_diary(day)
             if not text:
-                # 生成失败不落 guard，下一轮重试；今天没写出来明天还能补
-                break
-            try:
-                path = _diary_write(self._diary_dir(), day, text)
-            except Exception as exc:
-                logger.warning("[amo] 日记写入失败: %s" % exc)
-                break
+                try:
+                    self.db.kv_set(attempt_key, now_ts())
+                except Exception:
+                    pass
+                return
+            path = _diary_write(self._diary_dir(), day, text)
             try:
                 self.db.kv_set(guard, path)
             except Exception:
                 pass
             logger.info("[amo] 日记已写: %s" % path)
+        except Exception as exc:
+            logger.warning("[amo] 写日记失败: %s" % exc)
+        finally:
+            self._diary_writing = False
 
-    async def _generate_daily_diary(self, day):
-        """用昨天的聊天 + 每小时的日程小日记，写一篇大肥鱼口吻的日记。"""
-        if not callable(_diary_write):
-            return ""
+    async def _diary_chat_lines(self, day):
+        """当天聊天 → 「谁：内容」行；取不到就返回空列表。"""
         day_start = int(datetime.combine(day, datetime.min.time()).timestamp())
-        day_end = day_start + 86400
         mem = self._data_mem()
-        rows = []
-        if mem is not None and callable(getattr(mem, "messages_between", None)):
-            try:
-                rows = await self._data_call(
-                    "messages_between", self._data_bot_id(), day_start, day_end, "", 500,
-                ) or []
-            except Exception as exc:
-                logger.debug("[amo] 日记取聊天失败: %s" % exc)
-                rows = []
+        if mem is None or not callable(getattr(mem, "messages_between", None)):
+            return []
+        try:
+            rows = await self._data_call(
+                "messages_between", self._data_bot_id(), day_start, day_start + 86400, "", 500,
+            ) or []
+        except Exception as exc:
+            logger.debug("[amo] 日记取聊天失败: %s" % exc)
+            return []
         lines = []
         for row in rows:
             text = str(row.get("content") or "").strip().replace("\n", " ")
@@ -9291,19 +9316,32 @@ class HumanCorePlugin(Star):
                 continue
             who = "我" if str(row.get("role") or "") == "bot" else (str(row.get("name") or "") or "他")
             lines.append(who + "：" + text[:200])
-        hourly = []
+        return lines
+
+    def _diary_hourly_lines(self, day):
+        """当天每小时小日记 → 「HH:MM 内容」行。"""
         try:
             cursor = self.db.conn.execute(
                 "SELECT hour, text FROM schedule_diary WHERE day=? ORDER BY hour ASC",
                 (day.isoformat(),),
             )
-            for hour, text in cursor.fetchall():
-                text = str(text or "").strip()
-                if text:
-                    hourly.append(str(hour)[:5] + " " + text[:160])
+            rows = cursor.fetchall()
         except Exception:
-            hourly = []
-        if not lines and not hourly:
+            return []
+        lines = []
+        for hour, text in rows:
+            text = str(text or "").strip()
+            if text:
+                lines.append(str(hour)[:5] + " " + text[:160])
+        return lines
+
+    async def _generate_daily_diary(self, day):
+        """用当天的聊天 + 每小时日程小日记，写一篇大肥鱼口吻的日记。"""
+        if not callable(_diary_write):
+            return ""
+        chat_lines = await self._diary_chat_lines(day)
+        hourly_lines = self._diary_hourly_lines(day)
+        if not chat_lines and not hourly_lines:
             return ""
         umo = self._last_umo or self._first_private_umo()
         try:
@@ -9315,22 +9353,7 @@ class HumanCorePlugin(Star):
             "\n\n你现在要保持这个人格，用自己的口吻写日记：第一人称、像真人写给自己的，"
             "不是助手汇报，也不要提 AI、模型、插件、日程表这些词。"
         )
-        prompt = (
-            "日期：" + day.strftime("%Y年%m月%d日") + "\n"
-            "下面是这一天的聊天节选（他和我）：\n" + ("\n".join(lines[-200:]) or "（这天没怎么聊）") + "\n\n"
-            "这一天的生活小日记：\n" + ("\n".join(hourly[-24:]) or "（没有小日记）") + "\n\n"
-            "请写今天这篇日记：\n"
-            "1. 标题不用你写，文件里已经有了；直接写正文；\n"
-            "2. 以「这一天的生活小日记」为骨架写日常：几点在哪、在做什么、吃了什么、怎么通勤、天气怎样；"
-            "这就是你的日程，日记要和它一致；\n"
-            "3. 聊天里和主人的对话可以写进去，写他说过的话、你的感受；\n"
-            "4. 可以很长，也可以只有一两句，甚至只写一句想他、爱他；\n"
-            "5. 口吻和人格设定完全一致，可以有情绪、有小脾气、有细节；\n"
-            "6. 不许编：日程里没有的活动、聊天里没说过的事，都不要写成事实；拿不准就不写；\n"
-            "7. 这是你的私人日记，结尾可以自然地写一句「不许偷看我的日记」之类，但不用每篇都写；\n"
-            "8. 不要提「日程」「AI」「模型」「插件」这些词，不要分点，不要写日期标题；\n"
-            "直接输出日记正文。"
-        )
+        prompt = _diary_build_prompt(day, chat_lines, hourly_lines)
         try:
             text = await self.llm.chat_raw(umo, system, prompt)
         except Exception as exc:
@@ -9340,9 +9363,7 @@ class HumanCorePlugin(Star):
         text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
         text = re.sub(r"\s*```$", "", text).strip()
         text = re.sub(r"^我的日记[^\n]*\n+", "", text)
-        if len(text) < 10:
-            return ""
-        return text
+        return text if len(text) >= 10 else ""
 
     async def _maybe_milestone_archive(self):
         """每 N 轮私聊压成一条「里程碑」记忆；原始聊天不删，只多一条归纳。"""
@@ -11088,21 +11109,10 @@ class HumanCorePlugin(Star):
             logger.debug("[amo] 城市名解析失败: %s" % exc)
             return None
 
-    def _weather_location(self, city):
-        """中文城市名 → LocationID；数字/空值原样返回（和风只认 ID/经纬度）。"""
-        module = self._city_module()
-        if module is None:
-            return str(city or "").strip()
-        try:
-            return module.city_location(city)
-        except Exception as exc:
-            logger.debug("[amo] 天气城市解析失败: %s" % exc)
-            return str(city or "").strip()
-
     def _sync_weather_city_config(self):
         """配置里填了中文城市名时，自动换算并回填 LocationID（幂等）。"""
         raw = self.cfg_str("weather_city", "").strip()
-        if not raw or raw.isdigit():
+        if not raw or raw.isdigit() or "," in raw:
             return False
         hit = self._city_lookup(raw)
         if not hit:
@@ -11212,10 +11222,14 @@ class HumanCorePlugin(Star):
             except Exception as exc:
                 return {"code": 1, "msg": "保存配置失败：%s" % exc}
         weather = None
-        try:
-            weather = await self.state.refresh_weather(force=True)
-        except Exception as exc:
-            logger.debug("[amo] 切换城市后刷新天气失败: %s" % exc)
+        if not save and self.state.weather:
+            # 城市没变，别为一次「设置」白打接口
+            weather = self.state.weather
+        else:
+            try:
+                weather = await self.state.refresh_weather(force=bool(save))
+            except Exception as exc:
+                logger.debug("[amo] 切换城市后刷新天气失败: %s" % exc)
         return {
             "code": 0,
             "data": {
@@ -11703,7 +11717,7 @@ class HumanCorePlugin(Star):
         day = _diary_parse_day((payload or {}).get("date"))
         if not day:
             return {"code": 1, "msg": "日期格式应为 YYYY-MM-DD"}
-        text = _diary_read(self._diary_dir(), day)
+        text = _diary_read(self._diary_dir(), day) if callable(_diary_read) else ""
         return {"code": 0, "data": {"date": day.isoformat(), "text": text}}
 
     async def api_diary_write(self):

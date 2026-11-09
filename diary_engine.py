@@ -169,6 +169,26 @@ def list_tree(root: str) -> Dict[str, Any]:
     return {"total": total, "latest": latest, "years": years, "root": base}
 
 
+def build_prompt(day: date, chat_lines, hourly_lines) -> str:
+    """拼日记 prompt（纯函数，方便测试）。"""
+    return (
+        "日期：" + day.strftime("%Y年%m月%d日") + "\n"
+        "下面是这一天的聊天节选（他和我）：\n" + ("\n".join(list(chat_lines)[-200:]) or "（这天没怎么聊）") + "\n\n"
+        "这一天的生活小日记：\n" + ("\n".join(list(hourly_lines)[-24:]) or "（没有小日记）") + "\n\n"
+        "请写今天这篇日记：\n"
+        "1. 标题不用你写，文件里已经有了；直接写正文；\n"
+        "2. 以「这一天的生活小日记」为骨架写日常：几点在哪、在做什么、吃了什么、怎么通勤、天气怎样；"
+        "这就是你的日程，日记要和它一致；\n"
+        "3. 聊天里和主人的对话可以写进去，写他说过的话、你的感受；\n"
+        "4. 可以很长，也可以只有一两句，甚至只写一句想他、爱他；\n"
+        "5. 口吻和人格设定完全一致，可以有情绪、有小脾气、有细节；\n"
+        "6. 不许编：日程里没有的活动、聊天里没说过的事，都不要写成事实；拿不准就不写；\n"
+        "7. 这是你的私人日记，结尾可以自然地写一句「不许偷看我的日记」之类，但不用每篇都写；\n"
+        "8. 不要提「日程」「AI」「模型」「插件」这些词，不要分点，不要写日期标题；\n"
+        "直接输出日记正文。"
+    )
+
+
 def stats(root: str) -> Dict[str, Any]:
     tree = list_tree(root)
     return {"total": tree["total"], "latest": tree["latest"], "root": tree["root"]}
