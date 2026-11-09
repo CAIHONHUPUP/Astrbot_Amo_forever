@@ -6075,6 +6075,10 @@ class HumanCorePlugin(Star):
         return "\n".join(lines)
 
     async def _push_relation_to_data(self, a_uid, b_uid, relation, note=""):
+        # "bot"/"self" 是插件内部标识，不是真实人物：写进记忆终端会让关系图多出一个
+        # 叫 bot 的节点，所以只推真实的人与人之间的关系。
+        if str(a_uid) in ("bot", "self") or str(b_uid) in ("bot", "self"):
+            return
         await self._data_call(
             "save_relation", self._data_bot_id(), str(a_uid), str(b_uid),
             str(relation or "朋友"), str(note or ""),
