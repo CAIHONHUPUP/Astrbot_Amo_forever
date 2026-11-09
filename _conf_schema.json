@@ -5,6 +5,48 @@
     "default": "",
     "hint": "天气里显示的城市名；填数字 ID 时用它显示中文（填 101281601、这里填东莞）。用中文城市名设置时会自动填好。"
   },
+  "city_follow_enabled": {
+    "type": "bool",
+    "description": "他换城市时她跟着换（只认「我在X / 我到X / 我回X」）",
+    "default": true,
+    "hint": "私聊里他说「我在清远 / 我到广州了 / 我回东莞」这类明确说法时，把她所在的城市改成那里；只是聊天提到城市不算，重名要写清楚（深圳南山）。"
+  },
+  "city_follow_weather": {
+    "type": "bool",
+    "description": "跟着换城市时同时换天气城市",
+    "default": true,
+    "hint": "开启后换城会改 weather_city 并立刻刷一次天气（每次真正换城才请求一次和风）；关掉则只改说话，天气还留在面板设的城市。"
+  },
+  "city_travel_schedule": {
+    "type": "bool",
+    "description": "去别的城市时按「出行」改今天的日程",
+    "default": true,
+    "hint": "他说「我在清远/我到广州了」时，把今天剩下的日程换成到了、找吃的、逛、住酒店（不上班），日记也按这个写；说「我回东莞」恢复。关掉就只跟随说话，不动日程。"
+  },
+  "wander_enabled": {
+    "type": "bool",
+    "description": "她会自己提出想出去玩（心情/劳累判定）",
+    "default": true,
+    "hint": "他问「你最近想出去玩吗」时，按心情和劳累程度决定：低落/累大概率想去（报一个真实景点城市）；心情好不累就说想留在他身边。他同意后，22 点前当天出发，22 点后第二天出发；第二天日程变成该城市旅游，日记和记忆跟着写。"
+  },
+  "wander_prob_low": {
+    "type": "float",
+    "description": "低落/累时答应出去玩的概率（0-1）",
+    "default": 0.85,
+    "hint": "问「你最近想出去玩吗」时：心情低落或很累，她想去玩的概率。填 0.85 就是大概率想去；0 表示永远不想去。"
+  },
+  "wander_prob_good": {
+    "type": "float",
+    "description": "心情好时答应出去玩的概率（0-1）",
+    "default": 0.15,
+    "hint": "心情好、不累时，她想去玩的概率。默认 0.15（小概率），其余会说想留在你身边。"
+  },
+  "wander_ask_three_times": {
+    "type": "bool",
+    "description": "一天可以问三次想不想旅游（关=一天一次）",
+    "default": false,
+    "hint": "打开：同一天最多问 3 次「想不想出去玩」，每次都会重新判定；关闭：一天只生效 1 次。"
+  },
   "weather_alert_enabled": {
     "type": "bool",
     "description": "明晚天气变坏时提醒一次",
