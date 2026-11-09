@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import re
+
 from typing import Any, Dict, Iterable, List
 
 MILESTONE_KIND = "milestone"
@@ -48,10 +50,28 @@ def build_prompt(date_label: str, body: str) -> str:
     return (
         "下面是" + str(date_label or "最近") + "这段时间的聊天记录（[他] 是主人，[我] 是你自己）。\n"
         "请把它压成 2-4 句长期记忆：写清这段聊到的事、约定、他的状态变化（工作/身体/情绪/计划）。\n"
+        "每句必须带主体：写用户的用「他……」，写你自己的用「我……」；不要出现无主语的句子。\n"
         "只写事实，不写「今天/昨天/刚才」这类相对时间；不要复述原话；不确定的不要编。\n\n"
         + str(body or "")
     )
 
 
+def normalize_subject(text: str) -> str:
+    """每句补主语：无主语的句子默认记成「他」。
+
+    摘要注入后如果是一句「被扇了耳光，脸疼」，模型会读成自己的经历；
+    这里按句补成「他被扇了耳光，脸疼」。
+    """
+    out: List[str] = []
+    for piece in re.split(r"(?<=[。！？!?；;])", str(text or "")):
+        piece = piece.strip()
+        if not piece:
+            continue
+        if not piece.startswith(("他", "我", "她", "用户")):
+            piece = "他" + piece
+        out.append(piece)
+    return "".join(out)
+
+
 def build_content(date_label: str, summary: str) -> str:
-    return "【里程碑 " + str(date_label or "") + "】" + str(summary or "").strip()[:400]
+    return "【里程碑 " + str(date_label or "") + "】" + normalize_subject(summary)[:400]

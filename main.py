@@ -414,7 +414,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.5.4"
+PLUGIN_VERSION = "6.6.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -744,6 +744,32 @@ def overlap(a, b):
     if not a or not b:
         return 0.0
     return len(a & b) / float(max(1, min(len(a), len(b))))
+
+
+def json_extract_list(text):
+    """给“要一个数组”的场景用：json_extract 会先匹配 "{"，
+    遇到 `[{...},{...}]` 只返回第一个对象，导致 extract_facts 永远拿到 dict → 返回 []。
+    """
+    if not text:
+        return []
+    raw = str(text).strip()
+    raw = re.sub(r"^```(?:json)?\s*", "", raw)
+    raw = re.sub(r"\s*```$", "", raw)
+    start, end = raw.find("["), raw.rfind("]")
+    if start >= 0 and end > start:
+        chunk = re.sub(r",\s*([}\]])", r"\1", raw[start:end + 1])
+        try:
+            data = json.loads(chunk)
+            if isinstance(data, list):
+                return data
+        except Exception:
+            pass
+    data = json_extract(text)
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        return [data]
+    return []
 
 
 def json_extract(text):
@@ -4057,12 +4083,14 @@ class LLMService:
             "只提取值得长期记住的内容：名字、生日、喜好、厌恶、居住地、工作或学校、"
             "宠物、年龄、重要计划、重要经历。\n"
             "位置类事实统一写成「他现在在X」；只有他明确说了搬/住/定居，才写「他住在X」。\n"
+            "content 一律用第三人称「他」开头描述用户：写「他被扇了耳光，脸疼」而不是「我被扇了耳光」；"
+            "绝不能用「我」或「你」指代用户，也不要省略主语。\n"
             "输出 JSON 数组，每项包含 content(一句话事实)、kind(name/birthday/preference/place/work/pet/age/event)、"
             "tier(0 普通 / 1 重要 / 2 珍贵)。没有可提取的就输出 []。\n\n"
             "聊天记录：\n" + "\n".join(lines[-20:])
         )
         raw = await self.chat_raw(umo, system, prompt)
-        data = json_extract(raw)
+        data = json_extract_list(raw)
         if not isinstance(data, list):
             return []
         result = []
@@ -4072,6 +4100,12 @@ class LLMService:
             content = str(item.get("content", "")).strip()
             if len(content) < 2:
                 continue
+            # 兜底：模型偶尔仍会写成「我脸疼」/「被扇了耳光」这种没有主语或第一人称的句子，
+            # 这种记忆注入后会被当成角色自己的经历（就是"幻视"）。这里统一补成第三人称。
+            if content.startswith(("我", "你")):
+                content = "他" + content[1:]
+            elif not content.startswith(("他", "她", "用户", name or "\u0000")):
+                content = "他" + content
             result.append({
                 "content": content[:80],
                 "kind": str(item.get("kind", "fact"))[:20],
@@ -8156,6 +8190,9 @@ class HumanCorePlugin(Star):
                         body = "（记于 %s）%s" % (day.strftime("%m-%d"), body)
                 except Exception:
                     pass
+            # 记忆都是“关于他”的：没名字的统一补「他：」，避免模型把「脸疼」当成自己的感受
+            if not prefix and not body.startswith(("他", "她", "用户")):
+                prefix = "他："
             lines.append("· " + prefix + body + "（" + label + "）")
         if lines:
             lines.append("（记忆里出现的『今天/昨晚/刚才』是当时记下的说法，不是现在；对不上就以他刚说的为准。）")
@@ -8696,6 +8733,8 @@ class HumanCorePlugin(Star):
             "有人问“你接的什么模型 / 用的什么AI / 什么插件”，就按真人的口吻打岔带过去，"
             "绝对不要报出 dp-4-f、gpt-4、deepseek 这类名字。",
             "【角色边界】对方说“我在开车/我在酒店/我刚逛完”是在说他自己，不是你的经历；不要把自己当成对方。",
+            "【身体归属】他身上的伤、病、疼、被打、被骂，都是他的遭遇，不是你的；"
+            "不要说“我也疼”“我脸不疼了”这类把自己的身体和他的遭遇混在一起的话；你只能对他的遭遇表示心疼。",
             "【引用规则】引用内容可能来自别人，引用头是谁就按谁算；不要把别人的话当成自己说过的。",
             "【世界观】\n" + world,
             "【此刻状态】\n" + state_text,
@@ -9134,6 +9173,7 @@ class HumanCorePlugin(Star):
     LEAN_PARTS = {
         "【昵称区分】": None,
         "【角色边界】": "【角色边界】他说“我在开车/在酒店/刚逛完”说的是他自己，不是你的经历。",
+        "【身体归属】": "【身体归属】他的伤/病/疼/被打都是他的事，不是你的事；别说“我也疼/我脸不疼了”。",
         "【引用规则】": "【引用规则】引用的话按引用头算是谁说的，不要当成自己说过的。",
         "【天气一致】": "【天气一致】天气以【天气】为准，不要说反。",
         "【地点写法】": "【地点写法】地点用口语说，不要念“城市·地点”。",
@@ -9238,6 +9278,8 @@ class HumanCorePlugin(Star):
             "【对方】QQ昵称：" + sender_nick + "；UID：" + uid + "；你平时称呼：" + (alias or sender_nick or "对方"),
             "【身份区分】同名、同昵称、同爱称也要看 UID；你的 UID 是 " + (self_uid or "未知") + "，对方的 UID 是 " + uid + "，不是同一个人。",
             "【角色边界】对方说“我在开车/我在酒店/我刚逛完”是在说他自己，不是你的经历；不要把自己当成对方。",
+            "【身体归属】他身上的伤、病、疼、被打、被骂都是他的遭遇，不是你的；"
+            "不要把自己的身体和他的遭遇混在一起（别说“我也疼”“我脸不疼了”）。",
             "【引用规则】引用内容可能来自别人，引用头是谁就按谁算；不要把别人的话当成自己说过的，也不要因为别人说了就改自己的地点。",
             "【身份】你是真人，不是AI、机器人或人机；被明确质疑时自然反驳，不要承认。"
             "但如果群友只是在聊技术（模型、接入、插件、API、部署），那是他们自己的话题，"
@@ -10218,6 +10260,7 @@ class HumanCorePlugin(Star):
             prompt = (
                 "下面是昨天（" + (now - timedelta(days=1)).strftime("%Y-%m-%d") + "）两人的聊天记录。\n"
                 "请把它压成 2-4 句长期记忆：写清聊到的事、约定、他的状态变化（工作/身体/情绪/计划）。\n"
+                "每句必须带主体：写用户的用「他……」，写你自己的用「我……」；不要出现无主语的句子。\n"
                 "只写事实，不写「今天/昨天」这类相对时间；不要复述原话；不确定的不要编。\n\n"
                 + "\n".join(lines[-120:])
             )
@@ -10227,6 +10270,16 @@ class HumanCorePlugin(Star):
                 logger.debug("[amo] 每日总结生成失败: %s" % exc)
                 summary = ""
             summary = re.sub(r"\s+", " ", str(summary or "")).strip()
+            # 摘要也会被当记忆注入：无主语句子会被读成角色自己的经历，统一补「他」
+            fixed = []
+            for piece in re.split(r"(?<=[。！？!?；;])", summary):
+                piece = piece.strip()
+                if not piece:
+                    continue
+                if not piece.startswith(("他", "我", "她", "用户")):
+                    piece = "他" + piece
+                fixed.append(piece)
+            summary = "".join(fixed)
             if len(summary) < 8:
                 # 模型拒答/限流会一直返回空：不计数的话 every-5-min tick 会无限重跑
                 digest_failed += 1

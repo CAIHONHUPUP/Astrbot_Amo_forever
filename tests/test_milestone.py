@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from milestone import (  # noqa: E402
     build_content,
     build_prompt,
+    normalize_subject,
     count_turns,
     should_archive,
     transcript,
@@ -67,6 +68,10 @@ class PromptTests(unittest.TestCase):
         self.assertIn("2026-11-09", prompt)
         self.assertIn("相对时间", prompt)
         self.assertIn("[他] 修 bug", prompt)
+
+    def test_normalize_subject_prefixes_missing_subject(self):
+        self.assertEqual(normalize_subject("被扇了耳光，脸疼。"), "他被扇了耳光，脸疼。")
+        self.assertEqual(normalize_subject("他修了一天 bug。我也累。"), "他修了一天 bug。我也累。")
 
     def test_content_has_milestone_prefix(self):
         content = build_content("2026-11-09", "他修了一天 bug")
