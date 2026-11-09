@@ -4,6 +4,11 @@
 >
 > 反馈、Bug、建议请加 QQ 群：**1055679275**
 
+## 6.6.4 logger 规范
+
+- `gift_engine.py` 不再回退内置 logging，统一从 `astrbot.api` 导入；
+- 上架审核要求：logger 必须且只能从 `astrbot.api` 导入。
+
 ## 6.6.2 数据接口对上
 
 - 时间回看 / 每日总结 / 里程碑：数据插件补齐 `recall_messages` / `messages_since`，不再空转；

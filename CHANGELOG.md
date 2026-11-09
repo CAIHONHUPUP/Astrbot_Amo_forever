@@ -1,5 +1,13 @@
 # Changelog
 
+## 6.6.4
+
+### 上架规范：logger 只从 astrbot.api 导入
+
+- `gift_engine.py` 去掉了 `import logging` 回退，统一 `from astrbot.api import logger`
+  （上架审核要求 logger 必须且只能从 `astrbot.api` 导入，禁止内置 logging）；
+- 单测改为先装 astrbot 桩再导入，不再依赖内置 logging 兜底。
+
 ## 6.6.2
 
 ### 数据接口对上 + 群引用按概率 + 伤痛归属

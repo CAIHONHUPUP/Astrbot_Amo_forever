@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
-"""礼物引擎的单测（纯标准库，不依赖 astrbot）。"""
+"""礼物引擎的单测。
+
+logger 按上架规范只能从 astrbot.api 导入，所以这里先用 astrbot 桩。
+"""
 
 from __future__ import annotations
 
@@ -13,6 +16,11 @@ import types
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import astrbot_stub  # noqa: E402
+
+astrbot_stub.install()
 
 from gift_engine import (  # noqa: E402
     GiftEngine,

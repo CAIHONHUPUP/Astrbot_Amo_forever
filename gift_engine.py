@@ -23,12 +23,8 @@ import threading
 import time
 import uuid
 
-try:
-    from astrbot.api import logger
-except Exception:  # 单测时允许脱离 AstrBot 运行
-    import logging
-
-    logger = logging.getLogger("amo.gift")
+# 上架规范：logger 只能从 astrbot.api 导入，不允许回退到内置 logging
+from astrbot.api import logger
 
 MAX_WISHES = 400
 MAX_GIFTS = 400
