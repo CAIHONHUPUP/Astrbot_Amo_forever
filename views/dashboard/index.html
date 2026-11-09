@@ -57,9 +57,8 @@
     .brand { display: flex; align-items: center; gap: 9px; font-size: 20px; font-weight: 650; letter-spacing: .5px; }
     .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--pink); box-shadow: 0 0 10px rgba(232, 72, 154, .45); }
     .clock { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
-    .neuron-btn { margin-left: 10px; width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--line);
-      background: #fff; color: #7a6f86; display: grid; place-items: center; cursor: pointer; transition: .18s; }
-    .neuron-btn:hover, .neuron-btn.on { border-color: var(--pink); color: var(--pink); box-shadow: 0 0 0 3px rgba(224,106,154,.12); }
+    .neuron-tab { flex: 0 0 auto; width: 34px; min-width: 34px; padding: 0; display: grid; place-items: center; color: #7a6f86; }
+    .neuron-tab:hover, .neuron-tab.on { color: var(--pink); border-color: var(--pink); box-shadow: 0 0 0 3px rgba(224,106,154,.12); }
     .card {
       background: var(--card);
       border: 1px solid var(--line);
@@ -317,25 +316,22 @@
   <div class="wrap">
     <header>
       <div class="brand"><span class="dot"></span> 陪伴</div>
-      <div style="display:flex;align-items:center">
       <div class="clock" id="clock">--</div>
-      <button class="neuron-btn" id="btnNeuron" title="关系图谱" aria-label="关系图谱">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6">
-          <circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="17" r="2.2"/><circle cx="19" cy="17" r="2.2"/>
-          <circle cx="12" cy="12" r="2.2"/>
-          <path d="M12 7.2v2.6M10.2 13.4 6.6 15.6M13.8 13.4l3.6 2.2"/>
-        </svg>
-      </button>
-      </div>
     </header>
 
     <div class="tabnav">
       <button class="tabnav-arrow left" type="button" aria-label="向前">‹</button>
       <nav class="tabs">
       <button class="tab active" data-tab="status">状态</button>
+      <button class="tab neuron-tab" id="btnNeuron" title="关系图谱" aria-label="关系图谱">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8">
+          <circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="17" r="2.2"/><circle cx="19" cy="17" r="2.2"/>
+          <circle cx="12" cy="12" r="2.2"/>
+          <path d="M12 7.2v2.6M10.2 13.4 6.6 15.6M13.8 13.4l3.6 2.2"/>
+        </svg>
+      </button>
       <button class="tab" data-tab="world">世界</button>
       <button class="tab" data-tab="schedule">日程</button>
-      <button class="tab" data-tab="relations">关系</button>
       <button class="tab" data-tab="actions">操作</button>
       <button class="tab" data-tab="profiles">用户</button>
       <button class="tab" data-tab="gift">礼物</button>
@@ -453,32 +449,6 @@
           <button id="btnDeleteProfile" class="danger">删除画像</button>
         </div>
         <div id="profileMemories" class="memory-list"></div>
-      </section>
-    </div>
-
-    <div id="tab-relations" class="tab-panel" hidden>
-      <section class="card">
-        <div class="label">关系网</div>
-        <div class="sub">查看和编辑用户之间的关系；仅 AstrBot 管理员可修改。</div>
-        <div class="relation-form">
-          <label>用户 A<select id="relA" class="input"></select></label>
-          <label>用户 B<select id="relB" class="input"></select></label>
-          <label>关系
-            <select id="relType" class="input">
-              <option value="朋友">朋友</option>
-              <option value="家人">家人</option>
-              <option value="恋人">恋人</option>
-              <option value="同事">同事</option>
-              <option value="同学">同学</option>
-              <option value="熟人">熟人</option>
-              <option value="陌生人">陌生人</option>
-              <option value="仇人">仇人</option>
-            </select>
-          </label>
-          <label>备注<input id="relNote" class="input" placeholder="备注（可选）" /></label>
-          <button id="btnSaveRelation">添加 / 更新</button>
-        </div>
-        <div id="relationList" class="profile-list"><div class="sub">加载中…</div></div>
       </section>
     </div>
 
@@ -1634,7 +1604,6 @@
       if (name === "world") loadWorld();
       if (name === "schedule") loadSchedule();
       if (name === "profiles") loadProfiles();
-      if (name === "relations") loadRelations();
       if (name === "gift") loadGift();
       if (name === "usage") loadUsage();
       if (name === "settings") {
@@ -1884,91 +1853,6 @@
 
     document.getElementById("btnProfileSearch").addEventListener("click", () => renderProfiles(profilesCache));
     document.getElementById("profileSearch").addEventListener("input", () => renderProfiles(profilesCache));
-
-    let relationProfiles = [];
-
-    function renderRelations(data) {
-      relationProfiles = Array.isArray(data.profiles) ? data.profiles : [];
-      const selectA = document.getElementById("relA");
-      const selectB = document.getElementById("relB");
-      const keepA = selectA.value;
-      const keepB = selectB.value;
-      [selectA, selectB].forEach((select) => {
-        select.textContent = "";
-        relationProfiles.forEach((profile) => {
-          const option = document.createElement("option");
-          option.value = profile.uid;
-          option.textContent = (profile.name || profile.alias || profile.uid) + "（" + profile.uid + "）";
-          select.appendChild(option);
-        });
-      });
-      if (keepA) selectA.value = keepA;
-      if (keepB) selectB.value = keepB;
-
-      const list = document.getElementById("relationList");
-      list.textContent = "";
-      const edges = Array.isArray(data.edges) ? data.edges : [];
-      if (!edges.length) {
-        const empty = document.createElement("div");
-        empty.className = "sub";
-        empty.textContent = "还没有关系记录。选择两个人，添加一条关系。";
-        list.appendChild(empty);
-        return;
-      }
-      edges.forEach((edge) => {
-        const row = document.createElement("div");
-        row.className = "relation-row";
-        const main = document.createElement("div");
-        main.className = "rel-main";
-        main.textContent = (edge.a_name || edge.a_uid) + " ↔ " + (edge.b_name || edge.b_uid);
-        const badge = document.createElement("span");
-        badge.className = "rel-badge";
-        badge.textContent = edge.relation || "朋友";
-        const del = document.createElement("button");
-        del.textContent = "删除";
-        del.addEventListener("click", async () => {
-          try {
-            const result = await call("relation_delete", { a_uid: edge.a_uid, b_uid: edge.b_uid });
-            renderRelations(objectFrom(result));
-            toast("关系已删除");
-          } catch (error) {
-            toast("删除失败：" + (error.message || error), true);
-          }
-        });
-        row.appendChild(main);
-        row.appendChild(badge);
-        row.appendChild(del);
-        list.appendChild(row);
-      });
-    }
-
-    async function loadRelations() {
-      try {
-        const result = await call("relations");
-        renderRelations(objectFrom(result));
-      } catch (error) {
-        document.getElementById("relationList").textContent = "读取失败：" + (error.message || error);
-      }
-    }
-
-    document.getElementById("btnSaveRelation").addEventListener("click", async () => {
-      const a_uid = document.getElementById("relA").value;
-      const b_uid = document.getElementById("relB").value;
-      const relation = document.getElementById("relType").value;
-      const note = document.getElementById("relNote").value.trim();
-      if (!a_uid || !b_uid || a_uid === b_uid) {
-        toast("请选择两个不同的用户", true);
-        return;
-      }
-      try {
-        const result = await call("relation_save", { a_uid, b_uid, relation, note });
-        renderRelations(objectFrom(result));
-        document.getElementById("relNote").value = "";
-        toast("关系已保存");
-      } catch (error) {
-        toast("保存失败：" + (error.message || error), true);
-      }
-    });
 
     let configItems = [];
 
