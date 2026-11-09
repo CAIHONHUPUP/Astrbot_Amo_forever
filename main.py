@@ -523,6 +523,12 @@ AFFECTION_WORDS = ("喜欢", "爱你", "想你", "抱抱", "亲亲", "贴贴", "
 INSULT_WORDS = ("傻逼", "智障", "废物", "垃圾", "去死", "恶心", "滚")
 
 
+# 关系网里的内部节点：bot/self 代表"我自己"，不是真实人物。
+# 这种边只存在本地（_push_relation_to_data 不推给记忆终端），比较远端/本地时也要排掉，
+# 否则远端永远比本地少一条，每 10 分钟误报一次"关系网不同步"。
+INTERNAL_RELATION_NODES = ("bot", "self")
+
+
 # ---------------------------------------------------------------------------
 # 基础工具
 # ---------------------------------------------------------------------------
@@ -6542,6 +6548,9 @@ class HumanCorePlugin(Star):
             b_uid = str(edge.get("b_uid") or "")
             if not a_uid or not b_uid:
                 continue
+            if a_uid in INTERNAL_RELATION_NODES or b_uid in INTERNAL_RELATION_NODES:
+                # 老版本可能推过 bot 边：不参与比较，也不动本地
+                continue
             remote.add(tuple(sorted([a_uid, b_uid])))
             try:
                 self.db.upsert_relation(a_uid, b_uid, edge.get("relation") or "朋友", edge.get("note") or "")
@@ -6555,6 +6564,13 @@ class HumanCorePlugin(Star):
             local_rows = self.db.list_relations()
         except Exception:
             local_rows = []
+        # bot/self 边推不到远端，比较前先排掉：不然远端永远"比本地少"，
+        # 这条 warning 会每轮都响，而且下面"终端删了本地也删"永远不会执行。
+        local_rows = [
+            item for item in local_rows
+            if str(item.get("a_uid") or "") not in INTERNAL_RELATION_NODES
+            and str(item.get("b_uid") or "") not in INTERNAL_RELATION_NODES
+        ]
         if not remote or len(remote) < len(local_rows):
             if remote:
                 logger.warning(
@@ -6771,7 +6787,7 @@ class HumanCorePlugin(Star):
     async def _push_relation_to_data(self, a_uid, b_uid, relation, note=""):
         # "bot"/"self" 是插件内部标识，不是真实人物：写进记忆终端会让关系图多出一个
         # 叫 bot 的节点，所以只推真实的人与人之间的关系。
-        if str(a_uid) in ("bot", "self") or str(b_uid) in ("bot", "self"):
+        if str(a_uid) in INTERNAL_RELATION_NODES or str(b_uid) in INTERNAL_RELATION_NODES:
             return
         await self._data_call(
             "save_relation", self._data_bot_id(), str(a_uid), str(b_uid),
