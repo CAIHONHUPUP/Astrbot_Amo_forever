@@ -9273,7 +9273,11 @@ class HumanCorePlugin(Star):
             parts.append(city_block)
         try:
             travel_row = self.db.kv_get("travel", {}) or {}
-            if isinstance(travel_row, dict) and str(travel_row.get("city") or "").strip():
+            if (
+                isinstance(travel_row, dict)
+                and str(travel_row.get("city") or "").strip()
+                and str(travel_row.get("start_day") or "") <= today_str()
+            ):
                 travel_city = str(travel_row["city"])
                 try:
                     travel_spots = _city_pick_spots(self.scenic_spots(), travel_city, today_str())
@@ -9289,7 +9293,12 @@ class HumanCorePlugin(Star):
         try:
             he_city = str(self.db.kv_get("he_city", "") or "").strip()
             my_city = str(self.db.kv_get("his_city", "") or "").strip()
-            if he_city and he_city != my_city and not self.db.kv_get("travel", {}):
+            _tv = self.db.kv_get("travel", {}) or {}
+            _tv_active = bool(
+                isinstance(_tv, dict) and str(_tv.get("city") or "").strip()
+                and str(_tv.get("start_day") or "") <= today_str()
+            )
+            if he_city and he_city != my_city and not _tv_active:
                 parts.append(
                     "【他在】他现在在 " + he_city + "，你还在 " + (my_city or "东莞")
                     + "上班；你有点想他，但没过去。"
@@ -11885,17 +11894,16 @@ class HumanCorePlugin(Star):
         if self.db.kv_get("wander_trip", {}):
             return ""
         if _follow_invite(text):
-            city = (
-                str(self.db.kv_get("he_city", "") or "").strip()
-                or str(self.db.kv_get("his_city", "") or "").strip()
-            )
-            if city:
-                self.db.kv_set("follow_declined", {})
-                return await self._start_follow_trip(uid, {
-                    "city": city, "id": "",
-                    "tomorrow": datetime.now().hour >= 22,
-                })
-            return "【邀请】他让你过去，但你不知道他在哪个城市：先问一句他在哪。"
+            city = str(self.db.kv_get("he_city", "") or "").strip()
+            if not city:
+                return "【邀请】他让你过去，但你不知道他在哪个城市：先问一句他在哪。"
+            if city == _CITY_DEFAULT:
+                return "【邀请】他让你过去，可你俩都在东莞：自然回一句“我不就在你旁边吗”之类的。"
+            self.db.kv_set("follow_declined", {})
+            return await self._start_follow_trip(uid, {
+                "city": city, "id": "",
+                "tomorrow": datetime.now().hour >= 22,
+            })
         if offer.get("city"):
             if _wander_agree(text):
                 return await self._start_follow_trip(uid, offer)
@@ -11913,10 +11921,15 @@ class HumanCorePlugin(Star):
             if declined_city and declined_city == name:
                 return "【别重复提】你之前问过要不要去陪他，他没让；别再主动提这事，按他说的上班就好。"
             return ""
+        if name == _CITY_DEFAULT:
+            self.db.kv_set("he_city", name)
+            self.db.kv_set("follow_declined", {})
+            return ""
         # 到了新的城市：之前"被拒过"的标记作废，可以再问一次
         self.db.kv_set("follow_declined", {})
         tomorrow = datetime.now().hour >= 22
         self.db.kv_set("he_city", name)
+        self.db.kv_set("wander_offer", {})
         self.db.kv_set("follow_offer", {
             "ts": now, "city": name, "id": str(hit.get("id") or ""), "tomorrow": tomorrow,
         })
@@ -12032,6 +12045,16 @@ class HumanCorePlugin(Star):
             await self._write_memory_checked(uid, content, "event", 1)
         except Exception:
             pass
+        try:
+            log = self.db.kv_get("travel_log", []) or []
+            if isinstance(log, list):
+                log.append({
+                    "day": today_str(), "hour": "%02d:00" % datetime.now().hour,
+                    "city": city, "back": True,
+                })
+                self.db.kv_set("travel_log", log[-10:])
+        except Exception:
+            pass
 
     async def _switch_weather_city(self, hit):
         """按城市跟随的结果改 weather_city / 显示名，并立刻刷一次天气。"""
@@ -12067,7 +12090,7 @@ class HumanCorePlugin(Star):
             return ""
         if str(profile.get("relation") or "") != "相恋":
             return ""
-        if self.db.kv_get("travel", {}):
+        if self.db.kv_get("travel", {}) or self.db.kv_get("follow_offer", {}):
             return ""
         text = str(event.message_str or "")
         now = now_ts()
@@ -12121,8 +12144,8 @@ class HumanCorePlugin(Star):
             else:
                 self.db.kv_set("wander_offer", {
                     "ts": now, "want": True, "city": city,
-                    "spots": [str(x.get("name") or "") for x in spots][:2],
-                    "spot_rows": spots[:2],
+                    "spots": [str(x.get("name") or "") for x in spots][:4],
+                    "spot_rows": spots[:4],
                 })
             return _wander_offer_block(bool(want), city, spots)
         if offer.get("want") and _wander_agree(text):
@@ -12158,6 +12181,8 @@ class HumanCorePlugin(Star):
         tomorrow = datetime.now().hour >= 22
         start = (date.today() + timedelta(days=1)) if tomorrow else date.today()
         days = max(1, min(3, _wander_trip_days(random)))
+        if days == 1 and not tomorrow and datetime.now().hour >= 17:
+            days = 2  # 傍晚才走，别刚出门就回家
         return_day = start + timedelta(days=days - 1)
         return_hour = 21 if days == 1 else 12
         hit = self._city_lookup(city)

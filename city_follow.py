@@ -357,9 +357,11 @@ def travel_to_events(city, start_hour=9, spots=None, weekday=False, seed=""):
     digest = int(hashlib.md5((str(seed or "") + "|" + name).encode("utf-8")).hexdigest(), 16)
     mode = _TRANSPORT[digest % len(_TRANSPORT)]
     items = []
-    if 7 <= start <= 9:
+    if 0 < start <= 9:
         items.append(_seg(0, "在他电脑里睡着", "他桌面上", "home", "sleep"))
+    if 7 < start <= 9:
         items.append(_seg(7, "醒来收拾东西，把要带的塞进包里", "他桌面上", "home", "life"))
+    if 8 < start <= 9:
         items.append(_seg(8, "洗漱完，出门前再检查一遍", "他桌面上", "home", "life"))
     if start < 24:
         items.append(_seg(start, "出门去车站，坐" + mode + "去" + name,
@@ -368,7 +370,11 @@ def travel_to_events(city, start_hour=9, spots=None, weekday=False, seed=""):
         items.append(_seg(start + 1, "在去" + name + "的路上（约 2 小时）", "路上", "road", "commute",
                           transit="train"))
     if start + 2 < 24:
-        items.append(_seg(start + 2, "到了" + name + "，先喘口气", name + "·车站", "road", "life"))
+        if start + 3 >= 24:
+            items.append(_seg(start + 2, "到了" + name + "，天黑了直接去酒店住下",
+                              name + "·酒店房间", "hotel", "rest"))
+        else:
+            items.append(_seg(start + 2, "到了" + name + "，先喘口气", name + "·车站", "road", "life"))
     if start + 3 < 24:
         items += travel_events(name, start + 3, spots=spots, weekday=weekday)
     return items
