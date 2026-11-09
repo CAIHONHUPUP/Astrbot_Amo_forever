@@ -182,7 +182,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.4.2"
+PLUGIN_VERSION = "6.4.4"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -1939,13 +1939,17 @@ class AmoDB:
         return [dict(row) for row in reversed(rows)]
 
     def interaction_stats(self, days=30):
-        """按 uid 统计真实互动量（只算用户自己说的话），给关系沉淀用。"""
-        cutoff = now_ts() - max(1, int(days)) * 86400
+        """按 uid 统计真实互动量（只算用户自己说的话），给关系沉淀用。
+
+        ``days <= 0`` 表示统计全部历史，这样很早以前聊过的人也会被记进关系网。
+        """
+        days = int(days or 0)
+        cutoff = 0 if days <= 0 else now_ts() - days * 86400
         with self.lock:
             rows = self.conn.execute(
                 "SELECT uid, MAX(name) AS name, COUNT(*) AS c, MIN(created_at) AS f, MAX(created_at) AS l "
-                "FROM messages WHERE role='user' AND uid!='' AND uid!='bot' AND created_at>? "
-                "GROUP BY uid ORDER BY c DESC LIMIT 200",
+                "FROM messages WHERE role='user' AND uid!='' AND uid!='bot' AND created_at>=? "
+                "GROUP BY uid ORDER BY c DESC LIMIT 1000",
                 (cutoff,),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -7458,9 +7462,13 @@ class HumanCorePlugin(Star):
                 logger.debug("[amo] 自动关系写入失败: %s" % exc)
 
     def _relation_network_text(self, uid):
-        """给当前用户生成两跳内的关系网摘要；只读。"""
+        """给当前用户生成两跳内的关系网摘要；只读。
+
+        「陌生人」只在面板图谱里出现，不进提示词——不然每句都带一串「小明和小满是陌生人」。
+        """
         try:
-            edges = self.db.list_relations()
+            edges = [edge for edge in self.db.list_relations()
+                     if str(edge.get("relation") or "") != "陌生人"]
         except Exception:
             return ""
         uid = str(uid or "")
@@ -8887,19 +8895,33 @@ class HumanCorePlugin(Star):
     async def _sediment_relations(self):
         """按真实互动量沉淀关系网：聊得多就是熟人/朋友，并让 bot 通过你认识你的人。
 
-        只补两种情况，且只写「自动：」「推断：」两类 note（算法见 relation_sediment.py）：
-        1. bot ↔ 用户：近 30 天 ≥15 条且跨 ≥2 天 → 熟人；≥60 条且跨 ≥7 天 → 朋友；
-        2. 两跳推断：bot↔用户已是熟/朋友，而用户↔A 有非仇人边 → bot↔A 记「朋友」，note「推断：经X认识」。
-        管理员手设的关系（note 不带这两个前缀）永远不覆盖；家人/恋人/仇人不改，自动边只升不降。
+        只补两类 note（算法见 relation_sediment.py）：
+        1. bot ↔ 用户（全部历史累计）：聊过一句 / 只在人物列表里 → 陌生人；
+           ≥15 条且跨 ≥2 天 → 熟人；≥60 条且跨 ≥7 天 → 朋友；
+        2. 两跳推断：bot↔用户已是熟/朋友，而用户↔A 有非仇人边 → bot↔A 记「朋友」，
+           note「推断：经X认识」，每人最多 5 条。
+        管理员手设的关系（note 不带「自动：」「推断：」）永远不覆盖；
+        家人/恋人/仇人不改；自动边只升不降。
         """
         if plan_relation_edges is None:
             return
-        days = max(1, int(self.cfg_int("relation_sediment_days", 30)))
+        # 0 = 统计全部历史：老用户、只聊过一两句的人也要进关系网
+        days = max(0, int(self.cfg_int("relation_sediment_days", 0)))
         try:
             stats = self.db.interaction_stats(days)
         except Exception as exc:
             logger.debug("[amo] 互动统计失败: %s" % exc)
             return
+        seen = {str(row.get("uid") or "") for row in stats}
+        try:
+            # 只出现在人物列表、从没聊过天的人，也记成「陌生人」进图
+            for item in self.db.list_profiles(limit=1000):
+                uid = str(item.get("uid") or "")
+                if uid and uid not in seen:
+                    stats.append({"uid": uid, "c": 0, "f": 0, "l": 0})
+                    seen.add(uid)
+        except Exception as exc:
+            logger.debug("[amo] 读取人物列表失败: %s" % exc)
         if not stats:
             return
 
@@ -8921,11 +8943,12 @@ class HumanCorePlugin(Star):
 
         infer_limit = max(1, min(10, int(self.cfg_int("relation_infer_per_user", 5))))
         try:
-            plan = plan_relation_edges(stats, existing, names, days, infer_limit)
+            plan = plan_relation_edges(stats, existing, names, infer_limit)
         except Exception as exc:
             logger.debug("[amo] 关系沉淀计算失败: %s" % exc)
             return
-        for a_uid, b_uid, relation, note in plan:
+        # 一次最多写 300 条，人物很多时分成几轮补齐，别把 tick 卡太久
+        for a_uid, b_uid, relation, note in plan[:300]:
             try:
                 if not self.db.upsert_relation(a_uid, b_uid, relation, note):
                     continue
