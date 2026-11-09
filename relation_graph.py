@@ -18,11 +18,15 @@ def spread_scores(edges, uid, max_hops=3, decay=HOP_WEIGHTS):
     """返回 {(a_uid, b_uid): 权重}，权重越小越远。
 
     ``edges`` 是无向边列表；同一对端点只保留最高权重。
+    ``max_hops``：扩散深度，0 和 1 都表示「只看直连」（0 不再被当成默认值 2），
+    None 表示默认两跳。
     """
     uid = str(uid or "")
     if not uid or not edges:
         return {}
-    hops = max(1, min(int(max_hops or 2), len(decay)))
+    # 0 以前被 `max_hops or 2` 吞成 2 跳；现在显式区分 None（默认两跳）和 0（只看直连）。
+    hop_count = 2 if max_hops is None else int(max_hops)
+    hops = max(1, min(hop_count, len(decay)))
     graph = {}
     for edge in edges:
         a = str(edge.get("a_uid") or "")

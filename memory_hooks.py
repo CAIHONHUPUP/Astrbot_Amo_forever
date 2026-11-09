@@ -314,20 +314,55 @@ class AmoDataProvider(MemoryProvider):
             return result
         return {"ok": bool(result)}
 
+    async def _call_all(self, names):
+        """按 (对象, 方法) 顺序返回所有可调用的候选接口（去重）。"""
+        found = []
+        seen = set()
+        for owner in (self._mem(), self._store()):
+            if owner is None:
+                continue
+            for name in names:
+                method = getattr(owner, name, None)
+                if not callable(method):
+                    continue
+                key = (id(owner), name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                found.append(method)
+        return found
+
     async def recall(self, uid, query="", limit=6, scope="", group_id=""):
-        method = await self._call(("recall", "search_memory", "query_memory", "search"))
-        if method is None:
+        """先按完整签名调，TypeError 逐级缩短参数；换方法名重试的是「非 TypeError」。
+
+        以前只选中第一个存在的方法名：接口改名/签名变化时第一次 TypeError 后
+        就只剩缩短参数重试，其它候选方法（search_memory / query_memory …）永远不会被尝试，
+        表现是「她失忆」但日志干净。
+        """
+        methods = await self._call_all(("recall", "search_memory", "query_memory", "search"))
+        if not methods:
             return []
-        try:
-            rows = await method(self.rt.bot_id(), str(uid), query, limit, scope, group_id)
-        except TypeError:
-            try:
-                rows = await method(self.rt.bot_id(), str(uid), query, limit)
-            except Exception:
-                return []
-        except Exception:
-            return []
-        return self.rt.normalize_memories(rows)
+        last_exc = None
+        for method in methods:
+            attempts = (
+                (self.rt.bot_id(), str(uid), query, limit, scope, group_id),
+                (self.rt.bot_id(), str(uid), query, limit),
+                (self.rt.bot_id(), str(uid), query),
+            )
+            for args in attempts:
+                try:
+                    rows = await method(*args)
+                except TypeError as exc:
+                    last_exc = exc
+                    continue
+                except Exception as exc:
+                    last_exc = exc
+                    break  # 这个方法本身坏了，换下一个候选方法名
+                return self.rt.normalize_memories(rows)
+        if last_exc is not None:
+            self.note("召回失败（已试 %d 个接口）: %s: %s"
+                      % (len(methods), type(last_exc).__name__, last_exc))
+        return []
 
     async def profile(self, uid):
         method = await self._call(("get_profile", "profile"))

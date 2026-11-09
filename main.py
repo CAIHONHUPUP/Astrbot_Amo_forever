@@ -1492,7 +1492,8 @@ class AmoDB:
                     proactive_day TEXT DEFAULT '',
                     proactive_count INTEGER DEFAULT 0,
                     relation_at REAL DEFAULT 0,
-                    is_admin INTEGER DEFAULT 0
+                    is_admin INTEGER DEFAULT 0,
+                    profile_updated_at REAL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1552,6 +1553,11 @@ class AmoDB:
                 if "relation_at" not in cols:
                     self.conn.execute("ALTER TABLE profiles ADD COLUMN relation_at REAL DEFAULT 0")
                     self.conn.execute("UPDATE profiles SET relation_at=last_seen WHERE relation_at=0")
+                    self.conn.commit()
+                if "profile_updated_at" not in cols:
+                    # 画像最后一次「本地手动修改」的时间：面板/命令改画像才更新，
+                    # 收消息刷新 last_seen 不算，否则面板改完聊一句就被本地旧值覆盖。
+                    self.conn.execute("ALTER TABLE profiles ADD COLUMN profile_updated_at REAL DEFAULT 0")
                     self.conn.commit()
             except Exception:
                 pass
@@ -1648,7 +1654,7 @@ class AmoDB:
             row = self.conn.execute("SELECT * FROM profiles WHERE uid=?", (uid,)).fetchone()
         return dict(row) if row else {}
 
-    def update_profile(self, uid, **fields):
+    def update_profile(self, uid, mark_local=True, **fields):
         allowed = ("name", "alias", "birthday", "relation", "notes",
                    "affection", "is_admin")
         updates = []
@@ -1659,6 +1665,9 @@ class AmoDB:
                 values.append(value)
         if "relation" in fields:
             updates.append("relation_at=?")
+            values.append(now_ts())
+        if mark_local:
+            updates.append("profile_updated_at=?")
             values.append(now_ts())
         if not updates:
             return False
@@ -3896,6 +3905,28 @@ class ReplyGate:
 # 插件主体
 # ---------------------------------------------------------------------------
 
+# 面板写操作路由：只注册 POST + 套 _web_guard。
+# 以前守卫按「methods 里有没有 GET」判断，而写接口全被注册成 GET+POST，于是守卫一次都没执行过。
+WRITE_ROUTES = frozenset({
+    "/config/save", "/config_save",
+    "/profile/save", "/profile_save",
+    "/profile/delete", "/profile_delete",
+    "/relation/save", "/relation_save",
+    "/relation/delete", "/relation_delete",
+    "/memory/add", "/memory_add",
+    "/memory/delete", "/memory_delete",
+    "/mood/update", "/mood_update",
+    "/schedule/regen", "/schedule_regen",
+    "/kb/regen", "/kb_regen",
+    "/scenic_kb/regen", "/scenic_kb_regen",
+    "/worldview/regen", "/worldview_regen",
+    "/say",
+    "/city/set",
+    "/diary/write", "/diary/import", "/diary/open",
+    "/refresh_status",
+})
+
+
 class HumanCorePlugin(Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
@@ -4918,7 +4949,10 @@ class HumanCorePlugin(Star):
         if self.cfg_bool("local_chat_cache", False):
             self.db.add_message(umo, uid, name, "user", text)
         try:
-            await self._data_call("add_message", self._data_bot_id(), umo, uid, name, "user", text, platform=self._platform_of(event))
+            await self._data_call(
+                "add_message", self._data_bot_id(), umo, uid, name, "user", text,
+                platform=self._platform_of(event), message_id=self._event_message_id(event),
+            )
         except Exception as exc:
             logger.debug("[amo] 聊天记录同步失败: %s" % exc)
 
@@ -5902,6 +5936,19 @@ class HumanCorePlugin(Star):
             return "这里"
         return self.PLATFORM_LABELS.get(key, str(platform).strip())
 
+    @staticmethod
+    def _event_message_id(event):
+        """取平台消息 id（QQ 的 message_id / 飞书的 event id），用于聊天记录去重。"""
+        for holder in (getattr(event, "message_obj", None), event):
+            for attr in ("message_id", "msg_id", "id"):
+                try:
+                    value = getattr(holder, attr, None)
+                except Exception:
+                    value = None
+                if value not in (None, "", 0):
+                    return str(value)[:128]
+        return ""
+
     async def _data_call(self, name, *args, **kwargs):
         mem = self._data_mem()
         if mem is None:
@@ -5918,10 +5965,10 @@ class HumanCorePlugin(Star):
             logger.warning("[amo] 数据插件 %s 调用超时，先跳过（不影响这轮回复）" % name)
             return None
         except TypeError:
-            # 数据插件是旧版（还没有 platform 参数）时退一步，别把聊天记录整个丢掉
-            if "platform" in kwargs:
+            # 数据插件是旧版（还没有 platform / message_id 参数）时退一步，别把聊天记录整个丢掉
+            trimmed = {k: v for k, v in kwargs.items() if k not in ("platform", "message_id")}
+            if trimmed != kwargs:
                 try:
-                    trimmed = {k: v for k, v in kwargs.items() if k != "platform"}
                     return await func(*args, **trimmed)
                 except Exception as exc:
                     logger.debug("[amo] 数据插件 %s 调用失败: %s" % (name, exc))
@@ -6077,6 +6124,7 @@ class HumanCorePlugin(Star):
                 remote[uid] = row
         pushed = 0
         failed = 0
+        pulled = 0
         for profile in local:
             if not isinstance(profile, dict):
                 continue
@@ -6096,11 +6144,14 @@ class HumanCorePlugin(Star):
                     and str(old.get("remark") or "") == remark
                 ):
                     continue
-                # 面板刚改过（数据插件里更新时间比本地最后活跃还新）就别用本地覆盖它，
-                # 稍后拉取那一步会把面板的改动写回本地。
+                # 数据插件里更新过（面板手动改了名字/关系）就以远端为准，拉回本地。
+                # 比较基准是 profile_updated_at（本地手动改画像的时间），不是 last_seen：
+                # last_seen 每收一条消息都会刷新，拿它比会把面板改动永远判成「更旧」。
                 remote_at = to_float(old.get("updated_at"), 0)
-                local_at = to_float(profile.get("last_seen"), 0)
+                local_at = to_float(profile.get("profile_updated_at"), 0)
                 if remote_at and remote_at > local_at:
+                    if self._apply_remote_profile(uid, old, profile):
+                        pulled += 1
                     continue
             try:
                 ok = await self._push_profile_to_data(uid, profile)
@@ -6126,8 +6177,8 @@ class HumanCorePlugin(Star):
                     after = []
         total = max(len(after), len(remote))
         message = (
-            "[amo] 画像同步：本地 %d 条 / 数据插件 %d 条，本次补推 %d 条，失败 %d 条"
-            % (len(local), total, pushed, failed)
+            "[amo] 画像同步：本地 %d 条 / 数据插件 %d 条，本次补推 %d 条，拉回 %d 条，失败 %d 条"
+            % (len(local), total, pushed, pulled, failed)
         )
         if failed:
             logger.warning(message)
@@ -6141,6 +6192,23 @@ class HumanCorePlugin(Star):
         else:
             logger.debug(message)
         return pushed
+
+    def _apply_remote_profile(self, uid, remote_row, local_profile):
+        """把数据插件面板改过的画像字段拉回本地（不标记成本地手动修改）。"""
+        fields = {}
+        for src, dst in (("name", "name"), ("alias", "alias"), ("relation", "relation"), ("remark", "notes")):
+            value = str(remote_row.get(src) or "").strip()
+            if value and value != str(local_profile.get(dst) or "").strip():
+                fields[dst] = value
+        if not fields:
+            return False
+        try:
+            self.db.update_profile(uid, mark_local=False, **fields)
+        except Exception as exc:
+            logger.warning("[amo] 拉回画像 %s 失败: %s" % (uid, exc))
+            return False
+        logger.info("[amo] 画像从数据插件拉回：%s %s" % (uid, ",".join(fields.keys())))
+        return True
 
     async def _time_recall_context(self, event, uid):
         """按时间回看：他问"昨天下午/前天/上周三"时，去记忆终端取那段时间的聊天。"""
@@ -6412,18 +6480,12 @@ class HumanCorePlugin(Star):
                 # 免得上一条自动改名被旧值顶回去、来回打架。
                 try:
                     remote_at = to_float(row.get("updated_at"), 0)
-                    local_at = to_float(local.get("last_seen"), 0)
+                    local_at = to_float(local.get("profile_updated_at"), 0)
                 except Exception:
                     remote_at = local_at = 0
                 if remote_at and remote_at <= local_at:
                     continue
-                fields = {}
-                for src, dst in (("name", "name"), ("alias", "alias"), ("relation", "relation"), ("remark", "notes")):
-                    value = str(row.get(src) or "").strip()
-                    if value and value != str(local.get(dst) or "").strip():
-                        fields[dst] = value
-                if fields:
-                    self.db.update_profile(uid, **fields)
+                self._apply_remote_profile(uid, row, local)
         except Exception as exc:
             logger.debug("[amo] 拉取画像失败: %s" % exc)
         # 日程/世界观缓存：本地空的才用插件的
@@ -11004,43 +11066,40 @@ class HumanCorePlugin(Star):
                 self._safe_register("/" + clean + path, handler, methods, path)
         # 不注册无前缀的旧路由，避免和其他插件或 AstrBot 自带路由冲突。
 
-    def _web_guard(self, handler):
-        """写操作的前置检查：拒绝跨站 Origin/Referer，拒绝 GET 触发写。
+    def _web_guard(self, handler, is_write=False):
+        """写操作的前置检查：只收 POST + 拒绝跨站来源。
 
-        这不是完整的鉴权（AstrBot 侧有它自己的登录态），但能挡住
-        <img src>/聊天预览/外链这类最容易被利用的触发方式。
+        这不是完整鉴权（AstrBot 侧有它自己的登录态），而是挡住
+        <img src>/聊天预览/外链/跨站表单这类最容易触发的 CSRF 面。
+
+        - 写路由在 `_safe_register` 里已经只注册 POST，这里再兜一层（防止别的注册路径漏掉）；
+        - `Sec-Fetch-Site: cross-site` 直接 403（浏览器自己标的跨站，最可靠）；
+        - Origin/Referer 与 Host 不一致：带 `same-origin/same-site` 的放行（反向代理/内网穿透下
+          Host 常被改写），没有 Sec-Fetch-Site 的按跨站处理。
         """
         async def wrapper(*args, **kwargs):
             try:
                 method = ""
                 origin = ""
                 host = ""
+                site = ""
+                headers = None
                 if web_request is not None:
                     method = str(getattr(web_request, "method", "") or "").upper()
                     headers = getattr(web_request, "headers", None)
                     if headers is not None:
                         origin = str(headers.get("origin") or headers.get("referer") or "")
                         host = str(headers.get("host") or "")
-                if method and method != "POST":
-                    # 写接口同时注册 GET+POST：老版本 AstrBot 的插件页桥接只有 apiGet，
-                    # 硬禁 GET 会把面板按钮全废掉。这里改成「只挡浏览器导航/图片这类 GET」：
-                    # fetch/XHR（面板桥接走这条）放行，<img src>、<a> 点击、iframe 嵌入拦截。
-                    dest = ""
-                    mode = ""
-                    accept = ""
-                    if headers is not None:
-                        dest = str(headers.get("sec-fetch-dest") or "").lower()
-                        mode = str(headers.get("sec-fetch-mode") or "").lower()
-                        accept = str(headers.get("accept") or "").lower()
-                    if dest in ("image", "document", "iframe", "script", "style", "font", "video", "audio") \
-                            or mode == "navigate" \
-                            or (accept and accept.startswith(("image/", "text/html"))):
-                        logger.warning("[amo] 拒绝浏览器直连的 Web 写操作 GET（dest=%s mode=%s）" % (dest, mode))
-                        return {"code": 403, "msg": "该操作不能用浏览器直接打开"}
-                if origin and host:
+                        site = str(headers.get("sec-fetch-site") or "").strip().lower()
+                if is_write and method and method != "POST":
+                    logger.warning("[amo] 拒绝非 POST 的 Web 写操作（%s）" % method)
+                    return {"code": 403, "msg": "写操作只接受 POST（面板请刷新到最新版）"}
+                if is_write and site == "cross-site":
+                    logger.warning("[amo] 拒绝跨站 Web 写操作（origin=%s）" % origin)
+                    return {"code": 403, "msg": "拒绝跨站请求"}
+                if is_write and origin and host:
                     from urllib.parse import urlparse
                     origin_host = (urlparse(origin).hostname or "").lower()
-                    # 反向代理 / 内网穿透会把 Host 改成内网地址，这里把转发头也算进来
                     allowed_hosts = {(host.split(":")[0] or "").strip().lower()}
                     if headers is not None:
                         for key in ("x-forwarded-host", "x-real-host"):
@@ -11049,20 +11108,26 @@ class HumanCorePlugin(Star):
                                 allowed_hosts.add(value.split(":")[0].strip().lower())
                     allowed_hosts.discard("")
                     if origin_host and allowed_hosts and origin_host not in allowed_hosts:
-                        # 只记日志不拦截：AstrBot 常被 nginx / 内网穿透包一层，Host 与 Origin 不一致是常态，
-                        # 硬拦会把面板所有写操作废掉（上架审核也会当成功能 bug）。
-                        # 真正的 CSRF 防线是「写操作只收 POST」：跨站发 JSON 需要 CORS 预检，浏览器会先拦。
-                        logger.warning("[amo] Web 写操作来源与 Host 不一致（放行）: %s -> %s" % (origin, host))
-
+                        if site in ("same-origin", "same-site"):
+                            logger.debug("[amo] Web 写操作 Host 与 Origin 不一致（同源请求，放行）: %s -> %s"
+                                         % (origin, host))
+                        else:
+                            logger.warning("[amo] 拒绝来源不一致的 Web 写操作: %s -> %s" % (origin, host))
+                            return {"code": 403, "msg": "拒绝来源不一致的请求"}
             except Exception as exc:
                 logger.debug("[amo] Web 守卫检查失败（放行）: %s" % exc)
             return await handler(*args, **kwargs)
         return wrapper
 
     def _safe_register(self, route, handler, methods, desc):
-        # 写接口为了兼容老面板桥接都同时注册了 GET+POST，不能按「有没有 GET」决定要不要守卫；
-        # 守卫自己会区分 fetch/XHR 和 <img>/导航，所以统一套上（读接口多这一层也无害）。
-        handler = self._web_guard(handler)
+        # 写接口只收 POST：面板的 WRITE_ACTIONS 已经强制带 body 走 POST，
+        # 老版本面板桥接没有 apiPost 时会收到 405/403，然后自动退回 fetch POST（前端有兜底）。
+        # 读接口不套守卫，避免给状态轮询加额外开销。
+        is_write = route in WRITE_ROUTES
+        if is_write:
+            methods = ["POST"]
+        if is_write:
+            handler = self._web_guard(handler, is_write=True)
         try:
             self.context.register_web_api(route, handler, methods, desc)
             return True
@@ -12018,7 +12083,17 @@ class HumanCorePlugin(Star):
 
     async def api_refresh_status(self):
         await self._ensure_ready()
-        await self.state.refresh_weather(force=True)
+        # 限频：这个接口会强制刷新天气（和风额度），被 <img>/外链或连点触发时不能每次都打出去
+        now = now_ts()
+        last = to_float(getattr(self, "_refresh_status_at", 0), 0)
+        if last and now - last < 5:
+            return {"code": 0, "msg": "刚刚刷新过，请稍候", "data": {"throttled": True}}
+        self._refresh_status_at = now
+        try:
+            await self.state.refresh_weather(force=True)
+        except Exception as exc:
+            logger.warning("[amo] 手动刷新天气失败: %s" % exc)
+            return {"code": 1, "msg": "刷新失败：%s" % exc}
         return {"code": 0, "msg": "刷新成功"}
 
     async def api_profiles(self):
