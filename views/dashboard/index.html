@@ -58,11 +58,11 @@
     .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--pink); box-shadow: 0 0 10px rgba(232, 72, 154, .45); }
     .clock { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
     .tab.icon-tab { width: 32px; height: 32px; min-width: 32px; padding: 0; display: grid; place-items: center;
-      border: 1px solid var(--line); background: #fff; color: #7a6f86; border-radius: 10px; }
-    .tab.icon-tab.active, .tab.icon-tab:hover { color: var(--pink); border-color: var(--pink); box-shadow: 0 0 0 3px rgba(224,106,154,.12); }
-    .neuron-btn { margin-left: 8px; width: 32px; height: 32px; border-radius: 10px; border: 1px solid var(--line);
-      background: #fff; color: #7a6f86; display: grid; place-items: center; cursor: pointer; transition: .18s; }
-    .neuron-btn:hover, .neuron-btn.on { border-color: var(--pink); color: var(--pink); box-shadow: 0 0 0 3px rgba(224,106,154,.12); }
+      border: 1px solid transparent; background: transparent; color: #8a7f96; border-radius: 10px; }
+    .tab.icon-tab.active, .tab.icon-tab:hover { color: var(--pink); background: rgba(224,106,154,.08); border-color: rgba(224,106,154,.28); }
+    .neuron-btn { margin-left: 8px; width: 32px; height: 32px; border-radius: 10px; border: 1px solid transparent;
+      background: transparent; color: #8a7f96; display: grid; place-items: center; cursor: pointer; transition: .18s; }
+    .neuron-btn:hover, .neuron-btn.on { color: var(--pink); background: rgba(224,106,154,.08); border-color: rgba(224,106,154,.28); }
     .card {
       background: var(--card);
       border: 1px solid var(--line);
