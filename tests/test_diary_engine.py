@@ -113,6 +113,37 @@ class DiaryEngineTests(unittest.TestCase):
         self.assertTrue(any(item in prompt for item in diary_engine.DIARY_ENDING_HINTS))
         self.assertNotIn("不许偷看", diary_engine.DIARY_ENDING_HINTS)
 
+    def test_import_folder_merges_by_date(self):
+        source = tempfile.mkdtemp(prefix="amo-diary-src-")
+        try:
+            nested = os.path.join(source, "2025", "12", "31")
+            os.makedirs(nested)
+            with open(os.path.join(nested, "我的日记2025年12月31日.txt"), "w", encoding="utf-8") as fp:
+                fp.write("旧电脑的日记")
+            # 平铺文件按文件名解析
+            with open(os.path.join(source, "我的日记2025年12月30日.txt"), "w", encoding="utf-8") as fp:
+                fp.write("平铺的日记")
+            # 目标里已存在的一天：不能被覆盖
+            diary_engine.write_diary(self.root, date(2026, 11, 8), "现有的")
+            nested2 = os.path.join(source, "2026", "11", "08")
+            os.makedirs(nested2)
+            with open(os.path.join(nested2, "我的日记2026年11月08日.txt"), "w", encoding="utf-8") as fp:
+                fp.write("旧的同一天")
+            result = diary_engine.import_folder(source, self.root)
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["copied"], 2)
+            self.assertEqual(result["skipped"], 1)
+            self.assertIn("旧电脑的日记", diary_engine.read_diary(self.root, date(2025, 12, 31)))
+            self.assertIn("平铺的日记", diary_engine.read_diary(self.root, date(2025, 12, 30)))
+            self.assertIn("现有的", diary_engine.read_diary(self.root, date(2026, 11, 8)))
+        finally:
+            shutil.rmtree(source, ignore_errors=True)
+
+    def test_import_missing_folder(self):
+        result = diary_engine.import_folder(os.path.join(self.root, "nope"), self.root)
+        self.assertFalse(result["ok"])
+        self.assertIn("不存在", result["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

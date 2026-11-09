@@ -151,6 +151,7 @@ try:
         DEFAULT_DIR as _DIARY_DEFAULT_DIR,
         parse_day as _diary_parse_day,
         build_prompt as _diary_build_prompt,
+        import_folder as _diary_import_folder,
         write_diary as _diary_write,
         read_diary as _diary_read,
         list_tree as _diary_tree,
@@ -161,6 +162,7 @@ except Exception:
             DEFAULT_DIR as _DIARY_DEFAULT_DIR,
             parse_day as _diary_parse_day,
             build_prompt as _diary_build_prompt,
+            import_folder as _diary_import_folder,
         build_prompt as _diary_build_prompt,
             write_diary as _diary_write,
             read_diary as _diary_read,
@@ -168,7 +170,7 @@ except Exception:
                 )
     except Exception:
         _DIARY_DEFAULT_DIR = ""
-        _diary_parse_day = _diary_write = _diary_read = _diary_tree = None
+        _diary_parse_day = _diary_write = _diary_read = _diary_tree = _diary_import_folder = None
 
 try:
     from .milestone import (
@@ -10816,6 +10818,7 @@ class HumanCorePlugin(Star):
             ("/diary/read", self.api_diary_read, ["GET", "POST"]),
             ("/diary/write", self.api_diary_write, ["POST"]),
             ("/diary/open", self.api_diary_open, ["GET", "POST"]),
+            ("/diary/import", self.api_diary_import, ["POST"]),
             ("/profiles", self.api_profiles, ["GET", "POST"]),
             ("/get_profile", self.api_get_profile, ["GET", "POST"]),
             ("/profiles/sync", self.api_profiles_sync, ["GET", "POST"]),
@@ -11735,6 +11738,18 @@ class HumanCorePlugin(Star):
         self.db.delete_relation(a_uid, b_uid)
         await self._data_call("delete_relation", self._data_bot_id(), a_uid, b_uid)
         return await self.api_relations()
+
+    async def api_diary_import(self):
+        payload = await self._body()
+        path = str((payload or {}).get("path") or "").strip()
+        if not path:
+            return {"code": 1, "msg": "缺少文件夹路径"}
+        if not callable(_diary_import_folder):
+            return {"code": 1, "msg": "日记模块未加载"}
+        result = _diary_import_folder(path, self._diary_dir())
+        if not result.get("ok"):
+            return {"code": 1, "msg": result.get("error") or "导入失败"}
+        return {"code": 0, "data": result}
 
     async def api_diary_tree(self):
         if not callable(_diary_tree):

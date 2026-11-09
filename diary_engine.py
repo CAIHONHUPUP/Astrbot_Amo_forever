@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
@@ -172,6 +173,65 @@ def list_tree(root: str) -> Dict[str, Any]:
         if months:
             years.append({"year": int(year_name), "months": months})
     return {"total": total, "latest": latest, "years": years, "root": base}
+
+
+def _date_from_path(path: str, base: str) -> Optional[date]:
+    """从 年/月/日 文件夹或文件名解析日期。"""
+    match = _FILE_RE.match(os.path.basename(path))
+    if match:
+        try:
+            return date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+        except ValueError:
+            pass
+    try:
+        rel = os.path.relpath(os.path.dirname(path), base).split(os.sep)
+    except ValueError:
+        rel = []
+    for index, part in enumerate(rel):
+        if not re.match(r"^\d{4}$", part):
+            continue
+        if index + 2 >= len(rel):
+            continue
+        month, day_part = rel[index + 1], rel[index + 2]
+        if re.match(r"^\d{2}$", month) and re.match(r"^\d{2}$", day_part):
+            try:
+                return date(int(part), int(month), int(day_part))
+            except ValueError:
+                continue
+    return None
+
+
+def import_folder(source: str, root: str) -> Dict[str, Any]:
+    """把别处的日记文件夹合并进来：按 年/月/日 或文件名解析日期，已存在就跳过。"""
+    src = str(source or "").strip()
+    result: Dict[str, Any] = {
+        "ok": False, "source": src, "root": diary_root(root),
+        "copied": 0, "skipped": 0, "failed": 0,
+    }
+    if not src or not os.path.isdir(src):
+        result["error"] = "文件夹不存在"
+        return result
+    for dirpath, _dirnames, filenames in os.walk(src):
+        for name in filenames:
+            if not name.lower().endswith(".txt") or name.endswith(".tmp"):
+                continue
+            path = os.path.join(dirpath, name)
+            day = _date_from_path(path, src)
+            if not day:
+                result["failed"] += 1
+                continue
+            dest = diary_path(root, day)
+            if os.path.abspath(dest) == os.path.abspath(path) or os.path.exists(dest):
+                result["skipped"] += 1
+                continue
+            try:
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                shutil.copyfile(path, dest)
+                result["copied"] += 1
+            except OSError:
+                result["failed"] += 1
+    result["ok"] = True
+    return result
 
 
 def build_prompt(day: date, chat_lines, hourly_lines) -> str:

@@ -491,6 +491,7 @@
           </div>
           <div class="row">
             <button class="tab" id="diaryWrite" type="button">写昨天</button>
+            <button class="tab" id="diaryImport" type="button">导入文件夹</button>
             <button class="tab" id="diaryRefresh" type="button">刷新</button>
             <button class="tab" id="diaryOpen" type="button">打开文件夹</button>
           </div>
@@ -506,6 +507,16 @@
           <button class="tab" id="diaryClose" type="button" hidden>关闭</button>
         </div>
         <pre id="diaryText" style="white-space:pre-wrap;line-height:1.8;margin:0;font-family:inherit">从上面的年 / 月 / 日里点一天，就能读那天的日记。</pre>
+      </section>
+      <section class="card">
+        <div class="hint" style="line-height:1.8">
+          <strong>注意：</strong><br>
+          · 日记按 <code>年/月/日</code> 文件夹保存，文件名「我的日记YYYY年MM月DD日.txt」；<br>
+          · <strong>换电脑</strong>：把整个「日记」文件夹放到 <code>diary_dir</code>（默认 <code>D:\dafeiyu\日记</code>）就能读，日期按文件夹解析、不受拷贝时间影响；<br>
+          · 文件名被改过也能按所在日期文件夹读出来，但建议保持原名；<br>
+          · 日记<strong>不参与插件备份</strong>，请自己额外留一份；<br>
+          · 旧日记在别处：点「导入文件夹」，填那个文件夹路径，会按日期合并进来（已存在的不覆盖）。
+        </div>
       </section>
     </div>
 
@@ -795,7 +806,7 @@
           }
           if (result && typeof result === "object") {
             if (result.status === "error" || result.success === false || result.code === 1) {
-              errors.push(result.message || result.msg || "接口返回错误");
+              errors.push(action + " 接口返回错误：" + (result.message || result.msg || "未知错误"));
               continue;
             }
             // 403/405 这类说明桥接没走 POST（老版本 AstrBot 可能只有 apiGet）：
@@ -807,14 +818,14 @@
             return result;
           }
           if (result !== undefined && result !== null) {
-            errors.push(typeof result === "string" ? result.slice(0, 120) : "接口返回格式异常");
+            errors.push(action + " 接口返回格式异常：" + (typeof result === "string" ? result.slice(0, 120) : "无法解析"));
           }
         } catch (error) {
-          errors.push(error.message || String(error));
+          errors.push(action + " 接口请求失败：" + (error.message || String(error)));
           if (String(error.message || "").indexOf("超时") >= 0) break;
         }
       }
-      return { __error: errors[0] || "桥接调用失败" };
+      return { __error: errors.find((item) => item.indexOf("404") < 0) || errors[0] || "桥接调用失败" };
     }
 
     async function httpCall(action, payload) {
@@ -851,14 +862,22 @@
             let data = null;
             try { data = text ? JSON.parse(text) : null; } catch (error) { data = null; }
             if (data && (data.code === 0 || data.data !== undefined || data.status === "ok")) return data;
-            if (data && (data.message || data.msg)) errors.push(data.message || data.msg);
-            else errors.push("HTTP " + response.status);
+            const detail = (data && (data.message || data.msg)) || "";
+            errors.push({
+              status: response.status,
+              text: action + " 接口 " + response.status + (detail ? "：" + detail : ""),
+            });
           } catch (error) {
-            errors.push(error.message || String(error));
+            errors.push({
+              status: 0,
+              text: action + " 接口请求失败：" + (error.message || String(error)),
+            });
           }
         }
       }
-      throw new Error(errors[0] || "无法连接插件接口");
+      // 多个 base 会依次试；优先报真正出错的那个，而不是路由不存在造成的 404
+      const meaningful = errors.find((item) => item.status !== 404) || errors[0];
+      throw new Error(meaningful ? meaningful.text : "无法连接插件接口");
     }
 
     // 写操作在后端只接受 POST：这里强制带上 body，避免面板按钮变成 GET 被拒
@@ -1585,6 +1604,17 @@
     }
 
     document.getElementById("diaryClose").addEventListener("click", closeDiary);
+    document.getElementById("diaryImport").addEventListener("click", async () => {
+      const path = window.prompt("把要导入的日记文件夹路径粘贴进来（里面要有 年/月/日 结构，或「我的日记YYYY年MM月DD日.txt」）：", "");
+      if (!path) return;
+      try {
+        const data = objectFrom(await call("diary/import", { path: path.trim() })) || {};
+        toast("已导入 " + (data.copied || 0) + " 篇（跳过 " + (data.skipped || 0) + "，失败 " + (data.failed || 0) + "）");
+        loadDiary();
+      } catch (error) {
+        toast("导入失败：" + (error && error.message ? error.message : "接口未就绪"), true);
+      }
+    });
     document.getElementById("diaryRefresh").addEventListener("click", () => loadDiary());
     document.getElementById("diaryOpen").addEventListener("click", async () => {
       try {
