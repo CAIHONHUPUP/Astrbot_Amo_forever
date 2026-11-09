@@ -182,7 +182,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.4.6"
+PLUGIN_VERSION = "6.4.8"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -305,8 +305,8 @@ CN_HOLIDAYS = {
     "2025-04-04": "清明",
     "2025-05-01": "劳动节",
     "2025-05-31": "端午",
-    "2025-10-01": "国庆", "2025-10-02": "国庆", "2025-10-03": "国庆", "2025-10-04": "国庆", "2025-10-05": "国庆", "2025-10-06": "国庆", "2025-10-07": "国庆", "2025-10-08": "国庆",
-    "2025-10-06": "中秋",
+    "2025-10-01": "国庆", "2025-10-02": "国庆", "2025-10-03": "国庆", "2025-10-04": "国庆", "2025-10-05": "国庆", "2025-10-07": "国庆", "2025-10-08": "国庆",
+    "2025-10-06": "国庆中秋",
     "2026-01-01": "元旦",
     "2026-02-16": "除夕", "2026-02-17": "春节", "2026-02-18": "春节", "2026-02-19": "春节", "2026-02-20": "春节", "2026-02-21": "春节", "2026-02-22": "春节", "2026-02-23": "春节",
     "2026-04-05": "清明",
@@ -4385,7 +4385,19 @@ class HumanCorePlugin(Star):
         except RuntimeError:
             return None
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+
+        def _report(done):
+            self._tasks.discard(done)
+            if done.cancelled():
+                return
+            try:
+                exc = done.exception()
+            except Exception:
+                exc = None
+            if exc is not None:
+                logger.warning("[amo] 后台任务异常: %s", exc, exc_info=exc)
+
+        task.add_done_callback(_report)
         return task
 
     async def _ensure_ready(self):
@@ -7917,6 +7929,7 @@ class HumanCorePlugin(Star):
         transcript = "\n".join(lines[-8:])
         self_name, self_uid, self_qq_nick, self_display = await self._self_identity(event)
         sender_nick = str(event.get_sender_name() or profile.get("name") or uid).strip()
+        plat = self._platform_label(self._platform_of(event))
         system_parts = [
             persona,
             "【你的角色名】" + self_name + "（角色本名，不是QQ昵称）",
@@ -8912,16 +8925,18 @@ class HumanCorePlugin(Star):
         except Exception as exc:
             logger.debug("[amo] 互动统计失败: %s" % exc)
             return
-        seen = {str(row.get("uid") or "") for row in stats}
-        try:
-            # 只出现在人物列表、从没聊过天的人，也记成「陌生人」进图
-            for item in self.db.list_profiles(limit=1000):
-                uid = str(item.get("uid") or "")
-                if uid and uid not in seen:
-                    stats.append({"uid": uid, "c": 0, "f": 0, "l": 0})
-                    seen.add(uid)
-        except Exception as exc:
-            logger.debug("[amo] 读取人物列表失败: %s" % exc)
+        if self.cfg_bool("relation_stranger_edges", True):
+            seen = {str(row.get("uid") or "") for row in stats}
+            try:
+                # 只出现在人物列表、从没聊过天的人，也记成「陌生人」进图；
+                # 觉得面板边太多就把 relation_stranger_edges 关掉，只记聊过天的人
+                for item in self.db.list_profiles(limit=1000):
+                    uid = str(item.get("uid") or "")
+                    if uid and uid not in seen:
+                        stats.append({"uid": uid, "c": 0, "f": 0, "l": 0})
+                        seen.add(uid)
+            except Exception as exc:
+                logger.debug("[amo] 读取人物列表失败: %s" % exc)
         if not stats:
             return
 

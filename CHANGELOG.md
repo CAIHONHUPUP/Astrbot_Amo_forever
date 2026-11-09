@@ -1,5 +1,19 @@
 # Changelog
 
+## 6.4.8
+
+### 群聊 NameError 修回；后台任务不再静默
+
+- `_compose_reply` 里补回 `plat = self._platform_label(self._platform_of(event))`：
+  上一次这个补丁被提示词重构回退，导致群聊回复/延迟回复每次 `NameError`；
+- `_spawn` 的任务完成回调现在会检查 `task.exception()` 并 `warning`，
+  这类静默失败不会再「一条日志都没有」；
+- 新增 `tests/test_lint.py`：CI 用 pyflakes 扫 `main.py`，未定义名字（F821）直接红，
+  防止同类补丁再被重构掉；
+- 新增开关 `relation_stranger_edges`（默认开）：关掉后只记聊过天的人，
+  不再把「只在人物列表里」的画像也写成陌生人边；
+- 假期表里重复的 `2025-10-06` 合并成一条「国庆中秋」。
+
 ## 6.4.6
 
 ### 关系网改成 3D 神经元球

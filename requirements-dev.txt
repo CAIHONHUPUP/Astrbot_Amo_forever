@@ -1,1 +1,2 @@
 pytest>=7
+pyflakes>=3.0
