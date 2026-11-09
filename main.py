@@ -182,7 +182,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.5.2"
+PLUGIN_VERSION = "6.5.4"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -3432,6 +3432,12 @@ class LLMService:
             memory_text = ""
         if memory_text:
             system = system + "\n【关于他的记忆】\n" + memory_text
+        try:
+            relation_network = self.p._relation_network_text(str(profile.get("uid") or ""))
+        except Exception:
+            relation_network = ""
+        if relation_network:
+            system = system + "\n【关系网】\n" + relation_network
 
         def build_task(duplicate_hint=""):
             if not _pg_compose_task:
