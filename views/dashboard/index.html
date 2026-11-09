@@ -440,6 +440,7 @@
         </div>
         <div class="form-grid">
           <label>UID<input id="pUid" class="input" placeholder="用户 ID" /></label>
+          <div id="pLinks" class="sub" style="grid-column:1/-1;margin-top:-6px"></div>
           <label>名字<input id="pName" class="input" placeholder="名字" /></label>
           <label>称呼<input id="pAlias" class="input" placeholder="例如：宝贝、老大" /></label>
           <label>生日<input id="pBirthday" class="input" placeholder="MM-DD" /></label>
@@ -1762,6 +1763,19 @@
       document.getElementById("pRelation").value = profile.relation || "普通";
       document.getElementById("pAffection").value = Number(profile.affection || 0);
       document.getElementById("pNotes").value = profile.notes || "";
+      const linksBox = document.getElementById("pLinks");
+      linksBox.textContent = "";
+      call("profile/links", { uid: currentProfileUid, platform: profile.platform || "" })
+        .then((res) => {
+          const links = ((res && res.data && res.data.links) || [])
+            .filter((item) => item.uid && item.uid !== currentProfileUid);
+          if (links.length) {
+            linksBox.textContent = "关联身份：" + links.map((item) =>
+              (item.label || item.platform) + " " + item.uid + (item.name ? "（" + item.name + "）" : "")
+            ).join(" · ");
+          }
+        })
+        .catch(() => {});
       document.getElementById("profileMemories").textContent = "";
       document.getElementById("profileListCard").hidden = true;
       document.getElementById("profileEditor").hidden = false;

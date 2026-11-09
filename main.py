@@ -10614,6 +10614,7 @@ class HumanCorePlugin(Star):
             ("/config/save", self.api_config_save, ["GET", "POST"]),
             ("/config_save", self.api_config_save, ["GET", "POST"]),
             ("/profile/save", self.api_profile_save, ["GET", "POST"]),
+            ("/profile/links", self.api_profile_links, ["GET", "POST"]),
             ("/profile_save", self.api_profile_save, ["GET", "POST"]),
             ("/profile/delete", self.api_profile_delete, ["GET", "POST"]),
             ("/profile_delete", self.api_profile_delete, ["GET", "POST"]),
@@ -11314,6 +11315,31 @@ class HumanCorePlugin(Star):
             row["b_name"] = names.get(str(row.get("b_uid")), row.get("b_uid"))
             edges.append(row)
         return {"code": 0, "data": {"edges": edges, "profiles": profiles, "relations": list(NETWORK_RELATIONS)}}
+
+    async def api_profile_links(self):
+        """面板用：这个 UID 关联了哪些平台身份（QQ / 飞书等）。"""
+        data = await self._body()
+        uid = str(data.get("uid") or "").strip()
+        platform = str(data.get("platform") or "").strip() or "aiocqhttp"
+        if not uid:
+            return {"code": 0, "data": {"links": []}}
+        mem = self._data_mem()
+        if mem is None or not callable(getattr(mem, "person_context", None)):
+            return {"code": 0, "data": {"links": []}}
+        try:
+            detail = await self._data_call("person_context", self._data_bot_id(), platform, uid, 1)
+        except Exception as exc:
+            logger.debug("[amo] 读取关联身份失败: %s" % exc)
+            detail = {}
+        links = []
+        for item in (detail or {}).get("links") or []:
+            links.append({
+                "platform": str(item.get("platform") or ""),
+                "label": str(item.get("label") or item.get("platform") or ""),
+                "uid": str(item.get("uid") or ""),
+                "name": str(item.get("name") or ""),
+            })
+        return {"code": 0, "data": {"links": links}}
 
     async def api_profile_delete(self):
         """面板用：删掉一个人的档案，并把本插件跟他有关的引用清干净。
