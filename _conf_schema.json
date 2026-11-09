@@ -198,7 +198,7 @@
   "memory_provider": {
     "type": "string",
     "description": "记忆能力来源",
-    "hint": "auto：自动选可用的（优先「我想永远记住你」）；也可以填 amo_data / memory_companion / livingmemory 强制指定。",
+    "hint": "auto：自动选可用的（现在就是「我想永远记住你」）；也可以填 amo_data 强制指定。",
     "default": "auto"
   },
   "ctx_window": {
@@ -223,43 +223,6 @@
     "description": "外挂记忆插件检索超时（秒）",
     "hint": "调用牢记等插件的检索接口时的上限；超时自动退回旧的库内检索，不会卡住回复。",
     "default": 3
-  },
-  "memory_inject_livingmemory": {
-    "type": "bool",
-    "description": "把 livingmemory 的记忆也注入提示词",
-    "default": false,
-    "hint": "默认关闭：livingmemory 自己会把检索结果注入（BM25+向量+图），再注入一次会重复；只有把 livingmemory 当纯存储用时才打开"
-  },
-  "livingmemory_owner_ids": {
-    "type": "string",
-    "description": "livingmemory 里算作本人的 ID（逗号分隔）",
-    "default": "",
-    "hint": "跨平台用：QQ 号 + 飞书 openid 等。留空时只按当前 uid 匹配"
-  },
-  "companion_memory_plugin_name": {
-    "type": "string",
-    "description": "挂载的记忆插件",
-    "default": "auto",
-    "hint": "auto=自动检测已安装的插件；面板会列出你装的所有插件，选哪个就用哪个的记忆和画像。",
-    "_special": "select_memory_plugin"
-  },
-  "companion_profile_sync": {
-    "type": "bool",
-    "description": "从挂载插件自动补全用户画像",
-    "hint": "只补名字/生日/关系，不覆盖你手动设置的关系",
-    "default": true
-  },
-  "companion_memory_include_profile": {
-    "type": "bool",
-    "description": "读取挂载插件画像",
-    "hint": "strong_memories / boundaries / speaking_style 等",
-    "default": true
-  },
-  "companion_memory_include_important": {
-    "type": "bool",
-    "description": "读取挂载插件记忆",
-    "hint": "worldbook_member_profiles.important_memories 等长期记忆，不限条数",
-    "default": true
   },
   "chat_log_days": {
     "type": "int",
