@@ -330,7 +330,7 @@
       </button>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
-        <button class="tab icon-tab active" id="btnStatusIcon" data-tab="status" title="状态" aria-label="状态">
+        <button class="tab icon-tab" id="btnStatusIcon" data-tab="status" title="状态" aria-label="状态">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8">
             <path d="M2.5 12h4l2.2-5.5 3.1 11 2.3-5.5h5.4"/>
           </svg>
@@ -342,7 +342,7 @@
     <div class="tabnav">
       <button class="tabnav-arrow left" type="button" aria-label="向前">‹</button>
       <nav class="tabs">
-      <button class="tab" data-tab="world">世界</button>
+      <button class="tab active" data-tab="world">世界</button>
       <button class="tab" data-tab="schedule">日程</button>
       <button class="tab" data-tab="actions">操作</button>
       <button class="tab" data-tab="profiles">用户</button>
@@ -359,7 +359,7 @@
     </div>
 
 
-    <div id="tab-status" class="tab-panel">
+    <div id="tab-status" class="tab-panel" hidden>
       <section class="card status-shell">
         <div class="hero-top">
           <div>
@@ -402,7 +402,7 @@
       </section>
     </div>
 
-    <div id="tab-world" class="tab-panel" hidden>
+    <div id="tab-world" class="tab-panel">
       <section class="card">
         <div class="row between">
           <div>
@@ -2420,6 +2420,8 @@
     async function boot(attempt) {
       try {
         await load();
+        // 默认落在「世界」，想看状态点时钟左边的脉搏图标
+        showTab("world");
       } catch (error) {
         if (attempt < 2) {
           setTimeout(() => boot(attempt + 1), 1500);
