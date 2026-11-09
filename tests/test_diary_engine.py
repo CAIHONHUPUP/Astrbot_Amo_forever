@@ -97,6 +97,13 @@ class DiaryEngineTests(unittest.TestCase):
         self.assertIn("这天没怎么聊", prompt)
         self.assertIn("没有小日记", prompt)
 
+    def test_ending_hint_pool_has_48_unique(self):
+        self.assertEqual(len(diary_engine.DIARY_ENDING_HINTS), 48)
+        self.assertEqual(len(set(diary_engine.DIARY_ENDING_HINTS)), 48)
+        prompt = diary_engine.build_prompt(date(2026, 11, 8), ["他：在吗"], ["13:00 在工位"])
+        self.assertIn("只此一本，恕不外借", prompt)
+        self.assertIn("这本子是我的，你管不着", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()
