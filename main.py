@@ -7455,7 +7455,21 @@ class HumanCorePlugin(Star):
                 label = "珍贵" if tier >= 2 else ("重要" if tier == 1 else "普通")
             who = str(item.get("name") or "").strip()
             prefix = (who + "：") if (who and source in ("hub", "amo_data")) else ""
-            lines.append("· " + prefix + str(item.get("content", "")) + "（" + label + "）")
+            # 老记忆里常有"今天/昨晚/刚才"这种相对说法：注入时补一个记录日期，
+            # 免得她把 11-04 的事当成"昨晚"（用户反馈过一次）。
+            body = str(item.get("content", ""))
+            rel_words = ("今天", "今晚", "昨天", "昨晚", "刚才", "刚刚", "前天", "这会儿", "这两天")
+            created = to_int(item.get("created_at"))
+            if created and any(w in body for w in rel_words):
+                try:
+                    day = datetime.fromtimestamp(created)
+                    if day.strftime("%Y-%m-%d") != datetime.now().strftime("%Y-%m-%d"):
+                        body = "（记于 %s）%s" % (day.strftime("%m-%d"), body)
+                except Exception:
+                    pass
+            lines.append("· " + prefix + body + "（" + label + "）")
+        if lines:
+            lines.append("（记忆里出现的『今天/昨晚/刚才』是当时记下的说法，不是现在；对不上就以他刚说的为准。）")
         text = "\n".join(lines)
         budget = self.cfg_int("memory_inject_max_chars", 1200)
         if budget > 0 and len(text) > budget:
