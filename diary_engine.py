@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 DEFAULT_DIR = r"D:\dafeiyu\日记"
@@ -192,16 +192,3 @@ def build_prompt(day: date, chat_lines, hourly_lines) -> str:
 def stats(root: str) -> Dict[str, Any]:
     tree = list_tree(root)
     return {"total": tree["total"], "latest": tree["latest"], "root": tree["root"]}
-
-
-def recent_days(root: str, limit: int = 30) -> List[date]:
-    """最近已经写过的日期（从新到旧），给面板显示用。"""
-    tree = list_tree(root)
-    out: List[date] = []
-    for year in tree["years"]:
-        for month in year["months"]:
-            for day in month["days"]:
-                parsed = parse_day(day["date"])
-                if parsed:
-                    out.append(parsed)
-    return out[:max(1, int(limit))]
