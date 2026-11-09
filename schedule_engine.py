@@ -541,6 +541,20 @@ class ScheduleEngine:
         return ""
 
     @staticmethod
+    def _gift_mention_hours(ctx):
+        """每天最多两个整点允许在日记里提他送的礼物。
+
+        按日期固定，避免每小时都在写"捏着挂件/戴着围巾"，把礼物写成了强迫症。
+        """
+        day = str((ctx or {}).get("day") or "")
+        seed = str((ctx or {}).get("seed") or "")
+        rnd = random.Random("%s|%s" % (day, seed))
+        pool = list(range(9, 22))
+        first = rnd.choice(pool)
+        second = rnd.choice([h for h in pool if abs(h - first) >= 2] or pool)
+        return {first, second}
+
+    @staticmethod
     def _use_gift_today(ctx, label):
         """同一天同一件东西固定选择：六成用他送的，四成用自己的。"""
         day = str(ctx.get("day") or "")
@@ -1502,15 +1516,24 @@ class ScheduleEngine:
         if assets:
             asset_line = ("他送你的东西：%s。写这一小时时可以自然戴/用/开，"
                           "但不要每段都提，也不要写你还想要更大的。" % assets)
+        allow_gift = False
+        try:
+            hour = int(str(item.get("start") or "")[:2])
+            allow_gift = hour in self._gift_mention_hours(ctx)
+        except (TypeError, ValueError):
+            allow_gift = False
         worn_line = ""
         worn = str(ctx.get("worn") or "").strip()
         if worn:
-            worn_line = "你今天身上/包里有：%s（他送的）。写日记时可以自然带一句，不用每段都提。" % worn
+            if allow_gift:
+                worn_line = "你今天身上/包里有：%s（他送的）。这一小时可以自然带一句，只提一句，别写成交代行踪。" % worn
+            else:
+                worn_line = "这一小时不要主动提他送的东西（今天已经提过了）；除非上一小时写了、这一小时要承接。"
         gift_line = ""
         gift_log = str(ctx.get("gift_log") or "").strip()
-        if gift_log:
-            gift_line = ("他送过你的东西（日期）：%s。写日记时可以自然带一句；"
-                         "日期不是今天的，不要写成今天送的，也不要每段都提。" % gift_log)
+        if gift_log and allow_gift:
+            gift_line = ("他送过你的东西（日期）：%s。这一小时可以自然带一句；"
+                         "日期不是今天的，不要写成今天送的。" % gift_log)
         return (
             "角色设定：\n" + _brief_world(ctx.get("world") or {}) + "\n"
             "今天：%s，%s；天气：%s；所在地：%s。\n"
