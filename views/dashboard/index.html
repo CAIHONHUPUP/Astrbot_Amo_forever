@@ -143,6 +143,10 @@
     .tab { flex: 0 0 auto; border: 0; background: transparent; color: var(--muted); text-align: center; padding: 9px 10px; border-radius: 10px; font-size: 13px; cursor: pointer; white-space: nowrap; min-width: 0; }
     .tab.active { background: var(--card); color: var(--pink); box-shadow: none; }
     .tab-panel { display: flex; flex-direction: column; gap: 14px; width: 100%; min-width: 0; }
+    .diary-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
+    .diary-actions button { padding: 4px 9px; min-height: 0; font-size: 12px; border-radius: 8px;
+      background: transparent; color: var(--muted); border: 1px solid var(--line); line-height: 1.4; }
+    .diary-actions button:hover { color: var(--text); background: var(--hover); }
     .tab-panel[hidden] { display: none; }
     .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
     .row.between { justify-content: space-between; }
@@ -484,18 +488,16 @@
 
     <div id="tab-diary" class="tab-panel" hidden>
       <section class="card">
-        <div class="row between">
-          <div>
-            <div class="label">大肥鱼的日记</div>
-            <div class="sub" id="diaryStats">读取中…</div>
-          </div>
-          <div class="row">
-            <button class="tab" id="diaryWrite" type="button">写昨天</button>
-            <button class="tab" id="diaryImport" type="button">导入文件夹</button>
-            <button class="tab" id="diaryRefresh" type="button">刷新</button>
-            <button class="tab" id="diaryOpen" type="button">打开文件夹</button>
+        <div class="row between" style="align-items:center">
+          <div class="label">大肥鱼的日记</div>
+          <div class="diary-actions">
+            <button id="diaryWrite" type="button">写昨天</button>
+            <button id="diaryImport" type="button">导入文件夹</button>
+            <button id="diaryRefresh" type="button">刷新</button>
+            <button id="diaryOpen" type="button">打开文件夹</button>
           </div>
         </div>
+        <div class="sub" id="diaryStats">读取中…</div>
         <div class="sub" id="diaryRoot"></div>
       </section>
       <section class="card">
