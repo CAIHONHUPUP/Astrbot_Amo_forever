@@ -68,7 +68,7 @@ class WebGuardTests(unittest.TestCase):
         async def handler():
             return {"code": 0}
 
-        plugin._safe_register("/config/save", handler, ["GET", "POST"], "save")
+        plugin._safe_register("/Astrbot_Amo_forever/config/save", handler, ["GET", "POST"], "/config/save")
         route, wrapped, methods, _desc = plugin.context.routes[-1]
         self.assertEqual(methods, ["POST"])
         self.assertNotEqual(wrapped, handler)
@@ -79,7 +79,7 @@ class WebGuardTests(unittest.TestCase):
         async def handler():
             return {"code": 0}
 
-        plugin._safe_register("/status", handler, ["GET"], "status")
+        plugin._safe_register("/Astrbot_Amo_forever/status", handler, ["GET"], "/status")
         _route, wrapped, methods, _desc = plugin.context.routes[-1]
         self.assertEqual(methods, ["GET"])
         self.assertEqual(wrapped, handler)

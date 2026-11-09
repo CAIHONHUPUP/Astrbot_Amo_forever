@@ -11123,7 +11123,9 @@ class HumanCorePlugin(Star):
         # 写接口只收 POST：面板的 WRITE_ACTIONS 已经强制带 body 走 POST，
         # 老版本面板桥接没有 apiPost 时会收到 405/403，然后自动退回 fetch POST（前端有兜底）。
         # 读接口不套守卫，避免给状态轮询加额外开销。
-        is_write = route in WRITE_ROUTES
+        # 注意：route 带插件名前缀（/Astrbot_Amo_forever/...），WRITE_ROUTES 里存的是不带前缀的
+        # 路径，所以要拿 desc（注册时传的 path）来判定，否则所有写路由都会被漏掉。
+        is_write = str(desc or "") in WRITE_ROUTES
         if is_write:
             methods = ["POST"]
         if is_write:
