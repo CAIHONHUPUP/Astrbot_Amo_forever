@@ -281,6 +281,30 @@ def resolve_city(text):
     return None
 
 
+_COORDS = re.compile(r"^-?\d{1,3}(?:\.\d+)?\s*,\s*-?\d{1,3}(?:\.\d+)?$")
+
+
+def is_coordinates(value) -> bool:
+    """「经度,纬度」这种坐标（和风 v7 直接支持，不用查表）。"""
+    return bool(_COORDS.match(str(value or "").strip()))
+
+
+def city_location(city) -> str:
+    """把中文城市名换成和风能用的 LocationID；数字/空值原样返回。
+
+    取天气前的统一入口：解析不出来就把原文交回去，由调用方决定
+    （GeoAPI 兜底、退回模拟天气、打日志）。
+    """
+    text = str(city or "").strip()
+    if not text or text.isdigit():
+        return text
+    if is_coordinates(text):
+        # 和风要「经度,纬度」且不能有空格；顺手去掉逗号两边空白
+        return re.sub(r"\s+", "", text)
+    hit = resolve_city(text)
+    return str(hit["id"]) if hit else text
+
+
 def search_city(query, limit: int = 20) -> list:
     """面板候选：按短名/市名/省名前缀匹配，返回最多 limit 条。"""
     stem = _stem(query)
