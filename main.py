@@ -157,7 +157,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.0.2"
+PLUGIN_VERSION = "6.0.4"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -5752,6 +5752,41 @@ class HumanCorePlugin(Star):
                 "[amo] 推送画像 %s 失败: %s: %s" % (uid, type(exc).__name__, exc)
             )
 
+    async def _sync_relations_from_data(self):
+        """把记忆终端里的关系网拉回本地（面板改过的也能生效，不用重启）。"""
+        try:
+            rows = await self._data_call("list_relations", self._data_bot_id())
+        except Exception:
+            return 0
+        if rows is None:
+            # 终端不可用时不要动本地，避免把关系网清空
+            return 0
+        remote = set()
+        count = 0
+        for edge in rows:
+            a_uid = str(edge.get("a_uid") or "")
+            b_uid = str(edge.get("b_uid") or "")
+            if not a_uid or not b_uid:
+                continue
+            remote.add(tuple(sorted([a_uid, b_uid])))
+            try:
+                self.db.upsert_relation(a_uid, b_uid, edge.get("relation") or "朋友", edge.get("note") or "")
+                count += 1
+            except Exception:
+                continue
+        # 面板上删掉的关系，本地也同步删掉（终端为准）；
+        # 终端返回空时不删，避免插件没就绪时把本地关系网清空
+        if not remote:
+            return count
+        try:
+            for item in self.db.list_relations():
+                pair = tuple(sorted([str(item.get("a_uid") or ""), str(item.get("b_uid") or "")]))
+                if pair not in remote:
+                    self.db.delete_relation(pair[0], pair[1])
+        except Exception:
+            pass
+        return count
+
     async def _sync_profiles_to_data(self):
         """把本地画像补齐到数据插件：缺的补、改过的重推。不依赖一次性迁移标记。
 
@@ -7340,7 +7375,7 @@ class HumanCorePlugin(Star):
             try:
                 if not self.db.upsert_relation(uid, target, relation, note):
                     continue
-                logger.info("[amo] 关系网自动记录: %s --%s--> %s" % (uid, relation, target))
+                logger.debug("[amo] 关系网自动记录: %s --%s--> %s" % (uid, relation, target))
                 await self._push_relation_to_data(uid, target, relation, note)
             except Exception as exc:
                 logger.debug("[amo] 自动关系写入失败: %s" % exc)
@@ -8717,6 +8752,7 @@ class HumanCorePlugin(Star):
             # 画像每 10 分钟对一次账，保证面板和本地不脱节
             self._last_profile_sync = now_ts()
             self._spawn(self._sync_profiles_to_data())
+            self._spawn(self._sync_relations_from_data())
         self.state.decay_mood()
         if self.state.last_daily != today_str():
             self.state.daily_tick()
