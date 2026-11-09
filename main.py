@@ -139,6 +139,14 @@ except Exception:
         parse_relations = None
 
 try:
+    from .relation_graph import rank_edges as _rank_edges
+except Exception:
+    try:
+        from relation_graph import rank_edges as _rank_edges
+    except Exception:
+        _rank_edges = None
+
+try:
     from .schedule_engine import ScheduleEngine
 except Exception:
     try:
@@ -157,7 +165,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.0.4"
+PLUGIN_VERSION = "6.0.6"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -7395,22 +7403,32 @@ class HumanCorePlugin(Star):
                 names[str(item.get("uid"))] = item.get("alias") or item.get("name") or str(item.get("uid"))
         except Exception:
             pass
-        direct = []
-        neighbors = set()
-        for edge in edges:
-            a, b = str(edge.get("a_uid")), str(edge.get("b_uid"))
-            if uid in (a, b):
-                direct.append(edge)
-                neighbors.add(b if a == uid else a)
-        second = []
-        for edge in edges:
-            if edge in direct:
-                continue
-            a, b = str(edge.get("a_uid")), str(edge.get("b_uid"))
-            if a in neighbors or b in neighbors:
-                second.append(edge)
+        picked = []
+        if _rank_edges is not None:
+            try:
+                # 图小的时候放宽到三跳，图大了只走两跳，避免噪声和 token 膨胀
+                hops = 3 if len(edges) <= 40 else 2
+                picked = _rank_edges(edges, uid, 12, hops)
+            except Exception:
+                picked = []
+        if not picked:
+            direct = []
+            neighbors = set()
+            for edge in edges:
+                a, b = str(edge.get("a_uid")), str(edge.get("b_uid"))
+                if uid in (a, b):
+                    direct.append(edge)
+                    neighbors.add(b if a == uid else a)
+            second = []
+            for edge in edges:
+                if edge in direct:
+                    continue
+                a, b = str(edge.get("a_uid")), str(edge.get("b_uid"))
+                if a in neighbors or b in neighbors:
+                    second.append(edge)
+            picked = (direct + second)[:12]
         lines = []
-        for edge in (direct + second)[:12]:
+        for edge in picked[:12]:
             a, b = str(edge.get("a_uid")), str(edge.get("b_uid"))
             na = names.get(a, a)
             nb = names.get(b, b)
