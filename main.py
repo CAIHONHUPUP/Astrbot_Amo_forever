@@ -115,12 +115,13 @@ except Exception:
         _pg_analyze_rows = _pg_compose_task = _pg_near_duplicate = None
 
 try:
-    from .memory_hooks import MemoryHub
+    from .memory_hooks import MemoryHub, render_recent_block
 except Exception:
     try:
-        from memory_hooks import MemoryHub
+        from memory_hooks import MemoryHub, render_recent_block
     except Exception:
         MemoryHub = None
+        render_recent_block = None
 
 try:
     from .attribution import first_person_experience, attribution_leak, leak_tokens
@@ -165,7 +166,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.2.8"
+PLUGIN_VERSION = "6.3.0"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -8492,6 +8493,25 @@ class HumanCorePlugin(Star):
             parts.append("【关于对方的记忆】\n" + memory_text)
         if cross_text:
             parts.append(cross_text)
+        # 私聊最近几句（含她自己说过的话）：防止「刚说完就不认」
+        if not is_group and render_recent_block is not None:
+            try:
+                rows_now = self._recent(umo, 10)
+                body_now = (event.message_str or "").strip()
+                rows_now = [
+                    row for row in rows_now
+                    if not (str(row.get("role")) == "user"
+                            and str(row.get("content") or "").strip() == body_now)
+                ]
+                recent_text = render_recent_block(rows_now[-8:], "你", 8)
+            except Exception:
+                recent_text = ""
+            if recent_text:
+                parts.append(
+                    "【最近对话】（包含你自己说过的）\n" + recent_text + "\n"
+                    "他说“你刚才说过X/你什么时候说过”时，以这里为准；找不到也别否认，"
+                    "说“可能是我说的，我记混了”，绝不能说“你自己看岔了/我没说过”。"
+                )
         if re.search(r"(记住|以后喊|以后叫|喊他|喊她|叫他|叫她|称呼他|称呼她)", event.message_str or ""):
             parts.append(
                 "【识人回应】对方在让你记称呼/认人。不要复述 @昵称、QQ号、群号或后台字段；"
