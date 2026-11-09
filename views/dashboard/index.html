@@ -57,6 +57,9 @@
     .brand { display: flex; align-items: center; gap: 9px; font-size: 20px; font-weight: 650; letter-spacing: .5px; }
     .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--pink); box-shadow: 0 0 10px rgba(232, 72, 154, .45); }
     .clock { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+    .tab.icon-tab { width: 32px; height: 32px; min-width: 32px; padding: 0; display: grid; place-items: center;
+      border: 1px solid var(--line); background: #fff; color: #7a6f86; border-radius: 10px; }
+    .tab.icon-tab.active, .tab.icon-tab:hover { color: var(--pink); border-color: var(--pink); box-shadow: 0 0 0 3px rgba(224,106,154,.12); }
     .neuron-btn { margin-left: 8px; width: 32px; height: 32px; border-radius: 10px; border: 1px solid var(--line);
       background: #fff; color: #7a6f86; display: grid; place-items: center; cursor: pointer; transition: .18s; }
     .neuron-btn:hover, .neuron-btn.on { border-color: var(--pink); color: var(--pink); box-shadow: 0 0 0 3px rgba(224,106,154,.12); }
@@ -326,13 +329,19 @@
         </svg>
       </button>
       </div>
-      <div class="clock" id="clock">--</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="tab icon-tab active" id="btnStatusIcon" data-tab="status" title="状态" aria-label="状态">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M2.5 12h4l2.2-5.5 3.1 11 2.3-5.5h5.4"/>
+          </svg>
+        </button>
+        <div class="clock" id="clock">--</div>
+      </div>
     </header>
 
     <div class="tabnav">
       <button class="tabnav-arrow left" type="button" aria-label="向前">‹</button>
       <nav class="tabs">
-      <button class="tab active" data-tab="status">状态</button>
       <button class="tab" data-tab="world">世界</button>
       <button class="tab" data-tab="schedule">日程</button>
       <button class="tab" data-tab="actions">操作</button>
