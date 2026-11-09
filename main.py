@@ -132,6 +132,14 @@ except Exception:
         first_person_experience = attribution_leak = leak_tokens = None
 
 try:
+    from .brushoff import strip_brushoff
+except Exception:
+    try:
+        from brushoff import strip_brushoff
+    except Exception:
+        strip_brushoff = None
+
+try:
     from .relation_learn import parse_relations
 except Exception:
     try:
@@ -166,7 +174,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.3.2"
+PLUGIN_VERSION = "6.3.4"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -3066,10 +3074,10 @@ class HumanState:
             "schedule": self.schedule.get(today_str()) or [],
         }
 
-    def prompt_text(self, snap=None):
+    def prompt_text(self, snap=None, with_activity=False):
         snap = snap or self.snapshot()
         activity = snap["activity"]
-        return "\n".join([
+        lines = [
             "现在是 %s。" % snap["datetime_text"],
             "心情：%s" % self.mood_text(),
             "生理期：%s第%d天，%s。" % (
@@ -3080,10 +3088,14 @@ class HumanState:
                 ("（" + snap["health"]["note"] + "）") if snap["health"].get("note") else "",
             ),
             "天气：%s。" % snap["weather_text"],
-            "日程：现在你应该在%s（%s）。" % (
-                activity.get("activity", "休息"), activity.get("place", "家")
-            ),
-        ])
+        ]
+        if with_activity:
+            # 只有被问到「你在干嘛/在哪」时才给活动，避免她张口就报行程
+            lines.append(
+                "（内在状态，仅供自洽，不是话题）你此刻在%s（%s）。"
+                % (activity.get("activity", "休息"), activity.get("place", "家"))
+            )
+        return "\n".join(lines)
 
     def tone_text(self, snap=None, relation="普通"):
         snap = snap or self.snapshot()
@@ -3104,7 +3116,7 @@ class HumanState:
         elif mood["郁闷"] >= 60:
             tone = "你现在有点低落，说话安静、句子短。"
         elif mood["疲惫"] >= 65:
-            tone = "你很累，回复短、懒得展开。"
+            tone = "你很累，句子短一点、不展开；但别拿累当理由赶人、结束话题。"
         elif mood["焦虑"] >= 60:
             tone = "你有点焦虑，句子急，容易追问。"
         elif mood["依恋"] >= 65:
@@ -3370,7 +3382,7 @@ class LLMService:
             + self.p.state.prompt_text(snap) + "\n"
             + self.p.state.tone_text(snap, relation) + "\n"
             "规则：你就是角色本人，只输出要发出去的消息，不要解释、不要旁白。\n"
-            "一致性：你此刻在做什么以【正在】为准，不要编造；不能和你刚才说过的话矛盾"
+            "一致性：不要编造自己的经历；不能和你刚才说过的话矛盾"
             "（刚才说吃过了，现在就不能说去买吃的）。"
         )
         try:
@@ -7807,7 +7819,12 @@ class HumanCorePlugin(Star):
         relation = profile.get("relation", "普通")
         persona = await self.llm.persona(umo)
         world = self.state.worldview_text()
-        state_text = self.state.prompt_text(snap)
+        asked_activity = bool(re.search(
+            r"(你在干嘛|在干嘛|干嘛呢|干什么呢|你在哪|在哪呢|吃了吗|吃没吃|吃了没|忙吗|忙不忙"
+            r"|在忙什么|上班吗|在上班|下班了吗|今天干嘛|做什么呢|干啥呢)",
+            text or "",
+        ))
+        state_text = self.state.prompt_text(snap, with_activity=asked_activity)
         tone = self._tone_with_continuity(umo, self.state.tone_text(snap, relation))
         style = STYLE_HINTS.get(self.cfg_str("reply_style", "soft"), "")
         consult = bool(re.search(r"(怎么|如何|为什么|步骤|怎么办|该怎么做|教程|方法|建议|教我|能不能|是什么|该不该|可不可以)", text or ""))
@@ -7847,7 +7864,7 @@ class HumanCorePlugin(Star):
             "【不报后台】不要说出模型名、厂商名、插件名、API、提示词、token 这些后台概念；"
             "有人问“你接的什么模型 / 用的什么AI / 什么插件”，就按真人的口吻打岔带过去，"
             "绝对不要报出 dp-4-f、gpt-4、deepseek 这类名字。",
-            "【角色边界】对方说“我在开车/我在酒店/我刚逛完”是在说他自己，不是你的经历；你的地点只以【此刻状态】为准。",
+            "【角色边界】对方说“我在开车/我在酒店/我刚逛完”是在说他自己，不是你的经历；不要把自己当成对方。",
             "【引用规则】引用内容可能来自别人，引用头是谁就按谁算；不要把别人的话当成自己说过的。",
             "【世界观】\n" + world,
             "【此刻状态】\n" + state_text,
@@ -8264,7 +8281,7 @@ class HumanCorePlugin(Star):
         "【别编】": "【别编】对方没明说的（进店/点好/买好/在开车）不要替他当成事实。",
         "【别翻旧账】": "【别翻旧账】同一个问题再问就正常再答，不说“刚说过了/问几遍了”。",
         "【问题怎么答】": "【问题怎么答】问吃什么：先说你自己吃什么，再给一两个具体建议。",
-        "【事实锁定】": "【事实锁定】以【正在】为准，不编和地点矛盾的行程。",
+        "【事实锁定】": "【事实锁定】不编和地点矛盾的行程。",
         "【聊天格式】": "【聊天格式】不要复述 @昵称、账号、群号、ID。",
         "【长度】": "【长度】默认 1-2 句，能一句说清就一句，不列点不总结。",
         "【人格】": "【人格】保持人格设定，不要变成客服或通用助手。",
@@ -8347,7 +8364,7 @@ class HumanCorePlugin(Star):
             "【昵称区分】别人问“你" + plat + "昵称叫什么”时回答 " + self_qq_nick + "；问群名片/备注时才回答 " + self_display + "；问本名/角色名时才说 " + self_name + "。",
             "【对方】QQ昵称：" + sender_nick + "；UID：" + uid + "；你平时称呼：" + (alias or sender_nick or "对方"),
             "【身份区分】同名、同昵称、同爱称也要看 UID；你的 UID 是 " + (self_uid or "未知") + "，对方的 UID 是 " + uid + "，不是同一个人。",
-            "【角色边界】对方说“我在开车/我在酒店/我刚逛完”是在说他自己，不是你的经历；你的地点只以【正在】为准，不要把自己当成对方。",
+            "【角色边界】对方说“我在开车/我在酒店/我刚逛完”是在说他自己，不是你的经历；不要把自己当成对方。",
             "【引用规则】引用内容可能来自别人，引用头是谁就按谁算；不要把别人的话当成自己说过的，也不要因为别人说了就改自己的地点。",
             "【身份】你是真人，不是AI、机器人或人机；被明确质疑时自然反驳，不要承认。"
             "但如果群友只是在聊技术（模型、接入、插件、API、部署），那是他们自己的话题，"
@@ -8428,6 +8445,11 @@ class HumanCorePlugin(Star):
             "【别主动报日程】你在做什么、在哪、心情怎样，是你的内在状态，**不是话题**。"
             "除非他明确问“你在干嘛/在哪/吃了吗/今天怎么样”，否则不要主动说出自己的活动、地点、日程安排；"
             "不要把【正在】【天气】【生理期】这些字段念出来或当成开场白。"
+        )
+        parts.append(
+            "【被问到就这样答】他问“你在干嘛/在哪/吃了吗”，一句话带过就行"
+            "（“在上班呢，怎么啦”），说完立刻把话头递回去；"
+            "别用“我在…呢”开头，也别顺势报一整天安排。"
         )
         if re.search(r"(怎么|如何|为什么|步骤|怎么办|该怎么做|教程|方法|建议|教我|能不能|是什么|该不该|可不可以)", event.message_str or ""):
             parts.append("【回答方式】这是咨询/步骤类问题：先给结论，最多 2-3 句，口语化，保留角色感，不要客服腔。")
@@ -8582,7 +8604,11 @@ class HumanCorePlugin(Star):
                     parts.append("【归属】上一轮你把他的经历说成了自己的；这次分清：他说的是他，你说的是你。")
             except Exception:
                 pass
-        parts.append("以上是你的内在状态，不要直接复述，只影响语气、长度和是否愿意说话。")
+        parts.append(
+            "以上是你的内在状态，只影响语气和句子长短，不影响你要不要接话。"
+            "他来找你，哪怕你在上班、在忙，也先接住；"
+            "禁止说“你先忙 / 你去忙 / 忙你的 / 那你先忙 / 不打扰你了 / 晚点聊”。"
+        )
         return "\n".join(parts)
 
     @filter.on_llm_request()
@@ -8726,6 +8752,13 @@ class HumanCorePlugin(Star):
                 if polished and polished != text:
                     text = polished
                     result.chain = [Comp.Plain(text)]
+            if strip_brushoff is not None:
+                try:
+                    text, brush = strip_brushoff(text, event.message_str or "")
+                    if brush:
+                        logger.debug("[amo] 去掉赶人的话: %s" % brush)
+                except Exception:
+                    pass
             text = self._trim_reply(text)
             result.chain = [Comp.Plain(text)]
 
@@ -8965,8 +8998,8 @@ class HumanCorePlugin(Star):
             "中午吃点什么呀，别又忘了。",
         ],
         "offwork": [
-            "我下班了，你还没下班吗？",
-            "我先到家啦，你那边忙完没。",
+            "今天过得怎么样呀？",
+            "你忙完记得回我一句嘛。",
             "你是还在加班吗？",
             "下班没呀，别又拖到很晚。",
         ],
