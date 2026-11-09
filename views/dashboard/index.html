@@ -353,6 +353,7 @@
       <button class="tab" data-tab="settings" data-group="私聊">私聊</button>
       <button class="tab" data-tab="settings" data-group="心流">心流</button>
       <button class="tab" data-tab="settings" data-group="分段">分段</button>
+      <button class="tab" data-tab="diary">日记</button>
       <button class="tab" data-tab="usage">用量</button>
       </nav>
       <button class="tabnav-arrow right" type="button" aria-label="向后">›</button>
@@ -478,6 +479,32 @@
         <div id="giftWishes" class="profile-list"><div class="sub">加载中…</div></div>
         <div class="label" style="margin-top:16px">收到的礼物</div>
         <div id="giftList" class="profile-list"><div class="sub">加载中…</div></div>
+      </section>
+    </div>
+
+    <div id="tab-diary" class="tab-panel" hidden>
+      <section class="card">
+        <div class="row between">
+          <div>
+            <div class="label">大肥鱼的日记</div>
+            <div class="sub" id="diaryStats">读取中…</div>
+          </div>
+          <div class="row">
+            <button class="tab" id="diaryWrite" type="button">写昨天</button>
+            <button class="tab" id="diaryRefresh" type="button">刷新</button>
+            <button class="tab" id="diaryOpen" type="button">打开文件夹</button>
+          </div>
+        </div>
+        <div class="sub" id="diaryRoot"></div>
+      </section>
+      <section class="card">
+        <div id="diaryTree" class="list"><div class="sub">读取中…</div></div>
+      </section>
+      <section class="card">
+        <div class="row between">
+          <div class="label" id="diaryTitle">选择一篇日记</div>
+        </div>
+        <pre id="diaryText" style="white-space:pre-wrap;line-height:1.8;margin:0;font-family:inherit"></pre>
       </section>
     </div>
 
@@ -1480,6 +1507,100 @@
       });
     }
 
+    function diaryDayString(offset) {
+      const d = new Date();
+      d.setDate(d.getDate() + Number(offset || 0));
+      const pad = (n) => String(n).padStart(2, "0");
+      return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+    }
+
+    async function loadDiary() {
+      const statsEl = document.getElementById("diaryStats");
+      statsEl.textContent = "读取中…";
+      try {
+        const tree = objectFrom(await call("diary/tree")) || {};
+        const total = Number(tree.total || 0);
+        statsEl.textContent = "已写 " + total + " 篇" + (tree.latest ? " · 最近 " + tree.latest : "");
+        document.getElementById("diaryRoot").textContent = tree.root ? "保存位置：" + tree.root + "（不参与插件备份）" : "";
+        renderDiaryTree(tree);
+      } catch (error) {
+        statsEl.textContent = "读取失败：" + (error && error.message ? error.message : "接口未就绪");
+      }
+    }
+
+    function renderDiaryTree(tree) {
+      const box = document.getElementById("diaryTree");
+      box.textContent = "";
+      const years = Array.isArray(tree.years) ? tree.years : [];
+      if (!years.length) {
+        box.innerHTML = '<div class="sub">还没有日记，点「写昨天」生成第一篇。</div>';
+        return;
+      }
+      years.forEach((year) => {
+        const yearBox = document.createElement("details");
+        yearBox.open = year === years[0];
+        const yearTitle = document.createElement("summary");
+        const count = (year.months || []).reduce((n, m) => n + ((m.days || []).length), 0);
+        yearTitle.textContent = year.year + " 年（" + count + " 篇）";
+        yearBox.appendChild(yearTitle);
+        (year.months || []).forEach((month) => {
+          const monthBox = document.createElement("details");
+          monthBox.open = year === years[0] && month === (year.months || [])[0];
+          const monthTitle = document.createElement("summary");
+          monthTitle.textContent = month.month + " 月（" + ((month.days || []).length) + " 篇）";
+          monthBox.appendChild(monthTitle);
+          (month.days || []).forEach((day) => {
+            const btn = document.createElement("button");
+            btn.className = "ghost";
+            btn.type = "button";
+            btn.style.display = "block";
+            btn.textContent = day.date + "（" + (day.chars || 0) + " 字）";
+            btn.addEventListener("click", () => readDiary(day.date));
+            monthBox.appendChild(btn);
+          });
+          yearBox.appendChild(monthBox);
+        });
+        box.appendChild(yearBox);
+      });
+    }
+
+    async function readDiary(date) {
+      const textEl = document.getElementById("diaryText");
+      document.getElementById("diaryTitle").textContent = date;
+      textEl.textContent = "读取中…";
+      try {
+        const data = objectFrom(await call("diary/read", { date })) || {};
+        textEl.textContent = data.text || "（这篇是空的）";
+      } catch (error) {
+        textEl.textContent = "读取失败：" + (error && error.message ? error.message : "接口未就绪");
+      }
+    }
+
+    document.getElementById("diaryRefresh").addEventListener("click", () => loadDiary());
+    document.getElementById("diaryOpen").addEventListener("click", async () => {
+      try {
+        const data = objectFrom(await call("diary/open")) || {};
+        toast(data.opened ? "已打开日记文件夹" : "服务器没有打开文件夹（路径：" + (data.root || "") + "）", !data.opened);
+      } catch (error) { toast("打开失败：" + error.message, true); }
+    });
+    document.getElementById("diaryWrite").addEventListener("click", async () => {
+      const date = diaryDayString(-1);
+      const button = document.getElementById("diaryWrite");
+      button.disabled = true;
+      button.textContent = "写中…";
+      try {
+        const data = objectFrom(await call("diary/write", { date })) || {};
+        toast("已写：" + (data.date || date));
+        await loadDiary();
+        await readDiary(data.date || date);
+      } catch (error) {
+        toast("写日记失败：" + (error && error.message ? error.message : "接口未就绪"), true);
+      } finally {
+        button.disabled = false;
+        button.textContent = "写昨天";
+      }
+    });
+
     async function loadUsage(force) {
       const setText = (id, text) => {
         const el = document.getElementById(id);
@@ -1623,6 +1744,7 @@
       if (name === "schedule") loadSchedule();
       if (name === "profiles") loadProfiles();
       if (name === "gift") loadGift();
+      if (name === "diary") loadDiary();
       if (name === "usage") loadUsage();
       if (name === "settings") {
         if (group) settingsGroupFilter = group;

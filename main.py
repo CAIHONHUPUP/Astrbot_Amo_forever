@@ -127,6 +127,31 @@ except Exception:
             return ""
 
 try:
+    from .diary_engine import (
+        DEFAULT_DIR as _DIARY_DEFAULT_DIR,
+        parse_day as _diary_parse_day,
+        write_diary as _diary_write,
+        read_diary as _diary_read,
+        list_tree as _diary_tree,
+        stats as _diary_stats,
+        diary_root as _diary_root,
+    )
+except Exception:
+    try:
+        from diary_engine import (
+            DEFAULT_DIR as _DIARY_DEFAULT_DIR,
+            parse_day as _diary_parse_day,
+            write_diary as _diary_write,
+            read_diary as _diary_read,
+            list_tree as _diary_tree,
+            stats as _diary_stats,
+            diary_root as _diary_root,
+        )
+    except Exception:
+        _DIARY_DEFAULT_DIR = ""
+        _diary_parse_day = _diary_write = _diary_read = _diary_tree = _diary_stats = _diary_root = None
+
+try:
     from .milestone import (
         should_archive as _ms_should_archive,
         transcript as _ms_transcript,
@@ -9093,6 +9118,9 @@ class HumanCorePlugin(Star):
         elif now_ts() - to_float(getattr(self, "_last_digest_check", 0), 0) > 300:
             self._last_digest_check = now_ts()
             self._spawn(self._maybe_daily_digest())
+        if now_ts() - to_float(getattr(self, "_last_diary_check", 0), 0) > 300:
+            self._last_diary_check = now_ts()
+            self._spawn(self._maybe_daily_diary())
         if now_ts() - to_float(getattr(self, "_last_milestone_check", 0), 0) > 300:
             self._last_milestone_check = now_ts()
             self._spawn(self._maybe_milestone_archive())
@@ -9174,6 +9202,125 @@ class HumanCorePlugin(Star):
             await self._maybe_proactive()
         if now - self._last_ritual >= 60:
             await self._maybe_rituals()
+
+    def _diary_dir(self):
+        return str(self.cfg_str("diary_dir", "") or "").strip() or (_DIARY_DEFAULT_DIR or "")
+
+    def _diary_clock(self):
+        """diary_time 默认 10:00。"""
+        raw = str(self.cfg_str("diary_time", "10:00") or "10:00").strip()
+        try:
+            hour, _, minute = raw.partition(":")
+            return max(0, min(23, int(hour))), max(0, min(59, int(minute or 0)))
+        except (TypeError, ValueError):
+            return 10, 0
+
+    async def _maybe_daily_diary(self):
+        """每天 10 点前后给「昨天」写一篇日记；错过就跳过，可用面板补。"""
+        if not self.cfg_bool("diary_enabled", True):
+            return
+        if not callable(_diary_write):
+            return
+        now = datetime.now()
+        hh, mm = self._diary_clock()
+        if (now.hour, now.minute) < (hh, mm):
+            return
+        # 只写「昨天」这一篇，避免一次补好几天的量；缺的可以面板手动补
+        for offset in (1,):
+            day = (now - timedelta(days=offset)).date()
+            guard = "diary_written:" + day.isoformat()
+            try:
+                if self.db.kv_get(guard, ""):
+                    continue
+            except Exception:
+                pass
+            text = await self._generate_daily_diary(day)
+            if not text:
+                # 生成失败不落 guard，下一轮重试；今天没写出来明天还能补
+                break
+            try:
+                path = _diary_write(self._diary_dir(), day, text)
+            except Exception as exc:
+                logger.warning("[amo] 日记写入失败: %s" % exc)
+                break
+            try:
+                self.db.kv_set(guard, path)
+            except Exception:
+                pass
+            logger.info("[amo] 日记已写: %s" % path)
+
+    async def _generate_daily_diary(self, day):
+        """用昨天的聊天 + 每小时的日程小日记，写一篇大肥鱼口吻的日记。"""
+        if not callable(_diary_write):
+            return ""
+        day_start = int(datetime.combine(day, datetime.min.time()).timestamp())
+        day_end = day_start + 86400
+        mem = self._data_mem()
+        rows = []
+        if mem is not None and callable(getattr(mem, "messages_between", None)):
+            try:
+                rows = await self._data_call(
+                    "messages_between", self._data_bot_id(), day_start, day_end, "", 500,
+                ) or []
+            except Exception as exc:
+                logger.debug("[amo] 日记取聊天失败: %s" % exc)
+                rows = []
+        lines = []
+        for row in rows:
+            text = str(row.get("content") or "").strip().replace("\n", " ")
+            if not text or str(row.get("role") or "") == "system":
+                continue
+            who = "我" if str(row.get("role") or "") == "bot" else (str(row.get("name") or "") or "他")
+            lines.append(who + "：" + text[:200])
+        hourly = []
+        try:
+            cursor = self.db.conn.execute(
+                "SELECT hour, text FROM schedule_diary WHERE day=? ORDER BY hour ASC",
+                (day.isoformat(),),
+            )
+            for hour, text in cursor.fetchall():
+                text = str(text or "").strip()
+                if text:
+                    hourly.append(str(hour)[:5] + " " + text[:160])
+        except Exception:
+            hourly = []
+        if not lines and not hourly:
+            return ""
+        umo = self._last_umo or self._first_private_umo()
+        try:
+            persona = await self.llm.persona(umo)
+        except Exception:
+            persona = ""
+        system = (
+            (persona or "你是一个生活在中国城市的普通女孩，说话自然口语化。") +
+            "\n\n你现在要保持这个人格，用自己的口吻写日记：第一人称、像真人写给自己的，"
+            "不是助手汇报，也不要提 AI、模型、插件、日程表这些词。"
+        )
+        prompt = (
+            "日期：" + day.strftime("%Y年%m月%d日") + "\n"
+            "下面是这一天的聊天节选（他和我）：\n" + ("\n".join(lines[-200:]) or "（这天没怎么聊）") + "\n\n"
+            "这一天的生活小日记：\n" + ("\n".join(hourly[-24:]) or "（没有小日记）") + "\n\n"
+            "请写今天这篇日记：\n"
+            "1. 标题不用你写，文件里已经有了；直接写正文；\n"
+            "2. 写你觉得重要的事：和主人的聊天、他说过的话、你自己的感想、生活琐事；\n"
+            "3. 可以很长，也可以只有一两句，甚至只写一句想他、爱他；\n"
+            "4. 口吻和人格设定完全一致，可以有情绪、有小脾气、有细节；\n"
+            "5. 不要提「日程」「AI」「模型」「插件」，不要分点，不要写日期标题；\n"
+            "6. 不确定的事不要编，聊天里没有的不要硬写。\n"
+            "直接输出日记正文。"
+        )
+        try:
+            text = await self.llm.chat_raw(umo, system, prompt)
+        except Exception as exc:
+            logger.warning("[amo] 日记生成失败: %s" % exc)
+            return ""
+        text = str(text or "").strip()
+        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text).strip()
+        text = re.sub(r"^我的日记[^\n]*\n+", "", text)
+        if len(text) < 10:
+            return ""
+        return text
 
     async def _maybe_milestone_archive(self):
         """每 N 轮私聊压成一条「里程碑」记忆；原始聊天不删，只多一条归纳。"""
@@ -10593,6 +10740,10 @@ class HumanCorePlugin(Star):
         routes = [
             ("/status", self.api_status, ["GET"]),
             ("/get_status", self.api_get_status, ["GET"]),
+            ("/diary/tree", self.api_diary_tree, ["GET", "POST"]),
+            ("/diary/read", self.api_diary_read, ["GET", "POST"]),
+            ("/diary/write", self.api_diary_write, ["POST"]),
+            ("/diary/open", self.api_diary_open, ["POST"]),
             ("/profiles", self.api_profiles, ["GET", "POST"]),
             ("/get_profile", self.api_get_profile, ["GET", "POST"]),
             ("/profiles/sync", self.api_profiles_sync, ["GET", "POST"]),
@@ -11480,6 +11631,53 @@ class HumanCorePlugin(Star):
         self.db.delete_relation(a_uid, b_uid)
         await self._data_call("delete_relation", self._data_bot_id(), a_uid, b_uid)
         return await self.api_relations()
+
+    async def api_diary_tree(self):
+        if not callable(_diary_tree):
+            return {"code": 1, "msg": "日记模块未加载"}
+        return {"code": 0, "data": _diary_tree(self._diary_dir())}
+
+    async def api_diary_read(self):
+        payload = await self._body()
+        day = _diary_parse_day((payload or {}).get("date"))
+        if not day:
+            return {"code": 1, "msg": "日期格式应为 YYYY-MM-DD"}
+        text = _diary_read(self._diary_dir(), day)
+        return {"code": 0, "data": {"date": day.isoformat(), "text": text}}
+
+    async def api_diary_write(self):
+        payload = await self._body()
+        day = _diary_parse_day((payload or {}).get("date"))
+        if not day:
+            day = (datetime.now() - timedelta(days=1)).date()
+        text = await self._generate_daily_diary(day)
+        if not text:
+            return {"code": 1, "msg": "日记生成失败（没有素材或模型没返回）"}
+        try:
+            path = _diary_write(self._diary_dir(), day, text)
+        except Exception as exc:
+            return {"code": 1, "msg": "写入失败: %s" % exc}
+        try:
+            self.db.kv_set("diary_written:" + day.isoformat(), path)
+        except Exception:
+            pass
+        logger.info("[amo] 日记已写（手动）: %s" % path)
+        return {"code": 0, "data": {"date": day.isoformat(), "path": path, "text": text}}
+
+    async def api_diary_open(self):
+        root = self._diary_dir()
+        try:
+            os.makedirs(root, exist_ok=True)
+        except Exception:
+            pass
+        opened = False
+        try:
+            if os.name == "nt" and os.path.isdir(root):
+                os.startfile(root)
+                opened = True
+        except Exception as exc:
+            logger.debug("[amo] 打开日记文件夹失败: %s" % exc)
+        return {"code": 0, "data": {"root": root, "opened": opened}}
 
     async def api_dispatch(self, action: str = ""):
         await self._ensure_ready()

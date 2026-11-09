@@ -1267,5 +1267,23 @@
     "type": "int",
     "description": "【里程碑】至少多少条消息才归档",
     "default": 12
+  },
+  "diary_enabled": {
+    "type": "bool",
+    "description": "写日记",
+    "default": true,
+    "hint": "每天 10 点前后用昨天的聊天和日程小日记写一篇，保存成 txt。"
+  },
+  "diary_dir": {
+    "type": "string",
+    "description": "日记保存文件夹",
+    "default": "D:\\dafeiyu\\日记",
+    "hint": "按 年/月/日 自动建子文件夹，文件名是「我的日记YYYY年MM月DD日.txt」；日记不参与插件备份。"
+  },
+  "diary_time": {
+    "type": "string",
+    "description": "日记时间",
+    "default": "10:00",
+    "hint": "HH:MM，默认 10:00；到点后写「昨天」的日记，错过不自动补（面板「写昨天」可手动补）。"
   }
 }
