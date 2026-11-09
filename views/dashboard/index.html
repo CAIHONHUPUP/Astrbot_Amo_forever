@@ -57,6 +57,9 @@
     .brand { display: flex; align-items: center; gap: 9px; font-size: 20px; font-weight: 650; letter-spacing: .5px; }
     .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--pink); box-shadow: 0 0 10px rgba(232, 72, 154, .45); }
     .clock { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+    .neuron-btn { margin-left: 10px; width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--line);
+      background: #fff; color: #7a6f86; display: grid; place-items: center; cursor: pointer; transition: .18s; }
+    .neuron-btn:hover, .neuron-btn.on { border-color: var(--pink); color: var(--pink); box-shadow: 0 0 0 3px rgba(224,106,154,.12); }
     .card {
       background: var(--card);
       border: 1px solid var(--line);
@@ -314,7 +317,16 @@
   <div class="wrap">
     <header>
       <div class="brand"><span class="dot"></span> 陪伴</div>
+      <div style="display:flex;align-items:center">
       <div class="clock" id="clock">--</div>
+      <button class="neuron-btn" id="btnNeuron" title="关系图谱" aria-label="关系图谱">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6">
+          <circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="17" r="2.2"/><circle cx="19" cy="17" r="2.2"/>
+          <circle cx="12" cy="12" r="2.2"/>
+          <path d="M12 7.2v2.6M10.2 13.4 6.6 15.6M13.8 13.4l3.6 2.2"/>
+        </svg>
+      </button>
+      </div>
     </header>
 
     <div class="tabnav">
@@ -582,6 +594,31 @@
 
     <footer>数据来自插件后端 · <span id="counts"></span><br>反馈 / 建议：<a class="group-link qq-group-link" href="http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&amp;k=AQEkXQn02RRkdb_xlr2c9DA8Ik63KhsT&amp;authKey=xhuF9VxkYe5a73qvZQqCbLT1yy82LNcu7FPcvX2XK2LI0UlD0EwieiKRCmQGGzcJ&amp;noverify=0&amp;group_code=1055679275" target="_blank" rel="noopener noreferrer">点击加入群聊【恋爱聊天交流群】</a></footer>
   </div>
+  <div class="modal" id="neuronModal" hidden>
+    <div class="modal-card" style="max-width:780px;width:min(94vw,780px)">
+      <div class="row" style="display:flex;align-items:center;gap:10px">
+        <strong style="flex:1">关系图谱</strong>
+        <span class="hint">点节点高亮，拖动可拽</span>
+        <button class="ghost" id="btnNeuronClose">关闭</button>
+      </div>
+      <canvas id="neuronCanvas" style="width:100%;height:340px;display:block;margin-top:8px"></canvas>
+      <div class="hint" id="neuronLegend"></div>
+      <div class="row" style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <select id="nRelA" style="flex:1;min-width:120px"></select>
+        <select id="nRelB" style="flex:1;min-width:120px"></select>
+        <select id="nRelType">
+          <option>家人</option><option>恋人</option><option selected>朋友</option>
+          <option>同事</option><option>同学</option><option>熟人</option>
+          <option>陌生人</option><option>仇人</option>
+        </select>
+        <button class="primary" id="btnNeuronAdd">添加</button>
+      </div>
+      <input id="nRelNote" placeholder="备注（可选）" style="margin-top:8px;width:100%">
+      <div class="hint">这里改完会同时写进记忆终端，面板那边只做展示。</div>
+      <div id="neuronList" class="list" style="margin-top:8px;max-height:200px;overflow:auto"></div>
+    </div>
+  </div>
+
   <div class="modal" id="moodModal" hidden>
     <div class="modal-card">
       <div class="row between">
@@ -2502,6 +2539,241 @@
     }
     setTimeout(() => boot(0), 400);
     setInterval(() => { load().catch(() => {}); }, 60000);
+    /* ---------- 关系图谱（神经元） ---------- */
+    const NEURON_COLORS = {
+      家人: "#d98c8c", 恋人: "#e06a9a", 朋友: "#7aa8e0", 同事: "#6fc0a8",
+      同学: "#c9a24d", 熟人: "#9b8fd0", 陌生人: "#9aa0a6", 仇人: "#c0504d",
+    };
+    let neuronGraph = null;
+    let neuronActive = "";
+
+    function neuronColor(relation) {
+      return NEURON_COLORS[relation] || "#9aa0a6";
+    }
+
+    function buildNeuronGraph(edges) {
+      const nodes = new Map();
+      const links = [];
+      edges.forEach((edge) => {
+        const a = String(edge.a_uid || "");
+        const b = String(edge.b_uid || "");
+        if (!a || !b) return;
+        if (!nodes.has(a)) nodes.set(a, { id: a, name: edge.a_name || a, x: 0, y: 0, vx: 0, vy: 0 });
+        if (!nodes.has(b)) nodes.set(b, { id: b, name: edge.b_name || b, x: 0, y: 0, vx: 0, vy: 0 });
+        links.push({ a, b, relation: edge.relation || "朋友" });
+      });
+      const list = [...nodes.values()];
+      const radius = Math.min(130, 40 + list.length * 6);
+      list.forEach((node, index) => {
+        const angle = (index / Math.max(1, list.length)) * Math.PI * 2;
+        node.x = Math.cos(angle) * radius;
+        node.y = Math.sin(angle) * radius;
+      });
+      return { nodes: list, edges: links, index: nodes };
+    }
+
+    function stepNeuronGraph(graph, width, height) {
+      const centerX = width / 2, centerY = height / 2;
+      const nodes = graph.nodes;
+      for (let i = 0; i < nodes.length; i += 1) {
+        const a = nodes[i];
+        for (let j = i + 1; j < nodes.length; j += 1) {
+          const b = nodes[j];
+          const dx = a.x - b.x, dy = a.y - b.y;
+          const dist = Math.hypot(dx, dy) || 0.01;
+          const force = Math.min(1600, 9000 / (dist * dist));
+          a.vx += (dx / dist) * force; a.vy += (dy / dist) * force;
+          b.vx -= (dx / dist) * force; b.vy -= (dy / dist) * force;
+        }
+        a.vx += (centerX - a.x) * 0.012;
+        a.vy += (centerY - a.y) * 0.012;
+      }
+      graph.edges.forEach((edge) => {
+        const a = graph.index.get(edge.a), b = graph.index.get(edge.b);
+        if (!a || !b) return;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const dist = Math.hypot(dx, dy) || 0.01;
+        const force = (dist - 90) * 0.02;
+        a.vx += (dx / dist) * force; a.vy += (dy / dist) * force;
+        b.vx -= (dx / dist) * force; b.vy -= (dy / dist) * force;
+      });
+      nodes.forEach((node) => {
+        if (node.dragging) return;
+        node.vx *= 0.82; node.vy *= 0.82;
+        node.x += node.vx; node.y += node.vy;
+        node.x = Math.max(24, Math.min(width - 24, node.x));
+        node.y = Math.max(24, Math.min(height - 24, node.y));
+      });
+    }
+
+    function drawNeuronGraph(ctx, graph, width, height, activeId) {
+      ctx.clearRect(0, 0, width, height);
+      graph.edges.forEach((edge) => {
+        const a = graph.index.get(edge.a), b = graph.index.get(edge.b);
+        if (!a || !b) return;
+        ctx.strokeStyle = neuronColor(edge.relation);
+        ctx.globalAlpha = activeId && (edge.a === activeId || edge.b === activeId) ? 0.95 : 0.35;
+        ctx.lineWidth = activeId && (edge.a === activeId || edge.b === activeId) ? 2.2 : 1.2;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      });
+      ctx.globalAlpha = 1;
+      graph.nodes.forEach((node) => {
+        const active = node.id === activeId;
+        ctx.beginPath();
+        ctx.fillStyle = active ? "#e06a9a" : "#fff";
+        ctx.strokeStyle = active ? "#e06a9a" : "#c9b8d4";
+        ctx.lineWidth = active ? 2.5 : 1.5;
+        ctx.arc(node.x, node.y, active ? 9 : 7, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+        ctx.fillStyle = "#4a3f52";
+        ctx.font = "11px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        const label = node.name.length > 9 ? node.name.slice(0, 9) + "…" : node.name;
+        ctx.fillText(label, node.x, node.y + 20);
+      });
+    }
+
+    function renderNeuronGraph(edges) {
+      const canvas = document.getElementById("neuronCanvas");
+      if (!canvas) return;
+      const width = canvas.parentElement.clientWidth - 28;
+      const height = 340;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const graph = buildNeuronGraph(edges);
+      neuronGraph = graph;
+      if (!graph.nodes.length) {
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = "#9a8fa3";
+        ctx.font = "12px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("还没有关系，下面加一条试试", width / 2, height / 2);
+        document.getElementById("neuronLegend").textContent = "";
+        return;
+      }
+      for (let i = 0; i < 220; i += 1) stepNeuronGraph(graph, width, height);
+      drawNeuronGraph(ctx, graph, width, height, neuronActive);
+      const kinds = [...new Set(graph.edges.map((edge) => edge.relation))];
+      document.getElementById("neuronLegend").innerHTML = kinds.map((kind) =>
+        '<span style="display:inline-block;margin-right:10px"><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' +
+        neuronColor(kind) + ';margin-right:4px"></i>' + kind + "</span>").join("");
+
+      canvas.onmousedown = (event) => {
+        const rect = canvas.getBoundingClientRect();
+        const mx = event.clientX - rect.left, my = event.clientY - rect.top;
+        const hit = graph.nodes.find((node) => Math.hypot(node.x - mx, node.y - my) < 14);
+        if (!hit) return;
+        hit.dragging = true;
+        neuronActive = hit.id;
+        const move = (ev) => {
+          hit.x = Math.max(24, Math.min(width - 24, ev.clientX - rect.left));
+          hit.y = Math.max(24, Math.min(height - 24, ev.clientY - rect.top));
+          stepNeuronGraph(graph, width, height);
+          drawNeuronGraph(ctx, graph, width, height, hit.id);
+        };
+        const up = () => {
+          hit.dragging = false;
+          window.removeEventListener("mousemove", move);
+          window.removeEventListener("mouseup", up);
+        };
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", up);
+      };
+    }
+
+    function fillNeuronSelects(profiles) {
+      const options = (profiles || []).map((item) => {
+        const uid = String(item.uid || "");
+        const name = item.name || item.alias || uid;
+        return '<option value="' + uid + '">' + name + "（" + uid + "）</option>";
+      }).join("");
+      ["nRelA", "nRelB"].forEach((id) => {
+        const select = document.getElementById(id);
+        if (!select) return;
+        const keep = select.value;
+        select.innerHTML = options || '<option value="">还没有画像</option>';
+        if (keep) select.value = keep;
+      });
+    }
+
+    function renderNeuronList(edges) {
+      const box = document.getElementById("neuronList");
+      if (!box) return;
+      box.textContent = "";
+      if (!edges.length) {
+        box.innerHTML = '<div class="hint">还没有关系边。</div>';
+        return;
+      }
+      edges.forEach((edge) => {
+        const row = document.createElement("div");
+        row.className = "row";
+        row.style.cssText = "display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed #eee";
+        const text = document.createElement("span");
+        text.style.flex = "1";
+        text.textContent = (edge.a_name || edge.a_uid) + " ↔ " + (edge.b_name || edge.b_uid) + " · " + edge.relation;
+        const del = document.createElement("button");
+        del.className = "ghost";
+        del.textContent = "删";
+        del.addEventListener("click", async () => {
+          await call("relation_delete", { a_uid: edge.a_uid, b_uid: edge.b_uid });
+          toast("已删除");
+          openNeuron();
+        });
+        row.appendChild(text); row.appendChild(del);
+        box.appendChild(row);
+      });
+    }
+
+    async function openNeuron() {
+      const modal = document.getElementById("neuronModal");
+      modal.hidden = false;
+      document.getElementById("btnNeuron").classList.add("on");
+      try {
+        const data = objectFrom(await call("relations")) || {};
+        const edges = Array.isArray(data.edges) ? data.edges : (Array.isArray(data.items) ? data.items : []);
+        fillNeuronSelects(data.profiles || []);
+        renderNeuronGraph(edges);
+        renderNeuronList(edges);
+      } catch (error) {
+        toast("读取关系失败：" + error.message, true);
+      }
+    }
+
+    document.getElementById("btnNeuron").addEventListener("click", () => {
+      const modal = document.getElementById("neuronModal");
+      if (!modal.hidden) {
+        modal.hidden = true;
+        document.getElementById("btnNeuron").classList.remove("on");
+        return;
+      }
+      openNeuron();
+    });
+    document.getElementById("btnNeuronClose").addEventListener("click", () => {
+      document.getElementById("neuronModal").hidden = true;
+      document.getElementById("btnNeuron").classList.remove("on");
+    });
+    document.getElementById("btnNeuronAdd").addEventListener("click", async () => {
+      const a_uid = document.getElementById("nRelA").value;
+      const b_uid = document.getElementById("nRelB").value;
+      const relation = document.getElementById("nRelType").value;
+      const note = document.getElementById("nRelNote").value.trim();
+      if (!a_uid || !b_uid || a_uid === b_uid) {
+        toast("请选择两个不同的人", true);
+        return;
+      }
+      try {
+        await call("relation_save", { a_uid, b_uid, relation, note });
+        document.getElementById("nRelNote").value = "";
+        toast("已添加");
+        openNeuron();
+      } catch (error) {
+        toast("添加失败：" + error.message, true);
+      }
+    });
+
   </script>
 </body>
 </html>
