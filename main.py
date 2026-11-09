@@ -6253,7 +6253,7 @@ class HumanCorePlugin(Star):
                     continue
                 local = self.db.get_profile(uid) or {}
                 if not local:
-                    self.db.touch_profile(uid, str(row.get("name") or ""), "amo_data", "", "", True)
+                    self.db.touch_profile(uid, str(row.get("name") or ""), "", "", "", True)
                     local = self.db.get_profile(uid) or {}
                 # 只有数据插件里的这条更新（面板改过）才覆盖本地，否则以本地为准，
                 # 免得上一条自动改名被旧值顶回去、来回打架。
