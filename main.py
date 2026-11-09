@@ -10794,7 +10794,7 @@ class HumanCorePlugin(Star):
             ("/diary/tree", self.api_diary_tree, ["GET", "POST"]),
             ("/diary/read", self.api_diary_read, ["GET", "POST"]),
             ("/diary/write", self.api_diary_write, ["POST"]),
-            ("/diary/open", self.api_diary_open, ["POST"]),
+            ("/diary/open", self.api_diary_open, ["GET", "POST"]),
             ("/profiles", self.api_profiles, ["GET", "POST"]),
             ("/get_profile", self.api_get_profile, ["GET", "POST"]),
             ("/profiles/sync", self.api_profiles_sync, ["GET", "POST"]),
