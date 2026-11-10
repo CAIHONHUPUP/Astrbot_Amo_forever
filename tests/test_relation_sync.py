@@ -20,7 +20,7 @@ import astrbot_stub  # noqa: E402
 astrbot_stub.install()
 
 import main as amo_main  # noqa: E402
-import amo_memory  # noqa: E402
+import amo_memory_data  # noqa: E402
 import amo_shared  # noqa: E402
 
 
@@ -86,11 +86,11 @@ def run_sync(plugin):
 class RelationSyncTests(unittest.TestCase):
     def setUp(self):
         self.recorder = _Recorder()
-        self._old_logger = amo_memory.logger
-        amo_memory.logger = self.recorder
+        self._old_logger = amo_memory_data.logger
+        amo_memory_data.logger = self.recorder
 
     def tearDown(self):
-        amo_memory.logger = self._old_logger
+        amo_memory_data.logger = self._old_logger
 
     def test_bot_edges_do_not_trigger_warning(self):
         """本机真实形状：本地 3 条（2 条 bot 边），远端 1 条真人边。"""

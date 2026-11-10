@@ -4,7 +4,7 @@
 
 ### 结构（第三轮）：main.py 只剩组装层，三个大类独立成模块
 
-- `main.py` 3,677 → **1,167 行**，只保留插件装配、`ReplyGate`、生命周期钩子：
+- `main.py` 3,677 → **1,155 行**，只保留插件装配、`ReplyGate`、生命周期钩子：
   - `amo_db.py`（815 行）：`AmoDB` 存储层（kv/画像/关系网/消息/日程/日记）；
   - `amo_human_state.py`（1,576 行）：`HumanState` 心情/生理期/健康/天气/日程/旅行覆盖层；
   - `amo_llm_service.py`（409 行）：`LLMService` 人格读取/对话/润色/判定/事实提取；
@@ -21,14 +21,29 @@
 - `mypy.ini` 从 5 个纯模块扩到**全部 20 个模块 + main.py**，0 错误；
 - `amo_shared.py` 的 40 个公开工具函数补了参数/返回标注，其余函数逐步补（`allow_untyped_defs` 还在）。
 
+### 记忆：只适配「想记」(Astr_Amo_data)
+
+- 删除旧记忆源适配（牢记 / 天使之魂 / livingmemory / companion，约 1,200 行）和所有
+  "退回外挂记忆插件"的分支：召回、写入、面板/命令读取现在只走 `Astr_Amo_data`；
+- `amo_memory.py`（1,866 行）拆成 4 个：
+  `amo_memory_data.py`（626 行，想记桥/同步/画像/列表）、`amo_memory_context.py`（274 行，
+  时间回看/跨平台/`_recall`）、`amo_memory_bridge.py`（153 行，MemoryHub/写入）、
+  `amo_memory.py`（32 行，facade）；
+- `amo_llm.py` 里散着的记忆胶水（`_memory_hub` / `_external_memory_*` / 画像同步等，约 500 行）
+  一并搬到 `amo_memory_*`，`amo_llm.py` 841 → 443 行；
+- **修掉一个真实缺口**：只装想记时，面板记忆页能读到记忆，但画像页和 `/profile`、`/memories`
+  命令只读旧适配器 → 显示 0 条；现在统一走 `_all_memories()`（想记优先）；
+- 面板「记忆来源」下拉不再列出旧插件，只报告想记在不在；`_conf_schema.json` 移除
+  `companion_memory_plugin_name`。
+
 ### 测试与覆盖率
 
-- 单测 **470 → 733**（7 项 Windows 无 `tzset` 跳过），新增：
+- 单测 **470 → 744**（7 项 Windows 无 `tzset` 跳过），新增：
   `test_shared_core`（工具/文本/用量）、`test_amo_db`（存储层）、`test_human_state`（状态机）、
   `test_llm_service`（人格/润色/事实提取）、`test_reply_gate`（插话判定）、`test_state_events`（日程副作用）、
   `test_uid_merge`（跨平台合并）、`test_config_helpers`（迁移/热重载）、`test_balance`、
   `test_text_pipeline`、`test_social_message_helpers`、`test_plugin_glue`；
-- 覆盖率 **30% → 41%**（16,360 行语句，`.coveragerc` 底线 40%）。
+- 覆盖率 **30% → 44%**（16,360 行语句，`.coveragerc` 底线 40%）。
 
 ### 顺手修的 bug
 

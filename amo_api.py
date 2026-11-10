@@ -401,15 +401,17 @@ class ApiMixin(_MixinBase):
         }
 
     async def api_memory_candidates(self):
+        """记忆来源只有「想记」(Astr_Amo_data)；这里只报告它在不在。"""
         await self._ensure_ready()
-        selected = self.cfg_str("companion_memory_plugin_name", "").strip()
-        meta = self._companion_plugin_meta()
+        plugin = self._data_plugin()
+        name = "Astr_Amo_data"
         return {
             "code": 0,
             "data": {
-                "items": self._companion_candidates(),
-                "selected": selected,
-                "detected": str(getattr(meta, "name", "") or "") if meta is not None else "",
+                "items": ([{"name": name, "title": "想记（Astr_Amo_data）", "activated": True}]
+                          if plugin is not None else []),
+                "selected": name if plugin is not None else "",
+                "detected": name if plugin is not None else "",
             },
         }
 
@@ -707,7 +709,7 @@ class ApiMixin(_MixinBase):
             "code": 0,
             "data": {
                 "relation": profile.get("relation", "普通"),
-                "mem_count": len(self._external_all_memories(profile.get("uid", uid), "", 200)),
+                "mem_count": len(await self._all_memories(profile.get("uid", uid), "", 200)),
                 "profile": profile,
             },
         }
@@ -773,10 +775,7 @@ class ApiMixin(_MixinBase):
         if not uid:
             return {"code": 1, "msg": "uid 不能为空"}
         limit = to_int(data.get("limit") or self._q("limit", 200), 200)
-        profile = self.db.get_profile(uid) or {}
-        memories = self._external_profile_memories(
-            uid, profile.get("name", ""), profile.get("alias", ""), limit
-        )
+        memories = await self._all_memories(uid, "", limit)
         return {
             "code": 0,
             "data": {
@@ -794,9 +793,7 @@ class ApiMixin(_MixinBase):
             return {"code": 1, "msg": "uid 不能为空"}
         keyword = str(data.get("q") or self._q("q", "") or "")
         limit = self._q_int("limit", 50)
-        items = await self._data_mem_list(uid, keyword, limit)
-        if not items:
-            items = self._external_all_memories(uid, keyword, limit)
+        items = await self._all_memories(uid, keyword, limit)
         return {"code": 0, "data": items[:max(1, min(100, limit))]}
 
     async def api_memory_add(self):

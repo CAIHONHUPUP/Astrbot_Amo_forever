@@ -730,13 +730,6 @@ class HumanCorePlugin(MemoryMixin, CommandMixin, ConfigMixin, MessageMixin, Soci
 
 
 
-    # ---------- 外挂记忆插件（牢记等）检索桥 ----------
-    # 记忆检索桥：不同插件的入口名字不一样，按顺序找，找到哪个用哪个
-    MEMORY_RECALL_METHODS = (
-        "search_for_event", "recall_for_event",
-        "search_memory", "recall_memory",
-        "query_memory", "retrieve_memory", "retrieve",
-    )
 
     # ---------- 配套数据插件（Astr_Amo_data / 我想永远记住你） ----------
     DATA_PLUGIN_NAMES = ("Astr_Amo_data", "astrbot_plugin_amo_data", "AstrAmoData")
@@ -853,15 +846,10 @@ class HumanCorePlugin(MemoryMixin, CommandMixin, ConfigMixin, MessageMixin, Soci
 
 
 
-    WRITE_METHODS = (
-        "add_memory", "remember", "save_memory", "store_memory",
-        "add_fact", "ingest_memory", "write_memory",
-    )
 
 
 
 
-    ANGEL_ATTRIBUTE_TAGS = {"用户别名", "事实属性", "技能树", "关系图谱", "活跃项目"}
 
 
 

@@ -1370,13 +1370,6 @@
     "hint": "每小时按日程类别（上班/吃饭/休息/逛街/通勤）给真实心情加/减一点，0=关掉；默认 3，越大越明显。",
     "default": 3.0
   },
-  "companion_memory_plugin_name": {
-    "type": "string",
-    "description": "记忆来源",
-    "default": "auto",
-    "hint": "auto = 当前启用的记忆插件（本机是「我想永远记住你」）；也可以手填插件名。",
-    "_special": "select_memory_plugin"
-  },
   "enable_auto_relation": {
     "type": "bool",
     "description": "自动记关系网",

@@ -123,7 +123,7 @@ class CommandMixin(_MixinBase):
             if primary_uid and now_ts() - stamp < 30:
                 counts["memories"] = cached
             elif primary_uid:
-                counted = len(self._external_all_memories(primary_uid, "", 200))
+                counted = len(await self._all_memories(primary_uid, "", 200))
                 counts["memories"] = counted
                 self.db.kv_set("ext_mem_count_at_" + primary_uid, now_ts())
                 self.db.kv_set("ext_mem_count_" + primary_uid, counted)
@@ -163,7 +163,7 @@ class CommandMixin(_MixinBase):
                 # 面板靠这个判断「方言到底开没开」：dialect_style 可能还留着上次的方言名
                 "dialect_enabled": self._dialect_active(),
                 "dialect_count": len(self._dialect_rows()) if self._dialect_active() else 0,
-                "companion_memory_available": self._companion_plugin() is not None,
+                "companion_memory_available": self._data_connected(),
             },
             "data_plugin": {
                 "name": "Astr_Amo_data",
@@ -252,7 +252,7 @@ class CommandMixin(_MixinBase):
                 "关系：" + str(profile.get("relation") or "普通"),
                 "好感：" + str(profile.get("affection") or 0),
                 "消息数：" + str(profile.get("msg_count") or 0),
-                "记忆数：" + str(len(self._external_all_memories(target, "", 200))),
+                "记忆数：" + str(len(await self._all_memories(target, "", 200))),
                 "备注：" + str(profile.get("notes") or "无"),
             ])
 
@@ -260,7 +260,7 @@ class CommandMixin(_MixinBase):
             target = self._resolve_target(event, args, 1)
             if target != uid and not self._is_admin(event):
                 return "只有管理员才能查看别人的记忆。"
-            items = self._external_all_memories(target, "", 20)
+            items = await self._all_memories(target, "", 20)
             if not items:
                 return "暂时没有记忆。"
             lines = ["📖 记忆 · " + target]
@@ -524,7 +524,7 @@ class CommandMixin(_MixinBase):
             return
         yield event.plain_result(
             "🤍 关系：" + str(profile.get("relation", "普通"))
-            + "\n📖 记忆条数：" + str(len(self._external_all_memories(uid, "", 200)))
+            + "\n📖 记忆条数：" + str(len(await self._all_memories(uid, "", 200)))
         )
 
     @filter.command("c_setrel")

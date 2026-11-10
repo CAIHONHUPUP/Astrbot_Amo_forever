@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""LlmMixin：从 main.py 拆出的 mixin，由 HumanCorePlugin 组合使用。"""
+"""LlmMixin：人格、LLM 注入、回复组装、冒充检测。"""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
 else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
@@ -11,27 +12,54 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
     except ImportError:  # 直接按文件加载时
         from amo_observability import note as _note_swallowed
 
-import asyncio
 import re
+
 if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_shared import (
-        AstrMessageEvent, DIALECT_SAMPLES, LEGACY_MEMORY_PLUGIN, MemoryHub, STYLE_HINTS, TextPart, extract_persona_name, filter, logger, now_ts, to_float, to_int, truncate,
+        AstrMessageEvent,
+        DIALECT_SAMPLES,
+        STYLE_HINTS,
+        TextPart,
+        extract_persona_name,
+        filter,
+        logger,
+        now_ts,
+        to_float,
+        truncate,
     )
 else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
         from .amo_shared import (
-            AstrMessageEvent, DIALECT_SAMPLES, LEGACY_MEMORY_PLUGIN, MemoryHub, STYLE_HINTS, TextPart, extract_persona_name, filter, logger, now_ts, to_float, to_int, truncate,
+            AstrMessageEvent,
+            DIALECT_SAMPLES,
+            STYLE_HINTS,
+            TextPart,
+            extract_persona_name,
+            filter,
+            logger,
+            now_ts,
+            to_float,
+            truncate,
         )
     except ImportError:  # 直接按文件加载时
         from amo_shared import (
-            AstrMessageEvent, DIALECT_SAMPLES, LEGACY_MEMORY_PLUGIN, MemoryHub, STYLE_HINTS, TextPart, extract_persona_name, filter, logger, now_ts, to_float, to_int, truncate,
+            AstrMessageEvent,
+            DIALECT_SAMPLES,
+            STYLE_HINTS,
+            TextPart,
+            extract_persona_name,
+            filter,
+            logger,
+            now_ts,
+            to_float,
+            truncate,
         )
-
 
 if TYPE_CHECKING:
     from .amo_types import PluginLike as _MixinBase
 else:  # 运行时用 object：协议里的声明不能进 MRO，否则会挡掉别的 mixin 的真实实现
     _MixinBase = object
+
 
 
 class LlmMixin(_MixinBase):
@@ -93,37 +121,7 @@ class LlmMixin(_MixinBase):
             except Exception as _amo_exc:
                 _note_swallowed("amo_llm.LlmMixin._sync_persona_name", _amo_exc)
 
-    def _cleanup_legacy_memory_profiles(self):
-        """4.3.2 回到原版：删除旧版本从记忆插件导入的画像，只保留本地聊天档案。"""
-        try:
-            if self.db.kv_get("legacy_memory_profiles_cleaned_432", False):
-                return
-            removed = 0
-            for row in self.db.list_profiles(limit=1000):
-                if str(row.get("platform") or "") in ("angel_memory", "memory_companion"):
-                    self.db.delete_profile(str(row.get("uid") or ""))
-                    removed += 1
-            self.db.kv_set("legacy_memory_profiles_cleaned_432", True)
-            if removed:
-                logger.info("[amo] 已移除 %d 个旧记忆插件导入画像，恢复本地画像模式" % removed)
-        except Exception as exc:
-            logger.debug("[amo] 清理旧记忆画像失败: %s" % exc)
 
-    def _migrate_memory_source_default(self):
-        """旧版把 private companion 写成默认来源；2.4.4 起改成 auto，避免锁死。"""
-        try:
-            value = self.cfg_str("companion_memory_plugin_name", "").strip()
-            if value != LEGACY_MEMORY_PLUGIN:
-                return
-            if self.db.kv_get("companion_plugin_auto_migrated", False):
-                return
-            self.config["companion_memory_plugin_name"] = "auto"
-            if hasattr(self.config, "save_config"):
-                self.config.save_config()
-            self.db.kv_set("companion_plugin_auto_migrated", True)
-            logger.debug("[amo] 记忆来源已从旧默认 %s 改为 auto" % LEGACY_MEMORY_PLUGIN)
-        except Exception as exc:
-            logger.debug("[amo] 迁移记忆来源失败: %s" % exc)
 
     def _detect_impersonation(self, event):
         """群里非恋人 UID 使用/冒充恋人的名字或爱称时，5 分钟内累计降级。"""
@@ -186,416 +184,20 @@ class LlmMixin(_MixinBase):
             return "对" + name + "很冷淡，不接他的茬，也不解释。"
         return "对" + name + "客气一点、像普通群友，不要叫老公/宝贝，也别装得很熟。"
 
-    @staticmethod
-    def _is_memory_companion(plugin):
-        return plugin is not None and getattr(plugin, "memory_companion", None) is not None
 
-    def _memory_hub(self):
-        hub = getattr(self, "_mem_hub", None)
-        if hub is not None:
-            return hub
-        if MemoryHub is None:
-            return None
-        try:
-            hub = MemoryHub(
-                self._memory_runtime(),
-                buffer_size=max(8, self.cfg_int("ctx_window", 48)),
-            )
-        except Exception as exc:
-            logger.warning("[amo] 记忆能力层初始化失败: %s" % exc)
-            return None
-        self._mem_hub = hub
-        return hub
 
-    def _memory_runtime(self):
-        star = self
 
-        class _Runtime:
-            logger = logger
 
-            @staticmethod
-            def cfg(key, default=None):
-                try:
-                    data = star.config
-                    if isinstance(data, dict):
-                        return data.get(key, default)
-                except Exception as _amo_exc:
-                    _note_swallowed("amo_llm.LlmMixin._memory_runtime._Runtime.cfg", _amo_exc)
-                return default
 
-            @staticmethod
-            def bot_id():
-                return star._data_bot_id()
 
-            @staticmethod
-            def get_plugin(names):
-                return star._plugin_by_names(names)
 
-            @staticmethod
-            def normalize_memories(rows):
-                return star._normalize_memories(rows)
 
-        return _Runtime()
 
-    async def _data_memory_recall(self, uid, text, limit=6, event=None):
-        """从「记忆终端」（Astr_Amo_data）取回这个人的记忆。
 
-        陪伴自己不存记忆：装了就只问它要，没装才退回外挂记忆插件。
-        """
-        mem = self._data_mem()
-        if mem is None or not uid:
-            return []
-        recall = getattr(mem, "recall", None)
-        if not callable(recall):
-            return []
-        scope = "private"
-        group_id = ""
-        try:
-            if event is not None and not event.is_private_chat():
-                scope = "group"
-                group_id = str(event.get_group_id() or "")
-        except Exception as _amo_exc:
-            _note_swallowed("amo_llm.LlmMixin._data_memory_recall", _amo_exc)
-        try:
-            rows = await recall(
-                self._data_bot_id(), str(uid), str(text or ""),
-                max(1, to_int(limit, 6)), scope, group_id,
-            )
-        except TypeError:
-            # 旧版没有 scope / group_id 参数
-            try:
-                rows = await recall(
-                    self._data_bot_id(), str(uid), str(text or ""), max(1, to_int(limit, 6))
-                )
-            except Exception as exc:
-                logger.debug("[amo] 记忆终端召回失败: %s" % exc)
-                return []
-        except Exception as exc:
-            logger.debug("[amo] 记忆终端召回失败: %s" % exc)
-            return []
-        items = []
-        for row in rows or []:
-            if not isinstance(row, dict):
-                continue
-            content = re.sub(r"\s+", " ", str(row.get("content") or "")).strip()
-            if len(content) < 2:
-                continue
-            importance = to_float(row.get("importance"), 0.5)
-            items.append({
-                "content": content[:500],
-                "tier": 2 if importance >= 0.72 else (1 if importance >= 0.42 else 0),
-                "kind": str(row.get("kind") or "fact"),
-                "source": "amo_data",
-                "memory_type": str(row.get("kind") or ""),
-                "created_at": row.get("created_at", 0),
-                "hits": 0,
-                "expires_at": None,
-            })
-        return items
 
-    async def _data_memory_write(self, uid, content, kind="fact", tier=1):
-        """把一条记忆交给「记忆终端」写入；它只负责存，陪伴不落本地库。"""
-        mem = self._data_mem()
-        if mem is None or not uid:
-            return False
-        content = re.sub(r"\s+", " ", str(content or "")).strip()
-        if not content:
-            return False
-        remember = getattr(mem, "remember", None)
-        if not callable(remember):
-            return False
-        level = to_int(tier, 1)
-        importance = 0.75 if level >= 2 else (0.55 if level == 1 else 0.35)
-        try:
-            result = await remember(
-                self._data_bot_id(), str(uid), content,
-                kind=str(kind or "fact"), importance=importance,
-            )
-        except TypeError:
-            try:
-                result = await remember(self._data_bot_id(), str(uid), content)
-            except Exception as exc:
-                logger.debug("[amo] 记忆终端写入失败: %s" % exc)
-                return False
-        except Exception as exc:
-            logger.debug("[amo] 记忆终端写入失败: %s" % exc)
-            return False
-        if isinstance(result, dict):
-            return bool(result.get("ok", True))
-        return bool(result)
 
-    def _memory_plugin_target(self):
-        """能提供检索的对象：优先插件的 service，其次插件本身。"""
-        plugin = self._companion_plugin()
-        if plugin is None:
-            return None
-        service = getattr(plugin, "service", None)
-        return service if service is not None else plugin
 
-    async def _write_memory_checked(self, uid, content, kind="fact", tier=1):
-        """写一条记忆并返回是否真的成功；失败打 warning，调用方据此决定要不要标记。"""
-        hub = self._memory_hub()
-        level = to_int(tier, 1)
-        importance = 0.75 if level >= 2 else (0.55 if level == 1 else 0.35)
-        if hub is not None and hub.writable():
-            try:
-                result = await hub.remember(str(uid), content, str(kind or "fact"), importance)
-            except Exception as exc:
-                logger.warning("[amo] 记忆写入异常: %s" % exc)
-                result = {"ok": False}
-            if isinstance(result, dict) and result.get("ok"):
-                return True
-            logger.warning(
-                "[amo] 记忆没写进去（%s）: %s" % ((result or {}).get("reason", "?"), str(content)[:40])
-            )
-            return False
-        if self._data_mem() is not None:
-            try:
-                result = await self._data_memory_write(uid, content, kind, tier)
-            except Exception as _amo_exc:
-                _note_swallowed("amo_llm.LlmMixin._write_memory_checked", _amo_exc)
-                result = False
-            if result:
-                return True
-        return False
 
-    def _external_memory_write(self, uid, content, kind="fact", tier=1):
-        """把一条记忆交给「记忆终端」：装了 Astr_Amo_data 就写它，没装才写外挂记忆插件。
-
-        陪伴自己不存记忆，只负责把要记的东西丢过去。
-        """
-        content = re.sub(r"\s+", " ", str(content or "")).strip()
-        if not content:
-            return False
-        hub = self._memory_hub()
-        if hub is not None and hub.writable():
-            level = to_int(tier, 1)
-            importance = 0.75 if level >= 2 else (0.55 if level == 1 else 0.35)
-            try:
-                self._spawn(hub.remember(uid, content, str(kind or "fact"), importance))
-                logger.debug("[amo] 记忆已交给能力层: %s" % content[:40])
-                return True
-            except Exception as exc:
-                logger.debug("[amo] 能力层写入失败，退回旧路径: %s" % exc)
-        if self._data_mem() is not None and callable(getattr(self._data_mem(), "remember", None)):
-            coro = None
-            try:
-                coro = self._data_memory_write(uid, content, kind, tier)
-                if self._spawn(coro) is not None:
-                    logger.debug("[amo] 记忆已交给记忆终端: %s" % content[:40])
-                    return True
-            except Exception as exc:
-                if coro is not None:
-                    coro.close()
-                logger.debug("[amo] 记忆终端写入失败，退回外挂插件: %s" % exc)
-        target = self._memory_plugin_target()
-        if target is None:
-            return False
-        for name in self.WRITE_METHODS:
-            method = getattr(target, name, None)
-            if not callable(method):
-                continue
-            for args in (
-                (str(uid), content),
-                (content,),
-                (str(uid), content, kind, int(tier)),
-            ):
-                try:
-                    result = method(*args)
-                    if asyncio.iscoroutine(result):
-                        # 异步写入接口：丢到事件循环里跑，不阻塞当前回合
-                        try:
-                            asyncio.get_running_loop().create_task(result)
-                        except RuntimeError:
-                            result.close()
-                        logger.debug("[amo] 记忆已交给外挂插件异步写入(%s): %s" % (name, content[:40]))
-                        return True
-                    logger.debug("[amo] 记忆已写入外挂插件(%s): %s" % (name, content[:40]))
-                    return True
-                except TypeError:
-                    continue
-                except Exception as exc:
-                    logger.debug("[amo] 记忆写入 %s 失败: %s" % (name, exc))
-                    break
-        return False
-
-    @staticmethod
-    def _memory_hit_item(hit):
-        """把插件返回的一条命中转成 amo 的记忆条目；不认识的结构返回 None。"""
-        memory = getattr(hit, "memory", None)
-        if memory is not None:
-            content = str(getattr(memory, "content", "") or "")
-            importance = to_float(getattr(memory, "importance", 0.0), 0.0)
-            memory_type = str(getattr(memory, "memory_type", "") or "")
-        elif isinstance(hit, dict):
-            content = str(hit.get("content") or "")
-            importance = to_float(hit.get("importance"), 0.0)
-            memory_type = str(hit.get("memory_type") or "")
-        else:
-            return None
-        content = re.sub(r"\s+", " ", content).strip()
-        if len(content) < 2:
-            return None
-        return {
-            "content": content[:500],
-            "tier": 2 if importance >= 0.72 else (1 if importance >= 0.42 else 0),
-            "kind": "memory_companion",
-            "source": "memory_companion",
-            "memory_type": memory_type,
-        }
-
-    async def _external_memory_recall(self, event, query, limit=6):
-        """用记忆插件自己的检索（BM25/向量/可见性）；不可用或超时就返回空，交给兜底。"""
-        if event is None:
-            return []
-        target = self._memory_plugin_target()
-        run = None
-        for name in self.MEMORY_RECALL_METHODS:
-            candidate = getattr(target, name, None) if target is not None else None
-            if callable(candidate):
-                run = candidate
-                break
-        if run is None:
-            return []
-        budget = max(0.5, self.cfg_float("memory_bridge_timeout_seconds", 3.0))
-        try:
-            hits = await asyncio.wait_for(
-                run(event, str(query or ""), top_k=max(1, int(limit or 6))),
-                timeout=budget,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("[amo] 记忆插件检索超时（%.1fs），本轮退回兜底", budget)
-            return []
-        except Exception as exc:
-            logger.warning("[amo] 记忆插件检索失败: %s", exc)
-            return []
-        items = []
-        for hit in hits or []:
-            item = self._memory_hit_item(hit)
-            if item is not None:
-                items.append(item)
-        return items
-
-    def _external_memory_fallback(self, uid, text, limit):
-        """插件没提供检索接口时的兜底：直接读它的库（旧的 LIKE / 重要性路径）。"""
-        try:
-            inject_lm = self.cfg_bool("memory_inject_livingmemory", False)
-            picked = (
-                self._external_all_memories(uid, text, limit)
-                if inject_lm
-                else self._external_all_memories_legacy(uid, text, limit)
-            )
-        except Exception as exc:
-            logger.debug("[amo] 外部记忆兜底读取失败: %s", exc)
-            return []
-        items = []
-        for item in picked:
-            item["source"] = item.get("source") or "external"
-            items.append(item)
-        return items
-
-    def _sync_memory_companion_profiles(self, only_uid=""):
-        plugin = self._companion_plugin()
-        if not self._is_memory_companion(plugin):
-            return 0
-        rows = self._memcomp_profile_rows(plugin)
-        if not rows:
-            return 0
-        identities = {}
-        try:
-            identity_rows = self._memcomp_rows(
-                "SELECT entity_id, display_name, profile FROM identities "
-                "WHERE entity_kind='user' AND entity_id!=''"
-            )
-            identities = {str(row.get("entity_id") or ""): row for row in identity_rows}
-        except Exception as _amo_exc:
-            _note_swallowed("amo_llm.LlmMixin._sync_memory_companion_profiles", _amo_exc)
-            identities = {}
-        if not only_uid:
-            self._cleanup_auto_profiles("memory_companion", [row["uid"] for row in rows])
-        synced = 0
-        for row in rows:
-            uid = str(row.get("uid") or "")
-            if not uid or (only_uid and uid != str(only_uid)):
-                continue
-            profile = self.db.get_profile(uid) or {}
-            name = str(row.get("name") or "").strip()
-            if not name:
-                ident = identities.get(uid) or {}
-                name = str(ident.get("display_name") or "").strip()
-            count = to_int(row.get("count"), 0)
-            if not profile:
-                self.db.touch_profile(uid, name or uid, "memory_companion", "", "", False)
-                profile = self.db.get_profile(uid) or {}
-            fields = {}
-            current_name = str(profile.get("name") or "").strip()
-            if name and (
-                not current_name or current_name == uid
-                or current_name.startswith("画像 ")
-                or current_name.startswith("person_")
-            ):
-                fields["name"] = name[:60]
-            if not profile.get("notes") and count:
-                fields["notes"] = ("画像 %d 条（Memory Companion）" % count)[:100]
-            if fields:
-                self.db.update_profile(uid, **fields)
-            synced += 1
-        return synced
-
-    def _sync_memory_companion_profile(self, uid, force=False):
-        plugin = self._companion_plugin()
-        if not self._is_memory_companion(plugin):
-            return
-        uid = str(uid)
-        if not force:
-            key = "memcomp_profile_sync_" + uid
-            if now_ts() - to_float(self.db.kv_get(key, 0)) < 600:
-                return
-            self.db.kv_set(key, now_ts())
-        self._sync_memory_companion_profiles(only_uid=uid)
-
-    @staticmethod
-    def _is_angel_memory(plugin):
-        if plugin is None:
-            return False
-        marker = (
-            str(type(plugin).__module__ or "") + " "
-            + str(getattr(plugin, "name", "") or "")
-        ).lower()
-        if "angel_memory" in marker:
-            return True
-        return (
-            getattr(plugin, "plugin_context", None) is not None
-            and (
-                getattr(plugin, "memory_store", None) is not None
-                or getattr(plugin, "deepmind", None) is not None
-            )
-        )
-
-    @staticmethod
-    def _looks_like_memory_plugin(plugin, users=None):
-        """通用识别：不写死插件名，只要有记忆检索接口或记忆数据结构就算。"""
-        if plugin is None:
-            return False
-        for name in ("search_for_event", "recall_for_event", "search_memory",
-                     "recall_memory", "query_memory", "retrieve_memory"):
-            if callable(getattr(plugin, name, None)):
-                return True
-        service = getattr(plugin, "service", None)
-        if service is not None:
-            for name in ("search_for_event", "recall_for_event", "search_memory", "retrieve"):
-                if callable(getattr(service, name, None)):
-                    return True
-        if isinstance(users, dict) and users:
-            sample = next((item for item in users.values() if isinstance(item, dict)), {})
-            if not isinstance(sample, dict):
-                return False
-            for key in ("companion_memory", "important_memories", "memories",
-                        "long_term_memory", "memory"):
-                value = sample.get(key)
-                if isinstance(value, (dict, list)) and value:
-                    return True
-        return False
 
     def _trim_reply(self, text):
         value = self._strip_place_marks(str(text or "").strip())
