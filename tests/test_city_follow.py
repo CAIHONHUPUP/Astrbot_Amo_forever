@@ -144,6 +144,17 @@ class TravelToTests(unittest.TestCase):
         self.assertTrue(any("黄腾峡" in item["place"] for item in items))
         self.assertIn("07:00", starts)  # 早出发会补起床
 
+    def test_early_start_no_duplicate(self) -> None:
+        for start in (0, 7, 8, 9, 19, 21):
+            items = travel_to_events("清远", start, spots=[], seed="d")
+            starts = [item["start"] for item in items]
+            self.assertEqual(len(starts), len(set(starts)), start)
+
+    def test_late_arrival_goes_hotel(self) -> None:
+        items = travel_to_events("清远", 21, spots=[], seed="d")
+        by_start = {item["start"]: item for item in items}
+        self.assertIn("酒店", by_start["23:00"]["place"])
+
     def test_daytime_start_keeps_no_morning(self) -> None:
         items = travel_to_events("清远", 19, spots=[], seed="d")
         self.assertEqual(items[0]["start"], "19:00")

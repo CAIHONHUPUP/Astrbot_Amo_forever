@@ -76,7 +76,7 @@ class FollowTextTests(unittest.TestCase):
     def test_invite_detection(self) -> None:
         for text in ("你过来吧", "来陪我", "过来找我", "你过来呀", "过来吧宝贝"):
             self.assertTrue(detect_follow_invite(text), text)
-        for text in ("我过去吧", "好好上班", "吃饭吧", "你忙"):
+        for text in ("我过去吧", "我过来吧", "好好上班", "吃饭吧", "你忙"):
             self.assertFalse(detect_follow_invite(text), text)
 
     def test_refuse_detection(self) -> None:
@@ -98,6 +98,9 @@ class ReplyTests(unittest.TestCase):
     def test_disagree(self) -> None:
         for text in ("不去", "算了", "别去了", "留下陪我", "下次吧", "不用了"):
             self.assertTrue(detect_refusal(text), text)
+        # “我陪你”是答应，不算拒绝
+        self.assertFalse(detect_refusal("我陪你"))
+        self.assertFalse(detect_refusal("好，我陪你去看"))
 
     def test_long_not_agree(self) -> None:
         self.assertFalse(detect_agreement("好吧那你自己注意安全别乱跑"))

@@ -20,7 +20,7 @@ _AGREE = re.compile(
     r"^(好|好啊|好呀|行|行啊|可以|可以啊|去吧|去呗|那就去|那就去吧|同意|准了|批准|去吧去吧|"
     r"嗯+|ok|OK|OK啊)[啊呀吧了呢哦！!。.~～]*$"
 )
-_REFUSE = re.compile(r"(不去|算了|别去|不用了|下次吧|不想去|不想让你去|留下|陪我)")
+_REFUSE = re.compile(r"(不去|算了|别去|不用了|下次吧|不想去|不想让你去|留下)")
 
 
 def detect_question(text) -> bool:
@@ -272,7 +272,7 @@ _FOLLOW_REJECT = (
 _FOLLOW_REFUSE = re.compile(r"(好好上班|上班吧|不用来|别来|你忙|不用陪|不用了|算了吧|留在家|你自己玩|不用过来)")
 
 
-_FOLLOW_INVITE = re.compile(r"(你过来|过来吧|来陪我|过来陪我|过来找我|你来吧|过来呀|来这边吧)")
+_FOLLOW_INVITE = re.compile(r"(你过来|(?<!我)过来吧|来陪我|过来陪我|过来找我|你来吧|过来呀|来这边吧)")
 
 
 def detect_follow_invite(text) -> bool:
