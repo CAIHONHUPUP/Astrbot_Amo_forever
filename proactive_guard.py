@@ -130,22 +130,30 @@ def compose_task(
     recent_bot_texts=None,
     interesting_event="",
     duplicate_hint="",
+    dialect_style="",
+    dialect_enabled=False,
 ):
     """组装主动消息的任务描述。
 
     ``kind`` 的语义和以前一致；唯一的行为变化是「先回应最后一句」只在
     那条消息确实还没被回过、而且还在窗口内时才会用。
+
+    ``dialect_style`` / ``dialect_enabled`` 跟着插件的方言开关走：关掉方言
+    （或语种选了普通话）时不能再逼模型说「贵州话」，否则早上会突然冒出
+    「巴适」这种口音。
     """
     name = str(name or "你")
     recent_bot = [item for item in (recent_bot_texts or []) if str(item or "").strip()]
     window = max(1, int(_to_float(window_seconds, UNANSWERED_WINDOW_SECONDS)))
+    dialect_style = str(dialect_style or "").strip()
+    dialect_hint = "带一点" + dialect_style + "方言，" if (dialect_enabled and dialect_style) else ""
 
     if kind == "goodnight":
         task = "已经很晚了，你要去睡觉了，给恋人" + name + "发一条晚安，提一句太晚了/早点睡，带上称呼，1 句，亲昵自然。"
     elif kind == "morning":
         task = "你刚起床/刚醒，给恋人" + name + "发早安，问一句还没起来吗/醒了没，带上爱称，1 句。"
     elif kind == "lunch":
-        task = "到午饭时间了，问恋人" + name + "今天中午吃啥子，带一点贵州方言，1 句，自然。"
+        task = "到午饭时间了，问恋人" + name + "今天中午吃啥，" + dialect_hint + "1 句，自然。"
     elif unanswered_text and 0 <= _to_float(unanswered_seconds) <= window:
         task = (
             "用户最后一条消息是：“" + _clip(unanswered_text, 60) + "”，你还没回过。"

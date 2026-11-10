@@ -190,24 +190,68 @@ def occupation_kind(world):
             if keyword in text:
                 return kind
     return "office"
+
+
+#: 活动里有这些词，就说明这一小时在吃/在买吃的。
+_FOOD_ACTIVITY_WORDS = (
+    "便利店", "买饭", "买啥", "买东西", "买杯", "买点", "吃", "饭", "外卖",
+    "扒两口", "垫两口", "点单", "点餐", "餐",
+)
+#: 细节里有这些词，就说明这一小时在工作/开会。
+_MEETING_DETAIL_WORDS = ("会议", "开会", "过方案", "对齐方案")
+#: 活动是睡觉/刚醒。
+_SLEEP_ACTIVITY_WORDS = ("睡觉", "睡着了", "睡沉", "赖床", "被窝", "眯", "躺")
+#: 工作类细节（和「在睡觉」对不上）。
+_WORK_DETAIL_WORDS = ("周报", "需求", "改稿", "数据", "邮件", "咖啡续", "会议", "开会", "第三版")
+
+
+def detail_conflicts(activity, detail):
+    """这一小时的「细节」和「活动」明显不是一回事时返回 True。
+
+    真机案例（2026-11-10 11:00）：activity 被模型润色成「在便利店纠结买啥」，
+    但 detail 还是按 zone=office/category=work 随机挑的「被拉进临时会议」；
+    小时日记和面板于是同时出现「在便利店」和「被拉进临时会议」两套剧情。
+    """
+    activity = str(activity or "")
+    detail = str(detail or "")
+    if not activity or not detail:
+        return False
+    if any(word in activity for word in _FOOD_ACTIVITY_WORDS) and any(
+        word in detail for word in _MEETING_DETAIL_WORDS
+    ):
+        return True
+    if any(word in activity for word in _SLEEP_ACTIVITY_WORDS) and any(
+        word in detail for word in _WORK_DETAIL_WORDS
+    ):
+        return True
+    return False
+
 COMMUTE_BANK = [
     "挤地铁去公司", "在车上听歌", "等红灯", "换乘", "堵在路上",
     "刷手机看路况", "快步往公司走",
 ]
 LUNCH_BANK = [
-    "下楼吃牛肉粉", "和同事拼饭", "点外卖", "吃肠旺面",
+    "下楼吃牛肉粉", "和同事拼饭", "点外卖", "吃碗牛肉面",
     "去便利店随便对付一口", "边吃边刷手机",
+]
+BREAKFAST_BANK = [
+    "煎个蛋配牛奶", "豆浆配油条", "楼下吃碗粉", "煮点速冻饺子",
+    "面包配咖啡", "随便对付一口",
 ]
 REST_BANK = [
     "瘫在沙发上", "刷手机", "追剧", "发呆", "看短视频",
     "窝着不想动", "听歌",
 ]
 DINNER_BANK = [
-    "煮面", "点外卖", "炒两个菜", "下楼吃烙锅", "喝碗热汤",
+    "煮面", "点外卖", "炒两个菜", "下楼吃小馆子", "喝碗热汤",
 ]
 HOME_LIFE_BANK = [
     "刷牙洗脸", "煎蛋热牛奶", "收拾包", "换衣服", "洗衣服",
     "扫地", "洗澡", "吹头发", "护肤", "收拾明天要带的东西",
+]
+#: 晚上/睡前那一小时，不应该出现「煎蛋热牛奶 / 收拾包」。
+NIGHT_LIFE_BANK = [
+    "洗澡", "吹头发", "护肤", "敷面膜", "换睡衣", "刷牙",
 ]
 SCENIC_BANK = [
     "排队买票", "拍照", "慢慢逛", "找地方坐一会儿", "买奶茶",
@@ -749,8 +793,8 @@ class ScheduleEngine:
             spots = _local
         if not spots:
             return {
-                "name": "黔灵山公园", "city": "贵阳", "province": "贵州",
-                "area": "云岩区", "projects": ["弘福寺", "黔灵湖", "猕猴观赏区"],
+                "name": "人民公园", "city": str(city or "").strip() or "市区", "province": "",
+                "area": "", "projects": ["慢慢逛", "找个地方坐会儿", "拍几张照"],
                 "duration": "3-4小时", "indoor": False,
             }
         guiyang = [item for item in spots if "贵阳" in str(item.get("city") or "")]
@@ -787,7 +831,9 @@ class ScheduleEngine:
         elif (ctx.get("meta") or {}).get("rest"):
             segments = self._rest_segments(ctx)
         else:
-            segments = self._workday_segments(ctx)
+            # 工作日的「临时加班」以前只改文案、不改骨架：突发事件写着「今天回不去了」，
+            # 日程却还是 18:00 下班回家。这里让骨架真的晚走。
+            segments = self._workday_segments(ctx, overtime=(event_kind == "overtime"))
         items = self._expand(segments, ctx)
         items = self._fill_activities(items, ctx)
         items = self._smooth_moods(items, ctx)
@@ -805,12 +851,11 @@ class ScheduleEngine:
             "event": event, "spot": spot, "soothe": soothe,
         }
 
-    def _workday_segments(self, ctx):
+    def _workday_segments(self, ctx, overtime=False):
         home = ctx["home"]
         office = ctx["workplace"]
         late = bool((ctx.get("yesterday") or {}).get("late_night"))
         sick = bool((ctx.get("health") or {}).get("sick"))
-        pain = int((ctx.get("period") or {}).get("pain") or 0)
         wake = "赖床、起不来" if late else "起床洗漱、吃早餐"
         has_car = bool(ctx.get("has_gift_car"))
         if has_car:
@@ -819,6 +864,31 @@ class ScheduleEngine:
             commute = "带病出门，慢慢走去地铁站"
         else:
             commute = "挤地铁去公司"
+        if overtime:
+            effects = (ctx.get("event") or {}).get("effects") or {}
+            evening = [
+                self._seg("18:00", "19:00", "临时的事还没完，还在公司", office, "office", "work",
+                          effects=effects),
+                self._seg("19:00", "20:00", "点个外卖，边吃边改", office, "office", "work"),
+                self._seg("20:00", "21:00", "总算收尾，收拾东西准备走", office, "office", "work"),
+                self._seg("21:00", "22:00", "下班回家", "路上", "road", "commute",
+                          transit="drive" if has_car else "subway",
+                          vehicle=ctx.get("car") if has_car else "",
+                          detail="晚高峰，慢慢挪" if has_car else ""),
+                self._seg("22:00", "23:00", "到家洗漱", home, "home", "life"),
+                self._seg("23:00", "24:00", "睡觉", home, "home", "sleep"),
+            ]
+        else:
+            evening = [
+                self._seg("18:00", "19:00", "下班开车回家" if has_car else "下班回家", "路上", "road", "commute",
+                          transit="drive" if has_car else "subway",
+                          vehicle=ctx.get("car") if has_car else "",
+                          detail="晚高峰，慢慢挪" if has_car else ""),
+                self._seg("19:00", "20:00", "吃晚饭", home, "home", "meal"),
+                self._seg("20:00", "22:00", "休息", home, "home", "rest"),
+                self._seg("22:00", "23:00", "洗澡护肤", home, "home", "life"),
+                self._seg("23:00", "24:00", "睡觉", home, "home", "sleep"),
+            ]
         return [
             self._seg("00:00", "07:00", "睡觉", home, "home", "sleep"),
             self._seg("07:00", "08:00", wake, home, "home", "life", detail="昨晚没睡好" if late else ""),
@@ -830,15 +900,7 @@ class ScheduleEngine:
             self._seg("12:00", "13:00", "吃午饭", office + "附近", "restaurant", "meal"),
             self._seg("13:00", "14:00", "午休", office, "office", "rest"),
             self._seg("14:00", "18:00", "上班", office, "office", "work"),
-            self._seg("18:00", "19:00", "下班开车回家" if has_car else "下班回家", "路上", "road", "commute",
-                      transit="drive" if has_car else "subway",
-                      vehicle=ctx.get("car") if has_car else "",
-                      detail="晚高峰，慢慢挪" if has_car else ""),
-            self._seg("19:00", "20:00", "吃晚饭", home, "home", "meal"),
-            self._seg("20:00", "22:00", "休息", home, "home", "rest"),
-            self._seg("22:00", "23:00", "洗澡护肤", home, "home", "life"),
-            self._seg("23:00", "24:00", "睡觉", home, "home", "sleep"),
-        ]
+        ] + evening
 
     def _business_trip_segments(self, ctx):
         home = ctx["home"]
@@ -870,8 +932,11 @@ class ScheduleEngine:
         event_kind = (ctx.get("event") or {}).get("kind")
         health = ctx.get("health") or {}
         period = ctx.get("period") or {}
-        if health.get("sick") or int(period.get("pain") or 0) >= 8:
+        if health.get("sick"):
             return self._sick_rest_segments(ctx)
+        # 痛经是痛经，不是发烧：以前 pain>=8 也走「吃药、量体温、捂汗」，每个月都被写成病号。
+        if int(period.get("pain") or 0) >= 8:
+            return self._period_rest_segments(ctx)
         if event_kind == "overtime":
             return self._overtime_segments(ctx)
         if event_kind == "friend_dinner":
@@ -925,7 +990,7 @@ class ScheduleEngine:
             self._seg("16:00", "17:00", "继续逛" + name + "：" + project_b, place, "scenic", "play",
                       spot=name, soothe=True),
             self._seg("17:00", "18:00", "开车回家", "路上", "road", "commute",
-                      transit="drive", vehicle=car, detail="晚高峰，堵在回观山湖区的路上"),
+                      transit="drive", vehicle=car, detail="晚高峰，堵在回家的路上"),
             self._seg("18:00", "19:00", "到家瘫一会儿", home, "home", "rest"),
             self._seg("19:00", "20:00", "吃晚饭", home, "home", "meal"),
             self._seg("20:00", "22:00", "整理照片、追剧", home, "home", "rest"),
@@ -972,6 +1037,24 @@ class ScheduleEngine:
             self._seg("17:00", "18:00", "靠在沙发上发呆", home, "home", "rest"),
             self._seg("18:00", "19:00", "喝点粥当晚饭", home, "home", "meal"),
             self._seg("19:00", "22:00", "早早躺着刷手机", home, "home", "rest"),
+            self._seg("22:00", "23:00", "洗漱", home, "home", "life"),
+            self._seg("23:00", "24:00", "睡觉", home, "home", "sleep"),
+        ]
+
+    def _period_rest_segments(self, ctx):
+        """痛经卧床：热水袋、红糖水，不是「吃药量体温」。"""
+        home = ctx["home"]
+        return [
+            self._seg("00:00", "08:00", "睡得不太安稳", home, "home", "sleep"),
+            self._seg("08:00", "09:00", "起床吃早餐", home, "home", "meal"),
+            self._seg("09:00", "11:00", "抱着热水袋窝在床上", home, "home", "rest"),
+            self._seg("11:00", "12:00", "给自己冲杯红糖水", home, "home", "life"),
+            self._seg("12:00", "13:00", "简单吃点午饭", home, "home", "meal"),
+            self._seg("13:00", "16:00", "疼得没力气，继续躺着", home, "home", "rest"),
+            self._seg("16:00", "17:00", "煮点热乎的，暖暖肚子", home, "home", "life"),
+            self._seg("17:00", "18:00", "靠在沙发上发会儿呆", home, "home", "rest"),
+            self._seg("18:00", "19:00", "喝点粥当晚饭", home, "home", "meal"),
+            self._seg("19:00", "22:00", "早早躺下刷手机", home, "home", "rest"),
             self._seg("22:00", "23:00", "洗漱", home, "home", "life"),
             self._seg("23:00", "24:00", "睡觉", home, "home", "sleep"),
         ]
@@ -1151,7 +1234,9 @@ class ScheduleEngine:
         if zone == "hotel":
             return self._choose(HOTEL_BANK, rng, prev)
         if zone == "office":
-            if hour in (9, 10, 11, 14, 15, 16, 17):
+            # 按类别挑，而不是白名单小时：加班到 18-21 点时也要是「上班」，
+            # 不能再落到 REST_BANK 的「瘫在沙发上」。
+            if category == "work":
                 return self._choose(work_bank_for(ctx.get("world")), rng, prev)
             return "午休" if hour == 13 else self._choose(REST_BANK, rng, prev)
         if zone == "scenic":
@@ -1163,44 +1248,78 @@ class ScheduleEngine:
             return self._choose(SCENIC_BANK, rng, prev)
         if zone == "restaurant":
             if category == "meal":
-                bank = LUNCH_BANK if 10 <= hour < 15 else DINNER_BANK
+                bank = self._meal_bank(hour)
                 return self._choose(bank, rng, prev)
             return self._choose(["喝杯东西", "坐着歇脚", "刷手机"], rng, prev)
         if zone == "mall":
             return self._choose(INDOOR_BANK, rng, prev)
         if zone == "home":
             if category == "meal":
-                bank = LUNCH_BANK if 10 <= hour < 15 else DINNER_BANK
+                bank = self._meal_bank(hour)
                 return self._choose(bank, rng, prev)
             if category == "work":
                 return self._choose(work_bank_for(ctx.get("world")), rng, prev)
             if category == "rest":
                 return self._choose(REST_BANK, rng, prev)
             if category == "life":
-                return self._choose(HOME_LIFE_BANK, rng, prev)
+                bank = NIGHT_LIFE_BANK if hour >= 20 else HOME_LIFE_BANK
+                return self._choose(bank, rng, prev)
         return base or self._choose(REST_BANK, rng, prev)
+
+    @staticmethod
+    def _meal_bank(hour):
+        """早饭/午饭/晚饭分开：08:00 不该「下楼吃小馆子」，22:00 也不该吃早餐库。"""
+        if hour < 10:
+            return BREAKFAST_BANK
+        if 10 <= hour < 15:
+            return LUNCH_BANK
+        return DINNER_BANK
 
     def _detail_for(self, item, ctx, hour, rng):
         zone = str(item.get("zone") or "")
         category = str(item.get("category") or "")
+        activity = str(item.get("activity") or "")
+
+        def pick(bank):
+            # 细节只是点缀，不能和这一小时的活动对着干（便利店却说被拉进会议）。
+            bank = [word for word in bank if word and not detail_conflicts(activity, word)]
+            return self._choose(bank, rng, "")
+
         if zone == "scenic":
-            return self._choose([
+            return pick([
                 "看到猴子抢游客的水", "排队买奶茶排了二十分钟", "停车位找了半小时",
                 "拍照拍到手机快没电", "被路边小吃香得走不动",
-            ], rng, "")
+            ])
         if zone == "road":
             if item.get("vehicle"):
-                return self._choose([
-                    "导航一路飘红", "停车场绕了三圈", "被加塞了", "堵在黔灵山路上",
-                ], rng, "")
-            return self._choose(["车上人很多", "差点坐过站", "一路小跑"], rng, "")
+                return pick([
+                    "导航一路飘红", "停车场绕了三圈", "被加塞了", "堵在市区路上",
+                ])
+            return pick(["车上人很多", "差点坐过站", "一路小跑"])
         if zone == "office" and category == "work":
-            return self._choose(["改到第三版", "需求又变了", "咖啡续了一杯", "被拉进临时会议"], rng, "")
+            return pick(["改到第三版", "需求又变了", "咖啡续了一杯", "被拉进临时会议"])
         if zone == "restaurant":
-            return self._choose(["加了折耳根", "辣得直吸气", "吃到一半才想起拍照"], rng, "")
+            return pick(["多放了点辣", "辣得直吸气", "吃到一半才想起拍照"])
         if zone == "home" and category == "rest":
-            return self._choose(["沙发太舒服了", "剧追到停不下来", "刷到一个好笑的视频"], rng, "")
+            return pick(["沙发太舒服了", "剧追到停不下来", "刷到一个好笑的视频"])
         return ""
+
+    def _repair_details(self, items, ctx):
+        """模型润色完 activity 之后，把和它对不上的 detail 重新挑一个。
+
+        `build_skeleton()` 里 detail 是按 zone/category 选的，随后 `enrich()`
+        会用模型重写 activity；重写后两者可能打架（见 detail_conflicts）。
+        这里在润色之后统一兜一次底，保证存下来的骨架自洽。
+        """
+        rng = random.Random(int(ctx.get("seed") or 0) ^ 0x5EED5)
+        for item in items:
+            detail = str(item.get("detail") or "").strip()
+            if not detail or not detail_conflicts(item.get("activity"), detail):
+                continue
+            hour = parse_hhmm(item.get("start")) // 60
+            item["detail"] = self._detail_for(item, ctx, hour, rng)
+        return items
+
 
     @staticmethod
     def _choose(bank, rng, prev):
@@ -1419,7 +1538,8 @@ class ScheduleEngine:
                 item["activity"] = text
             if detail and len(detail) <= 40:
                 item["detail"] = detail
-        return items
+        # activity 被改写过，detail 可能已经和它对不上，统一按新活动重新挑。
+        return self._repair_details(items, ctx)
 
     # ------------------------------------------------------------------
     # 8. 动态日记

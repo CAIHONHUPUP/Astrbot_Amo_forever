@@ -459,7 +459,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.6.4"
+PLUGIN_VERSION = "6.6.8"
 DEFAULT_ADMIN = ""
 LEGACY_DEFAULT_ADMIN = "3261748099"
 LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
@@ -547,6 +547,8 @@ DIALECT_REGIONS = {
 SCHEDULE_VERSION = "backbone-v6"
 NETWORK_RELATIONS = ("家人", "恋人", "朋友", "同事", "同学", "熟人", "陌生人", "仇人")
 MOOD_KEYS = ("开心", "平静", "郁闷", "生气", "暴躁", "委屈", "疲惫", "焦虑", "兴奋", "依恋")
+#: 真正算「生病」的状态；「疲惫」只是累，不该按病号排日程。
+SICK_STATUSES = ("轻微不适", "感冒", "低烧", "发烧", "不舒服", "生病", "拉肚子")
 MOOD_BASE = {
     "开心": 55, "平静": 60, "郁闷": 18, "生气": 8, "暴躁": 6, "委屈": 20,
     "疲惫": 28, "焦虑": 18, "兴奋": 30, "依恋": 45,
@@ -664,6 +666,29 @@ def day_meta(day=None):
 
 def today_str():
     return _now().date().isoformat()
+
+
+def other_platform_bot_lines(rows, umo, limit=3):
+    """从跨平台近聊里挑出「她自己说的、且不是当前会话」的几句话。
+
+    主动消息以前只看当前会话的最近 12 句：QQ 上 08:48 说「等散会了跟你说」，
+    之后一直没人说话，12:00 的主动消息就接着那场会往下说；与此同时飞书那边
+    早就是「在便利店买饭」了。把她在别的平台刚说的话也放进去，两边才不会
+    各讲各的故事（内容冲突时以当前状态为准，见 gen_proactive 的规则）。
+    """
+    umo = str(umo or "")
+    out = []
+    for row in rows or []:
+        if str(row.get("role") or "") != "bot":
+            continue
+        if str(row.get("umo") or "") == umo:
+            continue
+        text = str(row.get("content") or "").strip().replace("\n", " ")
+        if text:
+            out.append(text)
+    size = max(1, int(limit or 1))
+    return out[-size:]
+
 
 
 def weekday_cn():
@@ -2574,7 +2599,9 @@ class HumanState:
             "since": to_float(self.health.get("since", 0)),
             "until": to_float(self.health.get("until", 0)),
             "note": self.health.get("note", ""),
-            "sick": status != "健康",
+            # 「疲惫」只是累，不是病：以前 status != 健康 全算 sick，于是休息日
+            # 排成「吃药、量体温、捂汗」的病号一天。
+            "sick": status in SICK_STATUSES,
         }
 
     def set_health(self, status, hours=24, note=""):
@@ -4031,11 +4058,14 @@ class LLMService:
         relation = profile.get("relation", "普通")
         system = (
             await self.persona(umo) + "\n\n"
-            + self.p.state.prompt_text(snap) + "\n"
+            + self.p.state.prompt_text(snap, with_activity=True) + "\n"
             + self.p.state.tone_text(snap, relation) + "\n"
             "规则：你就是角色本人，只输出要发出去的消息，不要解释、不要旁白。\n"
             "一致性：不要编造自己的经历；不能和你刚才说过的话矛盾"
-            "（刚才说吃过了，现在就不能说去买吃的）。"
+            "（刚才说吃过了，现在就不能说去买吃的）。\n"
+            "此刻在做什么以上面「你此刻在…」为准：和最近聊天记录里说的不一样，就按此刻说，"
+            "自然地改口（「会开完了」「我不在便利店了」），不要沿用旧说法，"
+            "也不要编出没发生过的会议/加班/行程。"
         )
         try:
             rows = self.p._recent(umo, 12)
@@ -4048,6 +4078,26 @@ class LLMService:
             "unanswered_at": 0.0,
             "recent_bot_texts": [],
         }
+        # 她刚在另一个平台（QQ / 飞书）说过的话也带上：只看本会话的话，
+        # 另一边早就改口了，这边还在接上一场开会。
+        other_bot = []
+        uid = str(profile.get("uid") or "")
+        if uid:
+            try:
+                other_bot = other_platform_bot_lines(
+                    await self.p._recent_by_uid(uid, 12, ""), umo,
+                )
+            except Exception as exc:
+                logger.debug("[amo] 取跨平台近聊失败: %s" % exc)
+                other_bot = []
+        if other_bot:
+            analysis["recent_bot_texts"] = list(analysis.get("recent_bot_texts") or []) + list(other_bot)
+            system = system + (
+                "\n【你刚在别的平台说过】\n"
+                + "\n".join("· " + str(item)[:120] for item in other_bot)
+                + "\n（这些是你在另一个平台刚说的话，不是他说的，别复述、别重复；"
+                "和此刻状态对不上就以此刻为准。）"
+            )
         window = max(0, self.p.cfg_int("proactive_unanswered_window_minutes", 30)) * 60
         limit = self.p.cfg_int("max_reply_chars", 220)
         # 记忆只来自外挂记忆插件；主动消息也带上，免得她说得像个陌生人
@@ -4091,6 +4141,10 @@ class LLMService:
                     event_text = self.p.state.interesting_event()
                 except Exception:
                     event_text = ""
+            try:
+                dialect_enabled = bool(self.p._dialect_active())
+            except Exception:
+                dialect_enabled = False
             return _pg_compose_task(
                 kind=kind,
                 name=name,
@@ -4100,6 +4154,8 @@ class LLMService:
                 recent_bot_texts=analysis["recent_bot_texts"],
                 interesting_event=event_text,
                 duplicate_hint=duplicate_hint,
+                dialect_style=self.p.cfg_str("dialect_style", ""),
+                dialect_enabled=dialect_enabled,
             )
 
         def build_prompt(task):
@@ -6494,11 +6550,14 @@ class HumanCorePlugin(Star):
 
     async def _data_call(self, name, *args, **kwargs):
         mem = self._data_mem()
-        if mem is None:
-            return None
-        func = getattr(mem, name, None)
+        func = getattr(mem, name, None) if mem is not None else None
         if not callable(func):
-            return None
+            # 旧版/半装的数据插件可能只暴露 store 门面（mem 上没有同名方法）。
+            # 以前这里直接 return None，聊天记录会一句都不进终端，表现就是「她失忆」。
+            store = self._data_store()
+            func = getattr(store, name, None) if store is not None else None
+            if not callable(func):
+                return None
         try:
             return await asyncio.wait_for(
                 func(*args, **kwargs),
@@ -6775,10 +6834,11 @@ class HumanCorePlugin(Star):
             return ""
         try:
             umo = str(getattr(event, "unified_msg_origin", "") or "")
-            limit = self.cfg_int("time_recall_limit", 6)
+            # 配 0 / 负数时以前会「请求 4 条、只渲染 1 条」，两边都按同一档位收敛
+            limit = max(1, min(40, self.cfg_int("time_recall_limit", 6)))
             result = await self._data_call(
                 "recall_messages", self._data_bot_id(), query=text, umo=umo,
-                uid=str(uid), limit=max(4, min(int(limit) * 2, 40)),
+                uid=str(uid), limit=min(limit * 2, 40),
             )
         except Exception as exc:
             logger.debug("[amo] 时间回看失败: %s" % exc)
@@ -6798,7 +6858,8 @@ class HumanCorePlugin(Star):
             return ""
         platform = self._platform_of(event)
         try:
-            detail = await self._data_call("person_context", self._data_bot_id(), platform, str(uid), 6)
+            # 两个平台共用一个近聊池：只要 6 条的话，他在这头连聊几句就把另一头挤没了。
+            detail = await self._data_call("person_context", self._data_bot_id(), platform, str(uid), 24)
         except Exception:
             return ""
         if not detail:
@@ -6818,21 +6879,36 @@ class HumanCorePlugin(Star):
                 "不管他在哪个平台说话，都是同一个人在跟你聊。"
             )
         other_lines = []
+        my_lines = []
         for item in recent:
-            if str(item.get("platform") or "") == platform and str(item.get("uid") or "") == str(uid):
+            item_platform = str(item.get("platform") or "")
+            if item_platform and item_platform == str(platform):
+                # 本平台的近聊已经在 _recent() 里，不重复
                 continue
-            if str(item.get("role") or "") == "bot":
+            if not item_platform and str(item.get("uid") or "") == str(uid):
                 continue
             text = str(item.get("content") or "").strip().replace("\n", " ")
             if not text:
                 continue
             label = item.get("label") or item.get("platform") or "别的平台"
-            other_lines.append("· [%s] %s" % (label, text[:120]))
+            line = "· [%s] %s" % (label, text[:120])
+            if str(item.get("role") or "") == "bot":
+                # 她自己说的：只留最近两句，够判断「另一边已经改口了」
+                my_lines.append(line)
+                continue
+            other_lines.append(line)
         if other_lines:
-            lines.append("他在别的平台最近说过：\n" + "\n".join(other_lines[:6]))
+            # 约定最新在尾部，取尾部而不是开头，免得喂最旧的几句
+            lines.append("他在别的平台最近说过：\n" + "\n".join(other_lines[-6:]))
             lines.append(
                 "这些事他已经在别的平台说过了，不要当成没说过、也不要再问一遍；"
                 "不要把平台名、编号念出来。"
+            )
+        if my_lines:
+            lines.append("你自己在别的平台最近说过：\n" + "\n".join(my_lines[-2:]))
+            lines.append(
+                "这些是你自己说的，不是他说的；别复述、别重复，"
+                "和现在对不上就以【正在】为准，自然改口。"
             )
         return "\n".join(lines)
 
@@ -8189,7 +8265,7 @@ class HumanCorePlugin(Star):
 
         陪伴自己不存记忆：读也只读记忆终端，读不到再退旧的插件库。
         """
-        limit = self.cfg_int("memory_recall_limit", 6)
+        limit = max(1, min(50, self.cfg_int("memory_recall_limit", 6)))
         if self.cfg_str("context_style", "lean").strip().lower() == "lean" and event is not None:
             try:
                 if not event.is_private_chat():
@@ -9009,10 +9085,23 @@ class HumanCorePlugin(Star):
         text = str(text or "").strip()
         if not umo or not text:
             return
+        last_user = ""
         try:
             saved = self._last_bot_saved.get(umo)
+            try:
+                for row in reversed(self._recent(umo, 4) or []):
+                    if str(row.get("role") or "") == "user":
+                        last_user = str(row.get("content") or "").strip()
+                        break
+            except Exception:
+                last_user = ""
+            # 同一句在 3 分钟内又发一次很常见（「嗯嗯」「好呀」）；只有「对应的
+            # 他最后那句话也没变」才算重复。以前只看文字，第二次「好呀」会被丢掉，
+            # 表里就变成「他还没被回过」，主动消息再把同一句答一遍。
             if saved and saved[0] == text and time.time() - saved[1] < 180:
-                return
+                saved_user = str(saved[2] if len(saved) > 2 else "")
+                if saved_user == last_user:
+                    return
             self._ctx_remember(umo, "bot", self.bot_name, "bot", text)
             if self.cfg_bool("local_chat_cache", False):
                 self.db.add_message(umo, "bot", self.bot_name, "bot", text)
@@ -9051,7 +9140,7 @@ class HumanCorePlugin(Star):
                     task.add_done_callback(_log_failed_task)
                 except Exception:
                     pass
-            self._last_bot_saved[umo] = (text, time.time())
+            self._last_bot_saved[umo] = (text, time.time(), last_user)
         except Exception as exc:
             logger.debug("[amo] 记录自己的回复失败: %s" % exc)
 
@@ -10409,9 +10498,11 @@ class HumanCorePlugin(Star):
     def _pending_key(self, uid):
         return "proactive_pending_" + str(uid)
 
-    def _set_proactive_pending(self, uid, kind, text):
+    def _set_proactive_pending(self, uid, kind, text, umo=""):
         self.db.kv_set(self._pending_key(uid), {
             "sent_at": now_ts(), "kind": kind, "text": str(text or ""),
+            # 记下真正发出去的会话：追问要回同一个平台，否则会「飞书问完、QQ 追」。
+            "umo": str(umo or ""),
             "followup": False, "mood": False,
         })
 
@@ -10481,8 +10572,19 @@ class HumanCorePlugin(Star):
         ],
     }
 
-    def _followup_text(self, uid, kind):
-        """追问换着说法：同一句不连着出现，避免一句台词反复刷屏。"""
+    @staticmethod
+    def _followup_topics(text):
+        """追问别再问同一件事：按话题打标，避开上一句已经问过的内容。"""
+        text = str(text or "")
+        groups = (
+            ("food", ("吃", "饭", "饿", "外卖", "餐")),
+            ("comfort", ("疼", "难受", "舒服", "药", "撑着")),
+            ("work", ("下班", "加班", "上班", "项目")),
+        )
+        return {name for name, words in groups if any(word in text for word in words)}
+
+    def _followup_text(self, uid, kind, previous_text=""):
+        """追问换着说法：同一句不连着出现，也别把刚问的问题再问一遍。"""
         templates = [t for t in (self.FOLLOWUP_TEMPLATES.get(str(kind)) or self.FOLLOWUP_TEMPLATES["greet"]) if t]
         if not templates:
             return "？怎么不理我了？"
@@ -10491,7 +10593,14 @@ class HumanCorePlugin(Star):
             last = str(self.db.kv_get(key, "") or "")
         except Exception:
             last = ""
-        pool = [t for t in templates if t != last] or templates
+        pool = [t for t in templates if t != last]
+        topics = self._followup_topics(previous_text)
+        if topics:
+            fresh = [t for t in pool if not (self._followup_topics(t) & topics)]
+            pool = fresh
+        if not pool:
+            # 同一类话题的问句都问过了，就换成「怎么不理我」的催回，别再问一遍。
+            pool = [t for t in self.FOLLOWUP_TEMPLATES["greet"] if t != last] or list(self.FOLLOWUP_TEMPLATES["greet"])
         text = random.choice(pool)
         try:
             self.db.kv_set(key, text)
@@ -10507,11 +10616,15 @@ class HumanCorePlugin(Star):
         now = now_ts()
         for profile in profiles:
             uid = str(profile.get("uid") or "")
-            umo = str(profile.get("private_umo") or "")
-            if not uid or not umo:
+            if not uid:
                 continue
             pending = self.db.kv_get(self._pending_key(uid), None)
             if not isinstance(pending, dict) or not pending.get("sent_at"):
+                continue
+            # 追问要回真正发出这条主动消息的平台（飞书发的就在飞书追）；
+            # 老数据没有 umo 时退回主页会话。
+            umo = str(pending.get("umo") or "") or str(profile.get("private_umo") or "")
+            if not umo:
                 continue
             age = now - to_float(pending.get("sent_at"), 0)
             if age > 6 * 3600:
@@ -10520,15 +10633,20 @@ class HumanCorePlugin(Star):
             followup_minutes = self.cfg_int("proactive_followup_minutes", 30)
             # 0 / 负数 = 关掉追问，只保留「心情变差」这一档
             followup_after = 10 ** 9 if followup_minutes <= 0 else max(5, followup_minutes) * 60
-            mood_after = max(60, self.cfg_int("proactive_no_reply_minutes", 120)) * 60
+            # 0 / 负数 = 关掉「没回复就心情变差」；默认跟 schema 一致（30 分钟）
+            mood_minutes = max(0, self.cfg_int("proactive_no_reply_minutes", 30))
+            mood_after = mood_minutes * 60 if mood_minutes else 10 ** 9
             if not pending.get("followup") and age >= followup_after:
                 if not quiet_now(self.cfg_str("quiet_hours", "23:30-07:30")):
                     kind = str(pending.get("kind") or "greet")
-                    followup = self._followup_text(uid, kind)
+                    followup = self._followup_text(uid, kind, pending.get("text"))
                     if await self._send_to_umo(umo, followup):
                         pending["followup"] = True
                         pending["followup_at"] = now
                         self.db.kv_set(self._pending_key(uid), pending)
+                        # 追问本身也是一句她说过的话，不记下来会引出下一轮「你怎么不理我」
+                        self._remember_bot_message(umo, followup)
+                        self._mark_bot_initiated(umo)
                         logger.debug("[amo] 主动私聊未回复，已追问: %s" % uid)
             if not pending.get("mood") and age >= mood_after:
                 pending["mood"] = True
@@ -10636,7 +10754,9 @@ class HumanCorePlugin(Star):
                 return False
         if not self.cfg_bool("ritual_skip_if_greeted", True):
             return True
-        texts = [str(row.get("content") or "") for row in rows if str(row.get("role") or "") in ("user", "bot")]
+        # 只认「他」问候过：她自己那句「吃了没 / 晚安」多半是主动消息或追问，
+        # 算进来会把当天的问候整段吃掉（午饭问候时有时无就是这么来的）。
+        texts = [str(row.get("content") or "") for row in rows if str(row.get("role") or "") == "user"]
         joined = "\n".join(texts[-10:])
         if kind == "morning":
             return not bool(re.search(r"(?:^|\s)早(?:\s|$|[!！。~～])|早安|早上好|早上好呀|我醒了|起床了|还没起来吗|醒了没", joined))
@@ -11140,7 +11260,7 @@ class HumanCorePlugin(Star):
                 self.db.kv_set("last_channel:%s" % profile.get("uid"), target_umo)
                 self.db.bump_proactive(profile["uid"])
                 self.db.log_proactive(profile["uid"], kind, text)
-                self._set_proactive_pending(profile["uid"], kind, text)
+                self._set_proactive_pending(profile["uid"], kind, text, umo=target_umo)
                 self._mark_forced_hour(profile.get("uid"))
 
                 logger.debug("[amo] 主动私聊 -> %s (%s)" % (profile.get("name", ""), kind))
@@ -12448,23 +12568,31 @@ class HumanCorePlugin(Star):
             self.state.apply_travel_overlay(his)
         except Exception as exc:
             logger.warning("[amo] 回来日程失败: %s" % exc)
-        umo = self._last_umo or self._first_private_umo()
+        # 报平安必须进私聊：以前用 _last_umo，他最后一句是在群里就会把「我回来啦」发进群。
+        umo = self._first_private_umo()
+        if not umo:
+            last = str(getattr(self, "_last_umo", "") or "")
+            umo = last if "FriendMessage" in last else ""
+        uid = ""
+        try:
+            rows = self.db.list_profiles(limit=1) or []
+            uid = str((rows[0] or {}).get("uid") or "") if rows else ""
+        except Exception:
+            uid = ""
         try:
             if umo:
-                await self._send_to_umo(umo, random.choice((
+                text = random.choice((
                     "我回来啦，刚到家。",
                     "到家啦，你在干嘛呢？",
                     "我回来了，你吃饭了没？",
-                )))
+                ))
+                if await self._send_to_umo(umo, text):
+                    self._mark_bot_initiated(umo)
+                    if uid:
+                        self._set_proactive_pending(uid, "travel_back", text, umo=umo)
         except Exception as exc:
             logger.warning("[amo] 回来报平安失败: %s" % exc)
         try:
-            uid = ""
-            try:
-                rows = self.db.list_profiles(limit=1) or []
-                uid = str((rows[0] or {}).get("uid") or "") if rows else ""
-            except Exception:
-                uid = ""
             if uid:
                 if not await self._write_memory_checked(
                     uid, "她 %s 从 %s 旅游回来了" % (today_str(), city), "event", 1,

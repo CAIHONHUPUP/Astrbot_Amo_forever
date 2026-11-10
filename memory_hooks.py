@@ -105,6 +105,21 @@ def render_recent_block(rows, self_name="你", limit=8):
 
 # ---------------------------------------------------------------- 缓冲
 
+_WARN_AT = {}
+
+
+def _warn_once(logger, key, message, gap=600.0):
+    """同一条能力缺失只在 10 分钟内提示一次，避免每轮消息都刷日志。"""
+    now = time.time()
+    if now - _WARN_AT.get(key, 0.0) < gap:
+        return
+    _WARN_AT[key] = now
+    try:
+        logger.warning(message)
+    except Exception:
+        pass
+
+
 class ChatBuffer:
     """每个会话一个环形缓冲：只在内存里，不落盘。"""
 
@@ -341,6 +356,9 @@ class AmoDataProvider(MemoryProvider):
         """
         methods = await self._call_all(("recall", "search_memory", "query_memory", "search"))
         if not methods:
+            # 以前这里直接返回空：版本不匹配时表现和「本来就没记忆」一模一样
+            _warn_once(self.rt.logger, "hub_recall_no_method",
+                       "[amo] 记忆终端没有可用的召回接口（recall/search_memory 都没有），这一轮召回为空")
             return []
         last_exc = None
         for method in methods:
@@ -638,6 +656,12 @@ class MemoryHub:
     async def recall(self, uid, query="", limit=6, scope="", group_id=""):
         provider = self.refresh()
         if provider is None or CAP_RECALL not in provider.caps:
+            _warn_once(
+                self.rt.logger, "hub_provider_no_recall",
+                "[amo] 记忆来源 %s 不支持召回（caps=%s），这一轮没有记忆"
+                % (getattr(provider, "name", "none"),
+                   sorted(getattr(provider, "caps", set())) if provider is not None else "无来源"),
+            )
             return []
         try:
             return await provider.recall(uid, query, limit, scope, group_id) or []

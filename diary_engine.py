@@ -48,8 +48,18 @@ def resolve_dir(setting: Any, data_root: str) -> str:
     text = str(setting or "").strip()
     if not text:
         return default
-    # 作者本机路径一类的旧默认值：不管当前平台认不认，直接回退
+    # 作者本机路径一类的旧默认值：不管当前平台认不认，直接回退。
+    # 但 Windows 上用户自己填的、确实落在数据目录内的绝对路径要保留
+    # （以前一律当旧默认值丢掉，等于面板里填的目录不生效）。
     if _WIN_ABS_RE.match(text):
+        if os.name == "nt" and root:
+            try:
+                resolved = os.path.abspath(text)
+                resolved_root = os.path.abspath(root)
+                if resolved == resolved_root or resolved.startswith(resolved_root + os.sep):
+                    return resolved
+            except (OSError, ValueError):
+                pass
         return default
     if not os.path.isabs(text):
         if not root:

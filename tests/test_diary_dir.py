@@ -24,7 +24,7 @@ sys.path.insert(0, ROOT)
 
 from diary_engine import DEFAULT_DIR, resolve_dir  # noqa: E402
 
-DATA_ROOT = os.path.join("/tmp", "astrbot-data", "plugin_data", "Astrbot_Amo_forever")
+DATA_ROOT = os.path.abspath(os.path.join("/tmp", "astrbot-data", "plugin_data", "Astrbot_Amo_forever"))
 
 
 class ResolveDirTests(unittest.TestCase):
@@ -34,9 +34,12 @@ class ResolveDirTests(unittest.TestCase):
         self.assertEqual(resolve_dir("   ", DATA_ROOT), os.path.join(DATA_ROOT, "diary"))
 
     def test_relative_setting_hangs_under_plugin_data(self):
-        self.assertEqual(resolve_dir("日记", DATA_ROOT), os.path.join(DATA_ROOT, "日记"))
         self.assertEqual(
-            resolve_dir("custom/diary", DATA_ROOT), os.path.join(DATA_ROOT, "custom/diary")
+            resolve_dir("日记", DATA_ROOT), os.path.abspath(os.path.join(DATA_ROOT, "日记"))
+        )
+        self.assertEqual(
+            resolve_dir("custom/diary", DATA_ROOT),
+            os.path.abspath(os.path.join(DATA_ROOT, "custom/diary")),
         )
 
     def test_absolute_inside_plugin_data_is_kept(self):
