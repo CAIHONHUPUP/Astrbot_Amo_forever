@@ -54,7 +54,8 @@
     }
     .wrap { width: 100%; max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
     header { display: flex; align-items: center; justify-content: space-between; padding: 4px 2px; }
-    .brand { display: flex; align-items: center; gap: 9px; font-size: 20px; font-weight: 650; letter-spacing: .5px; }
+    .brand { display: flex; align-items: center; gap: 9px; font-size: 20px; font-weight: 650; letter-spacing: .5px;
+      cursor: pointer; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
     .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--pink); box-shadow: 0 0 10px rgba(232, 72, 154, .45); }
     .clock { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; cursor: pointer; user-select: none; touch-action: manipulation; }
     .tab.icon-tab { width: 32px; height: 32px; min-width: 32px; padding: 0; display: grid; place-items: center;
@@ -130,8 +131,8 @@
     .toast.error { border-color: rgba(244, 63, 94, .45); color: #b42318; }
     .theme-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 2px 0; }
     .theme-bar .segmented { flex: 0 0 auto; }
-    .tabs { display: flex; align-items: center; gap: 8px; padding: 10px 2px; background: transparent; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); border-radius: 0; max-width: 100%; min-width: 0; flex-wrap: nowrap; overflow: hidden; position: sticky; top: 0; z-index: 12; }
-    .tab { flex: 0 0 auto; border: 0; background: transparent; color: var(--muted); text-align: center; padding: 0 8px; border-radius: 0; font-size: 13px; line-height: 1.2; cursor: pointer; white-space: nowrap; min-width: 0; }
+    .tabs { display: flex; align-items: center; justify-content: space-between; gap: 2px; padding: 10px 0; background: transparent; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); border-radius: 0; max-width: 100%; min-width: 0; flex-wrap: nowrap; overflow: hidden; position: sticky; top: 0; z-index: 12; }
+    .tab { flex: 0 0 auto; border: 0; background: transparent; color: var(--muted); text-align: center; padding: 0 4px; border-radius: 0; font-size: 13px; line-height: 1.2; cursor: pointer; white-space: nowrap; min-width: 0; }
     .tab.active { background: transparent; color: var(--muted); box-shadow: none; }
     .tab:hover { background: transparent; color: var(--muted); }
     .tab-panel { display: flex; flex-direction: column; gap: 14px; width: 100%; min-width: 0; }
@@ -323,13 +324,19 @@
     .inline-body .tab-panel { margin: 0; }
     .inline-body .settings-list { margin-top: 0; }
 
-    /* 关系图改成一级页，不再用弹窗 */
-    #neuronModal.inline-view { position: static; display: block; padding: 0; background: transparent; backdrop-filter: none; }
-    #neuronModal.inline-view[hidden] { display: none; }
-    #neuronModal.inline-view .modal-card { width: 100%; max-width: 560px; max-height: none; overflow: visible;
-      background: transparent; border: 0; border-radius: 0; padding: 0; box-shadow: none; }
-    #neuronModal #btnNeuronClose { padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 13px; }
-    #neuronModal #btnNeuronClose:hover { color: var(--muted); background: transparent; }
+    /* 关系图是一级页，和心情一样用主标签页展开，不浮层、不关闭 */
+    #tab-relations .neuron-card { padding: 12px; }
+    #neuronCanvas { width: 100%; height: min(520px, 62vh); display: block; margin: 0; }
+    .neuron-footer { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: 10px; }
+    #neuronLegend { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; gap: 7px 14px; min-width: 0;
+      font-size: 11.5px; color: var(--muted); line-height: 1.4; }
+    #neuronLegend .legend-item { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+    #neuronLegend .legend-dot { width: 8px; height: 8px; border-radius: 50%; border: 1px solid var(--line); flex: none; }
+    #neuronDetail { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.7; }
+    #neuronDetail .neuron-detail-title { color: var(--text); font-weight: 600; margin-bottom: 4px; }
+    #neuronDetail .neuron-detail-row { color: var(--muted); }
+    .neuron-manage { padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 12px; line-height: 1.2; flex: none; }
+    .neuron-manage:hover, .neuron-manage:focus-visible { color: var(--muted); background: transparent; }
 
     .modal {
       position: fixed; inset: 0; z-index: 20; display: flex; align-items: center;
@@ -351,7 +358,7 @@
       .grid { grid-template-columns: 1fr; }
       .bars { grid-template-columns: 1fr; }
       .form-grid { grid-template-columns: 1fr; }
-      .tabs .tab { padding: 8px 6px; font-size: 12px; }
+      .tabs .tab { padding: 0 2px; font-size: 12px; }
       .clock { font-size: 11px; }
     }
   </style>
@@ -360,10 +367,10 @@
   <div class="wrap">
     <header>
       <div style="display:flex;align-items:center">
-        <div class="brand"><span class="dot"></span> 陪伴</div>
+        <div class="brand" id="btnBrand" role="button" tabindex="0" title="双击打开心流设置"><span class="dot"></span> 陪伴</div>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
-        <button class="neuron-btn" id="btnNeuron" title="关系图谱" aria-label="关系图谱">
+        <button class="neuron-btn" id="btnNeuron" title="关系" aria-label="关系">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8">
             <circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="17" r="2.2"/><circle cx="19" cy="17" r="2.2"/>
             <circle cx="12" cy="12" r="2.2"/>
@@ -392,6 +399,8 @@
       <button class="tab" data-tab="actions">操作</button>
       <button class="tab" data-tab="profiles">用户</button>
       <button class="tab" data-tab="usage">用量</button>
+      <button class="tab" data-tab="settings" data-group="私聊">私聊</button>
+      <button class="tab" data-tab="settings" data-group="状态">参数</button>
       <button class="tab" data-tab="settings" data-group="基础">基础</button>
     </nav>
 
@@ -661,15 +670,15 @@
       </section>
     </div>
 
-  <div class="inline-view" id="neuronModal" hidden>
-    <div class="modal-card">
-      <div class="inline-top" style="justify-content:space-between">
-        <strong id="neuronTitle" style="cursor:pointer" title="双击管理关系">关系图谱</strong>
-        <button class="close-text" id="btnNeuronClose" type="button">关闭</button>
-      </div>
+  <div id="tab-relations" class="tab-panel" hidden>
+    <section class="card neuron-card">
       <div id="neuronView">
-        <canvas id="neuronCanvas" style="width:100%;height:min(440px,58vh);display:block;margin-top:8px"></canvas>
-        <div class="hint" id="neuronLegend"></div>
+        <canvas id="neuronCanvas"></canvas>
+        <div id="neuronDetail" hidden></div>
+        <div class="neuron-footer">
+          <div id="neuronLegend"></div>
+          <button class="neuron-manage" id="btnNeuronManage" type="button">管理</button>
+        </div>
       </div>
       <div id="neuronEdit" hidden>
         <div class="hint" style="margin-top:8px">管理员修改关系（同时写进记忆终端）</div>
@@ -684,10 +693,10 @@
           <button class="primary" id="btnNeuronAdd">添加</button>
         </div>
         <input id="nRelNote" placeholder="备注（可选）" style="margin-top:8px;width:100%">
-        <div id="neuronList" class="list" style="margin-top:8px;max-height:200px;overflow:auto"></div>
+        <div id="neuronList" class="list" style="margin-top:8px;max-height:240px;overflow:auto"></div>
         <button class="ghost" id="btnNeuronBack" style="margin-top:8px">返回图谱</button>
       </div>
-    </div>
+    </section>
   </div>
 
 
@@ -1516,12 +1525,13 @@
 
     async function openSettingsFor(term) {
       if (!configItems.length) await loadSettings();
-      openSheet("参数");
+      const paramButton = document.querySelector('.tabs .tab[data-tab="settings"][data-group="状态"]');
+      showTab("settings", "状态", paramButton);
       const input = document.getElementById("settingsSearch");
       input.value = term;
       input.dispatchEvent(new Event("input"));
-      const body = document.getElementById("sheetBody");
-      if (body) body.scrollTop = 0;
+      const list = document.getElementById("settingsList");
+      if (list) list.scrollIntoView({ block: "start" });
     }
 
     document.getElementById("periodCard").addEventListener("click", () => openSettingsFor("period"));
@@ -1879,8 +1889,6 @@
       if (wrap) wrap.classList.remove("view-mode");
       const inline = document.getElementById("inlineView");
       if (inline) inline.hidden = true;
-      const neuron = document.getElementById("neuronModal");
-      if (neuron) neuron.hidden = true;
       ensureSettingsInPage();
       tabButtons.forEach((button) => {
         if (activeButton) button.classList.toggle("active", button === activeButton);
@@ -1895,7 +1903,13 @@
       if (name === "gift") loadGift();
       if (name === "diary") loadDiary();
       if (name === "usage") loadUsage();
+      if (name === "relations") openNeuron();
       if (name === "settings") {
+        const groupChanged = !!group && group !== settingsGroupFilter;
+        if (groupChanged) {
+          const search = document.getElementById("settingsSearch");
+          if (search) search.value = "";
+        }
         if (group) settingsGroupFilter = group;
         if (!configItems.length) loadSettings();
         else renderSettings();
@@ -1907,14 +1921,12 @@
     const giftRefreshButton = document.getElementById("giftRefresh");
     if (giftRefreshButton) giftRefreshButton.addEventListener("click", () => loadGift());
 
-    // ---- 照片页（全屏）；心流/时间/关系图做一级页内视图 ----
+    // ---- 照片页（全屏）；心流/时间做一级页内视图；关系图做一级标签页 ----
     const sheet = document.getElementById("controlSheet");
     const sheetBody = document.getElementById("sheetBody");
     const sheetNav = document.getElementById("sheetNav");
     const PHOTO_TABS = [
       { label: "日记", sheet: "diary" },
-      { label: "私聊", sheet: "settings", group: "私聊" },
-      { label: "参数", sheet: "settings", group: "状态" },
       { label: "分段", sheet: "settings", group: "分段" },
       { label: "记忆", sheet: "settings", group: "记忆" },
     ];
@@ -1973,6 +1985,11 @@
       }
       if (name === "diary") loadDiary();
       if (name === "settings") {
+        const groupChanged = !!group && group !== settingsGroupFilter;
+        if (groupChanged) {
+          const search = document.getElementById("settingsSearch");
+          if (search) search.value = "";
+        }
         if (group) settingsGroupFilter = group;
         if (!configItems.length) loadSettings();
         else renderSettings();
@@ -2000,7 +2017,7 @@
       showTab(sheetReturnTab || "world", sheetReturnGroup, sheetReturnButton);
     }
 
-    // 移动端也可靠的双击：两次 click 间隔在 500ms 内算双击。
+    // 移动端也可靠的双击：两次 click 间隔在 450ms 内算双击。
     function bindDoubleTap(element, handler) {
       if (!element) return;
       let timer = null;
@@ -2011,15 +2028,7 @@
           handler();
           return;
         }
-        timer = setTimeout(() => { timer = null; }, 500);
-      });
-      element.addEventListener("dblclick", (event) => {
-        event.preventDefault();
-        if (timer) {
-          clearTimeout(timer);
-          timer = null;
-        }
-        handler();
+        timer = setTimeout(() => { timer = null; }, 450);
       });
     }
 
@@ -2066,18 +2075,15 @@
       button.addEventListener("click", closeInlineView);
     });
 
-    // 心流：500ms 内双击“陪伴”打开一级页。
+    // 心流：450ms 内双击“陪伴”打开一级页。
     const brandButton = document.getElementById("btnBrand");
     if (brandButton) {
-      let brandTapTimer = null;
-      brandButton.addEventListener("click", () => {
-        if (brandTapTimer) {
-          clearTimeout(brandTapTimer);
-          brandTapTimer = null;
+      bindDoubleTap(brandButton, () => openInlineView("heart"));
+      brandButton.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
           openInlineView("heart");
-          return;
         }
-        brandTapTimer = setTimeout(() => { brandTapTimer = null; }, 500);
       });
     }
 
@@ -2940,21 +2946,41 @@
     setTimeout(() => boot(0), 400);
     setInterval(() => { load().catch(() => {}); }, 60000);
     /* ---------- 关系图谱（神经元） ---------- */
+    // 关系图统一成五档，颜色按用户指定：仇人黑、抵触黄、普通白、熟识紫、恋人粉。
     const NEURON_COLORS = {
-      家人: "#d98c8c", 恋人: "#e06a9a", 朋友: "#7aa8e0", 同事: "#6fc0a8",
-      同学: "#c9a24d", 熟人: "#9b8fd0", 陌生人: "#9aa0a6", 仇人: "#c0504d",
+      仇恨: "#1f1f1f",
+      抵触: "#e0b341",
+      普通: "#ffffff",
+      熟识: "#9b8fd0",
+      恋人: "#e06a9a",
     };
+    const NEURON_STROKES = { 普通: "#cfc9d8" };
+    const NEURON_TIERS = ["仇恨", "抵触", "普通", "熟识", "恋人"];
+    const BRAIN_REL_RANK = { 仇恨: 0, 抵触: 1, 普通: 2, 熟识: 3, 恋人: 4 };
     let neuronGraph = null;
     let neuronActive = "";
     let neuronHoverId = "";
     let neuronRaf = 0;
-    const neuronCamera = { yaw: 0.35, pitch: -0.2, distance: 0, auto: true };
+    const neuronCamera = { yaw: 0.35, pitch: -0.2, distance: -30, auto: true };
 
-    function neuronColor(relation) {
-      return NEURON_COLORS[relation] || "#9aa0a6";
+    function neuronTier(relation) {
+      const value = String(relation || "").trim();
+      if (value === "仇人" || value === "仇恨") return "仇恨";
+      if (value === "抵触") return "抵触";
+      if (value === "恋人" || value === "相恋") return "恋人";
+      if (value === "熟人" || value === "熟识") return "熟识";
+      if (["家人", "朋友", "同事", "同学"].includes(value)) return "熟识";
+      return "普通";
     }
 
-    const BRAIN_REL_RANK = { 家人: 5, 恋人: 6, 朋友: 4, 同事: 3, 同学: 3, 熟人: 2, 陌生人: 1, 仇人: 4 };
+    function neuronColor(relation) {
+      return NEURON_COLORS[neuronTier(relation)] || NEURON_COLORS["普通"];
+    }
+
+    function neuronStroke(relation) {
+      const tier = neuronTier(relation);
+      return NEURON_STROKES[tier] || NEURON_COLORS[tier] || NEURON_COLORS["普通"];
+    }
 
     function buildNeuronGraph(edges) {
       const nodes = new Map();
@@ -2966,12 +2992,13 @@
         if (!nodes.has(a)) nodes.set(a, { id: a, name: edge.a_name || a, relation: "", degree: 0 });
         if (!nodes.has(b)) nodes.set(b, { id: b, name: edge.b_name || b, relation: "", degree: 0 });
         const relation = edge.relation || "朋友";
-        links.push({ a, b, relation });
-        const rank = BRAIN_REL_RANK[relation] || 3;
+        const tier = neuronTier(relation);
+        links.push({ a, b, relation, tier });
+        const rank = BRAIN_REL_RANK[tier] || 0;
         [a, b].forEach((id) => {
           const node = nodes.get(id);
           node.degree += 1;
-          if (rank > (BRAIN_REL_RANK[node.relation] || 0)) node.relation = relation;
+          if (rank > (BRAIN_REL_RANK[node.relation] || 0)) node.relation = tier;
         });
       });
       // 球面均匀撒点，再跑 3D 力导向，先长成“一团脑子”的基础形状
@@ -2984,8 +3011,7 @@
         const theta = golden * i;
         node.x = Math.cos(theta) * ring * shell;
         node.y = y * shell;
-        node.z = Math.sin(theta) * ring * shell;
-        node.vx = 0; node.vy = 0; node.vz = 0;
+        node.z = Math.sin(theta) * ring * shell;        node.vx = 0; node.vy = 0; node.vz = 0;
       });
       return { nodes: list, links, index: nodes, radius: shell };
     }
@@ -3073,7 +3099,7 @@
         const depth = (a.pdepth + b.pdepth) / 2;
         const near = activeId && (link.a === activeId || link.b === activeId);
         const base = 0.05 + 0.2 * (1 - Math.min(1, Math.max(0, (depth + 180) / 360)));
-        ctx.strokeStyle = neuronColor(link.relation);
+        ctx.strokeStyle = neuronStroke(link.relation);
         ctx.globalAlpha = near ? 0.9 : base;
         ctx.lineWidth = near ? 1.8 : 0.8;
         ctx.beginPath(); ctx.moveTo(a.px, a.py); ctx.lineTo(b.px, b.py); ctx.stroke();
@@ -3083,9 +3109,9 @@
       // 节点带一点辉光，像神经元
       ordered.forEach((node) => {
         const active = node.id === activeId;
-        const scale = Math.max(0.45, node.pscale);
-        const radius = (active ? 9 : node.id === "bot" ? 7.5 : 5.5) * scale;
-        const color = node.id === "bot" ? "#e06a9a" : neuronColor(node.relation);
+        const scale = Math.max(0.5, node.pscale);
+        const radius = (active ? 11 : node.id === "bot" ? 9 : 6.5) * scale;
+        const color = node.id === "bot" ? "#e06a9a" : neuronStroke(node.relation);
         const glow = ctx.createRadialGradient(node.px, node.py, 0, node.px, node.py, radius * 3.4);
         glow.addColorStop(0, color);
         glow.addColorStop(0.35, color);
@@ -3107,15 +3133,67 @@
         .concat(ordered.filter((node) => node.id !== "bot" && node.id !== activeId)
           .sort((a, b) => (BRAIN_REL_RANK[b.relation] || 0) - (BRAIN_REL_RANK[a.relation] || 0) || b.degree - a.degree)
           .slice(0, 12));
-      ctx.font = "11px system-ui, sans-serif";
+      ctx.font = "12px system-ui, sans-serif";
       ctx.textAlign = "center";
       labelNodes.forEach((node) => {
         const label = node.name.length > 8 ? node.name.slice(0, 8) + "…" : node.name;
         ctx.globalAlpha = node.id === activeId || node.id === "bot" ? 1 : 0.72;
         ctx.fillStyle = "#4a3f52";
-        ctx.fillText(label, node.px, node.py + 18 * Math.max(0.6, node.pscale));
+        ctx.fillText(label, node.px, node.py + 20 * Math.max(0.62, node.pscale));
       });
       ctx.globalAlpha = 1;
+    }
+
+    function renderNeuronLegend() {
+      const legend = document.getElementById("neuronLegend");
+      if (!legend) return;
+      legend.textContent = "";
+      NEURON_TIERS.forEach((tier) => {
+        const item = document.createElement("span");
+        item.className = "legend-item";
+        const dot = document.createElement("i");
+        dot.className = "legend-dot";
+        dot.style.background = NEURON_COLORS[tier];
+        item.appendChild(dot);
+        item.appendChild(document.createTextNode(tier));
+        legend.appendChild(item);
+      });
+    }
+
+    function renderNeuronDetail(node) {
+      const detail = document.getElementById("neuronDetail");
+      if (!detail) return;
+      if (!node || !neuronGraph) {
+        detail.hidden = true;
+        detail.textContent = "";
+        return;
+      }
+      const rows = neuronGraph.links
+        .filter((link) => link.a === node.id || link.b === node.id)
+        .map((link) => {
+          const otherId = link.a === node.id ? link.b : link.a;
+          const other = neuronGraph.index.get(otherId);
+          return { name: other ? other.name : otherId, relation: link.relation || link.tier || "普通" };
+        });
+      detail.textContent = "";
+      const title = document.createElement("div");
+      title.className = "neuron-detail-title";
+      title.textContent = String(node.name || node.id) + " 的关系";
+      detail.appendChild(title);
+      if (!rows.length) {
+        const empty = document.createElement("div");
+        empty.className = "neuron-detail-row";
+        empty.textContent = "还没有和其他人建立关系";
+        detail.appendChild(empty);
+      } else {
+        rows.forEach((row) => {
+          const line = document.createElement("div");
+          line.className = "neuron-detail-row";
+          line.textContent = row.name + " · " + row.relation;
+          detail.appendChild(line);
+        });
+      }
+      detail.hidden = false;
     }
 
     function renderNeuronGraph(edges) {
@@ -3124,8 +3202,11 @@
       const ctx = canvas.getContext("2d");
       const graph = buildNeuronGraph(edges);
       neuronGraph = graph;
-      const legend = document.getElementById("neuronLegend");
+      renderNeuronLegend();
+      const detail = document.getElementById("neuronDetail");
       if (!graph.nodes.length) {
+        neuronActive = "";
+        if (detail) { detail.hidden = true; detail.textContent = ""; }
         if (neuronRaf) { cancelAnimationFrame(neuronRaf); neuronRaf = 0; }
         canvas.width = Math.max(1, canvas.clientWidth);
         canvas.height = Math.max(1, canvas.clientHeight);
@@ -3133,30 +3214,20 @@
         ctx.fillStyle = "#9a8fa3";
         ctx.font = "12px system-ui, sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText("还没有关系，双击标题可以手动添加", canvas.clientWidth / 2, canvas.clientHeight / 2);
-        if (legend) legend.textContent = "";
+        ctx.fillText("还没有关系，点「管理」可以手动添加", canvas.clientWidth / 2, canvas.clientHeight / 2);
         return;
+      }
+      if (!graph.index.has(neuronActive)) {
+        neuronActive = "";
+        if (detail) { detail.hidden = true; detail.textContent = ""; }
+      } else {
+        renderNeuronDetail(graph.index.get(neuronActive));
       }
       // 节点多的时候少跑几轮，打开面板别卡住
       const iterations = graph.nodes.length > 400 ? 40 : (graph.nodes.length > 220 ? 90 : 180);
       settleNeuronGraph(graph, iterations);
       // 按画布实际大小定球半径，小屏（手机）也不会顶出边框
-      normalizeNeuronGraph(graph, Math.min(canvas.clientWidth || 560, canvas.clientHeight || 240) * 0.34);
-
-      if (legend) {
-        const kinds = [...new Set(graph.links.map((link) => link.relation))];
-        legend.textContent = "";
-        kinds.forEach((kind) => {
-          const span = document.createElement("span");
-          span.style.cssText = "display:inline-block;margin-right:10px";
-          const dot = document.createElement("i");
-          dot.style.cssText = "display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;background:" +
-            String(neuronColor(kind) || "transparent");
-          span.appendChild(dot);
-          span.appendChild(document.createTextNode(String(kind)));
-          legend.appendChild(span);
-        });
-      }
+      normalizeNeuronGraph(graph, Math.min(canvas.clientWidth || 560, canvas.clientHeight || 360) * 0.44);
 
       let width = 0, height = 0, dpr = 1;
       const fit = () => {
@@ -3174,7 +3245,7 @@
       if (neuronRaf) cancelAnimationFrame(neuronRaf);
       let lastDraw = 0;
       const frame = (now) => {
-        if (!canvas.isConnected) return;
+        if (!canvas.isConnected || canvas.offsetParent === null) return;
         fit();
         if (width <= 0) { neuronRaf = requestAnimationFrame(frame); return; }
         if (neuronCamera.auto && !canvas.__brainDragging) neuronCamera.yaw += 0.0016;
@@ -3187,21 +3258,25 @@
         neuronRaf = requestAnimationFrame(frame);
       };
 
-      // 拖动 = 旋转整团神经网；滚轮缩放；双击回正
+      // 拖动 = 旋转整团神经网；轻点节点 = 在当前一级页看它的直接关系
       canvas.style.touchAction = "none";
       canvas.style.cursor = "grab";
       canvas.__brainDragging = false;
-      let lastX = 0, lastY = 0;
+      let lastX = 0, lastY = 0, downX = 0, downY = 0, moved = false;
       const pick = (event) => {
         const rect = canvas.getBoundingClientRect();
         const mx = (event.clientX - rect.left) * (width / Math.max(1, rect.width));
         const my = (event.clientY - rect.top) * (height / Math.max(1, rect.height));
-        let best = null, bestDist = 20;
+        let best = null, bestDist = 26;
         graph.nodes.forEach((node) => {
           const dist = Math.hypot(node.px - mx, node.py - my);
           if (dist < bestDist) { bestDist = dist; best = node; }
         });
         return best;
+      };
+      const selectNode = (node) => {
+        neuronActive = node ? node.id : "";
+        renderNeuronDetail(node || null);
       };
       canvas.onpointerdown = (event) => {
         event.preventDefault();
@@ -3210,14 +3285,19 @@
         canvas.style.cursor = "grabbing";
         neuronCamera.auto = false;
         lastX = event.clientX; lastY = event.clientY;
+        downX = event.clientX; downY = event.clientY;
+        moved = false;
         try { canvas.setPointerCapture(event.pointerId); } catch (err) {}
       };
       canvas.onpointermove = (event) => {
         if (canvas.__brainDragging) {
-          neuronCamera.yaw += (event.clientX - lastX) * 0.009;
-          neuronCamera.pitch += (event.clientY - lastY) * 0.007;
-          neuronCamera.pitch = Math.max(-1.25, Math.min(1.25, neuronCamera.pitch));
-          lastX = event.clientX; lastY = event.clientY;
+          if (!moved && Math.hypot(event.clientX - downX, event.clientY - downY) > 5) moved = true;
+          if (moved) {
+            neuronCamera.yaw += (event.clientX - lastX) * 0.009;
+            neuronCamera.pitch += (event.clientY - lastY) * 0.007;
+            neuronCamera.pitch = Math.max(-1.25, Math.min(1.25, neuronCamera.pitch));
+            lastX = event.clientX; lastY = event.clientY;
+          }
           return;
         }
         const hit = pick(event);
@@ -3230,15 +3310,23 @@
         canvas.style.cursor = "grab";
         canvas.__brainIdle = setTimeout(() => { neuronCamera.auto = true; }, 4000);
       };
-      canvas.onpointerup = endDrag;
-      canvas.onpointercancel = endDrag;
-      canvas.onpointerleave = () => { neuronHoverId = ""; };
+      canvas.onpointerup = (event) => {
+        const wasDragging = canvas.__brainDragging;
+        const wasMoved = moved;
+        endDrag();
+        if (wasDragging && !wasMoved) {
+          selectNode(pick(event));
+          canvas.style.cursor = neuronActive ? "pointer" : "grab";
+        }
+      };
+      canvas.onpointercancel = () => { endDrag(); };
+      canvas.onpointerleave = () => { if (!canvas.__brainDragging) neuronHoverId = ""; };
       canvas.onwheel = (event) => {
         event.preventDefault();
-        neuronCamera.distance = Math.max(-220, Math.min(500, neuronCamera.distance + event.deltaY * 0.4));
+        neuronCamera.distance = Math.max(-260, Math.min(560, neuronCamera.distance + event.deltaY * 0.4));
       };
       canvas.ondblclick = () => {
-        neuronCamera.yaw = 0.35; neuronCamera.pitch = -0.2; neuronCamera.distance = 0;
+        neuronCamera.yaw = 0.35; neuronCamera.pitch = -0.2; neuronCamera.distance = -30;
         neuronCamera.auto = true;
       };
 
@@ -3303,21 +3391,16 @@
     function setNeuronMode(edit) {
       const view = document.getElementById("neuronView");
       const editBox = document.getElementById("neuronEdit");
-      const title = document.getElementById("neuronTitle");
-      const hint = document.getElementById("neuronHint");
+      const manage = document.getElementById("btnNeuronManage");
       if (!view || !editBox) return;
       view.hidden = !!edit;
       editBox.hidden = !edit;
-      if (title) title.textContent = edit ? "关系管理" : "关系图谱";
-      if (hint) hint.textContent = edit ? "改完会同步到记忆终端" : "拖动旋转 · 双击标题管理";
+      if (manage) manage.textContent = edit ? "返回" : "管理";
     }
 
     async function openNeuron(keepEdit) {
-      const modal = document.getElementById("neuronModal");
-      captureSheetReturn();
-      if (modal) modal.hidden = false;
-      if (wrapEl) wrapEl.classList.add("view-mode");
-      if (inlineView) inlineView.hidden = true;
+      const panel = document.getElementById("tab-relations");
+      if (panel) panel.hidden = false;
       if (!keepEdit) setNeuronMode(false);
       try {
         const data = objectFrom(await call("relations")) || {};
@@ -3330,18 +3413,10 @@
       }
     }
 
-    function closeNeuronView() {
-      const modal = document.getElementById("neuronModal");
-      if (modal) modal.hidden = true;
-      if (wrapEl) wrapEl.classList.remove("view-mode");
-      ensureSettingsInPage();
-      if (sheetReturnTab === "settings") settingsGroupFilter = sheetReturnGroup || "基础";
-      showTab(sheetReturnTab || "world", sheetReturnGroup, sheetReturnButton);
-      setNeuronMode(false);
-    }
-    document.getElementById("btnNeuron").addEventListener("click", () => openNeuron());
-    document.getElementById("btnNeuronClose").addEventListener("click", closeNeuronView);
-    document.getElementById("neuronTitle").addEventListener("dblclick", () => {
+    document.getElementById("btnNeuron").addEventListener("click", () => {
+      showTab("relations", undefined, document.getElementById("btnNeuron"));
+    });
+    document.getElementById("btnNeuronManage").addEventListener("click", () => {
       const editing = document.getElementById("neuronEdit").hidden === false;
       setNeuronMode(!editing);
     });
