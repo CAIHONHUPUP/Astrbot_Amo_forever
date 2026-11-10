@@ -1151,7 +1151,8 @@ class DisturbTests(Base):
     def test_apply_disturbance_default_penalty(self) -> None:
         self.plugin._apply_disturbance("u")
         self.assertGreater(self.plugin._disturb_until["u"], now_ts())
-        self.assertEqual(self.plugin._disturb_cooldown["u"] - now_ts(), 120)
+        # now_ts() 是浮点秒，两次调用之间会差几微秒，按 1 秒粒度比
+        self.assertAlmostEqual(self.plugin._disturb_cooldown["u"] - now_ts(), 120, delta=1)
         self.assertEqual(self.plugin.state.nudged, [
             {"生气": 6, "郁闷": 3, "疲惫": 3, "开心": -2},
         ])
@@ -1167,7 +1168,7 @@ class DisturbTests(Base):
         self.plugin._apply_disturbance("u")
         self.assertEqual(self.plugin.state.nudged[0],
                          {"生气": 3, "郁闷": 1, "疲惫": 1, "开心": -1})
-        self.assertEqual(self.plugin._disturb_until["u"] - now_ts(), 30)
+        self.assertAlmostEqual(self.plugin._disturb_until["u"] - now_ts(), 30, delta=1)
 
 
 class DisturbPressureTests(Base):
