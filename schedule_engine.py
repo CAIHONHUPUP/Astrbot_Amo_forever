@@ -17,6 +17,10 @@
 """
 
 from __future__ import annotations
+try:
+    from .amo_observability import note as _note_swallowed
+except ImportError:  # 直接按文件加载时
+    from amo_observability import note as _note_swallowed
 
 import asyncio
 import hashlib
@@ -290,7 +294,8 @@ INDOOR_BANK = [
 def clamp(value, low=0.0, high=100.0):
     try:
         value = float(value)
-    except Exception:
+    except Exception as _amo_exc:
+        _note_swallowed("schedule_engine.clamp", _amo_exc)
         return float(low)
     return max(float(low), min(float(high), value))
 
@@ -303,7 +308,8 @@ def parse_hhmm(value, default=0):
     try:
         parts = str(value).strip().split(":")
         return int(parts[0]) * 60 + int(parts[1])
-    except Exception:
+    except Exception as _amo_exc:
+        _note_swallowed("schedule_engine.parse_hhmm", _amo_exc)
         return default
 
 
@@ -311,7 +317,8 @@ def fmt_hhmm(minutes):
     """把分钟格式化成 HH:MM；1440 输出 24:00（用于 23:00-24:00 闭环）。"""
     try:
         minutes = int(minutes)
-    except Exception:
+    except Exception as _amo_exc:
+        _note_swallowed("schedule_engine.fmt_hhmm", _amo_exc)
         minutes = 0
     if minutes >= 24 * 60:
         return "24:00"
@@ -334,11 +341,13 @@ def json_extract(raw):
             chunk = text[start:end + 1]
             try:
                 return json.loads(chunk)
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("schedule_engine.json_extract", _amo_exc)
                 continue
     try:
         return json.loads(text)
-    except Exception:
+    except Exception as _amo_exc:
+        _note_swallowed("schedule_engine.json_extract", _amo_exc)
         return None
 
 
@@ -366,7 +375,8 @@ class ScheduleEngine:
         cached = {}
         try:
             cached = self.state.db.kv_get("schedule_profile", {}) or {}
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("schedule_engine.ScheduleEngine.resolve_profile", _amo_exc)
             cached = {}
         if not isinstance(cached, dict):
             cached = {}
@@ -424,8 +434,8 @@ class ScheduleEngine:
         try:
             if cached != base:
                 self.state.db.kv_set("schedule_profile", base)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("schedule_engine.ScheduleEngine.resolve_profile", _amo_exc)
         profile = dict(base)
         profile["has_gift_car"] = False
         profile["has_gift_home"] = False
@@ -441,8 +451,8 @@ class ScheduleEngine:
                     profile["has_gift_home"] = True
                     profile["home"] = (home_gift if str(home_gift) not in ("房", "房子", "住宅", "楼", "小区")
                                        else "新家")
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("schedule_engine.ScheduleEngine.resolve_profile", _amo_exc)
         return profile
 
     @staticmethod
@@ -583,8 +593,8 @@ class ScheduleEngine:
                 text = gift.asset_text()
                 if text:
                     items.append(text)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("schedule_engine.ScheduleEngine._gift_assets", _amo_exc)
         return "、".join([item for item in items if item])
 
     def _gift_worn(self):
@@ -593,8 +603,8 @@ class ScheduleEngine:
             gift = getattr(self.p, "gift", None)
             if gift is not None:
                 return gift.worn_text()
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("schedule_engine.ScheduleEngine._gift_worn", _amo_exc)
         return ""
 
     @staticmethod
@@ -633,7 +643,8 @@ class ScheduleEngine:
         if gift is not None:
             try:
                 labels = gift.wear_labels(temp)
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("schedule_engine.ScheduleEngine._apply_gift_effects", _amo_exc)
                 labels = []
         try:
             temp_value = float(temp) if temp is not None else None
@@ -668,21 +679,23 @@ class ScheduleEngine:
             gift = getattr(self.p, "gift", None)
             if gift is not None:
                 return gift.gift_log_text()
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("schedule_engine.ScheduleEngine._gift_log", _amo_exc)
         return ""
 
     def yesterday_summary(self, day):
         """读取昨日遗留：熬夜、睡眠不足、生病，今天必须疲惫。"""
         try:
             target = date.fromisoformat(str(day))
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("schedule_engine.ScheduleEngine.yesterday_summary", _amo_exc)
             target = _clock_today()
         prev_day = (target - timedelta(days=1)).isoformat()
         items = []
         try:
             items = self.state.schedule.get(prev_day) or self.state.db.get_schedule(prev_day) or []
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("schedule_engine.ScheduleEngine.yesterday_summary", _amo_exc)
             items = []
         if not isinstance(items, list):
             items = []
@@ -724,7 +737,8 @@ class ScheduleEngine:
             return False
         try:
             temp = float(weather.get("temp", 20))
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("schedule_engine.ScheduleEngine._good_weather", _amo_exc)
             temp = 20.0
         return 5.0 <= temp <= 34.0
 
@@ -801,7 +815,8 @@ class ScheduleEngine:
             return None
         try:
             spots = self.p.scenic_spots() or []
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("schedule_engine.ScheduleEngine._pick_scenic", _amo_exc)
             spots = []
         spots = [item for item in spots if isinstance(item, dict) and item.get("name")]
         _city = str(city or "").strip()
@@ -1538,7 +1553,8 @@ class ScheduleEngine:
         )
         try:
             raw = await asyncio.wait_for(llm.chat_raw(umo, system, prompt), timeout=15)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("schedule_engine.ScheduleEngine.enrich", _amo_exc)
             return items
         data = json_extract(raw)
         if isinstance(data, dict):
@@ -1603,7 +1619,8 @@ class ScheduleEngine:
         raw = ""
         try:
             raw = await asyncio.wait_for(llm.chat_raw(umo, system, prompt), timeout=60)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("schedule_engine.ScheduleEngine.generate_diary", _amo_exc)
             raw = ""
         diary = _parse(raw)
         if len(diary) < 20:
@@ -1616,7 +1633,8 @@ class ScheduleEngine:
             )
             try:
                 raw = await asyncio.wait_for(llm.chat_raw(umo, system, strict), timeout=60)
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("schedule_engine.ScheduleEngine.generate_diary", _amo_exc)
                 raw = ""
             retried = _parse(raw)
             if retried and len(retried) >= 20 and not self._diary_contradicts(prev_diary, retried):

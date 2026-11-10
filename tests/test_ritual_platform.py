@@ -10,6 +10,8 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _plugin_source  # noqa: E402
 
 from greet_route import greeting_targets, within_minutes  # noqa: E402
 
@@ -75,8 +77,7 @@ class RitualWiringTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        with open(os.path.join(ROOT, "main.py"), encoding="utf-8") as fp:
-            cls.source = fp.read()
+        cls.source = _plugin_source.all_source(ROOT)
 
     def test_rituals_use_greeting_targets(self):
         self.assertIn("greeting_targets(", self.source)

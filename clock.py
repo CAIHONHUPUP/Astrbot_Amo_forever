@@ -15,6 +15,10 @@
 """
 
 from __future__ import annotations
+try:
+    from .amo_observability import note as _note_swallowed
+except ImportError:  # 直接按文件加载时
+    from amo_observability import note as _note_swallowed
 
 import os
 import time as _time
@@ -23,7 +27,7 @@ from datetime import datetime, timedelta, tzinfo as _tzinfo
 try:
     from zoneinfo import ZoneInfo
 except Exception:  # pragma: no cover - 没有 zoneinfo 时走固定偏移兜底
-    ZoneInfo = None
+    ZoneInfo = None  # type: ignore[assignment,misc]
 
 DEFAULT_TIMEZONE = "Asia/Shanghai"
 _state = {"name": ""}
@@ -57,7 +61,8 @@ def _read_etc_timezone():
     try:
         with open("/etc/timezone", encoding="utf-8") as fp:
             return fp.read().strip()
-    except Exception:
+    except Exception as _amo_exc:
+        _note_swallowed("clock._read_etc_timezone", _amo_exc)
         return ""
 
 
@@ -84,8 +89,8 @@ def get_zone(name):
     if ZoneInfo is not None:
         try:
             return ZoneInfo(name)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("clock.get_zone", _amo_exc)
     if name in ("Asia/Shanghai", "Asia/Chongqing", "PRC", "CST-8", "Asia/Beijing"):
         return _FixedOffset(8)
     return None
@@ -104,8 +109,8 @@ def configure(name=""):
         try:
             from astrbot.api import logger as _logger
             _logger.warning("[amo] 时区名无效: %r，已回退 %s" % (prev_name, target))
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("clock.configure", _amo_exc)
     prev = os.environ.get("TZ")
     if not hasattr(_time, "tzset"):
         # Windows 等没有 tzset 的平台：把 TZ 写成 "Asia/Shanghai" 这种 IANA 名字，
@@ -118,7 +123,8 @@ def configure(name=""):
         os.environ["TZ"] = target
         _time.tzset()
         _applied.update({"ok": True, "name": target, "prev": prev})
-    except Exception:
+    except Exception as _amo_exc:
+        _note_swallowed("clock.configure", _amo_exc)
         _applied.update({"ok": False, "name": target, "prev": prev})
     return target
 
@@ -133,8 +139,8 @@ def restore():
             os.environ["TZ"] = prev
         try:
             _time.tzset()
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("clock.restore", _amo_exc)
     _applied.update({"ok": False, "name": "", "prev": None})
     _state["name"] = ""
 
@@ -170,11 +176,13 @@ def utc_offset_minutes(explicit=""):
     if zone is None:
         try:
             return int(datetime.now().astimezone().utcoffset().total_seconds() // 60)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("clock.utc_offset_minutes", _amo_exc)
             return 0
     try:
         return int(datetime.now(zone).utcoffset().total_seconds() // 60)
-    except Exception:
+    except Exception as _amo_exc:
+        _note_swallowed("clock.utc_offset_minutes", _amo_exc)
         return 0
 
 

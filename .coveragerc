@@ -1,0 +1,12 @@
+[run]
+source = .
+omit =
+    tests/*
+    tools/*
+    __pycache__/*
+
+[report]
+# 先用 30% 兜底，后续只许往上调；main.py 是组装层，靠行为测试覆盖。
+fail_under = 30
+show_missing = True
+skip_covered = True

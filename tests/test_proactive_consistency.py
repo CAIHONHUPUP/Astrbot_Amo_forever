@@ -16,6 +16,7 @@ astrbot_stub.install()
 
 import main  # noqa: E402
 from main import HumanCorePlugin  # noqa: E402
+import amo_proactive  # noqa: E402
 
 LARK_UMO = "lark:FriendMessage:ou_cec66ea605ad17f62632fb044bc5f6ac"
 QQ_UMO = "大肥鱼:FriendMessage:302578963"
@@ -129,12 +130,12 @@ class PendingPlatformTests(unittest.TestCase):
             "followup": False,
             "mood": False,
         }
-        original = main.quiet_now
-        main.quiet_now = lambda spec: False
+        original = amo_proactive.quiet_now
+        amo_proactive.quiet_now = lambda spec: False
         try:
             asyncio.run(HumanCorePlugin._check_proactive_pending(fake))
         finally:
-            main.quiet_now = original
+            amo_proactive.quiet_now = original
         self.assertTrue(fake.sent, "应该发出一条追问")
         self.assertEqual(fake.sent[0][0], LARK_UMO)
         self.assertEqual(fake.marked, [LARK_UMO])

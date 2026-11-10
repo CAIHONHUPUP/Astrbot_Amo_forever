@@ -2,6 +2,18 @@
 
 ## 未发布（基于 6.6.8）
 
+### 结构：main.py 拆分 + 吞异常可观测
+
+- 13,982 行的 `main.py` 拆成 `amo_shared.py`（导入兜底 / 常量 / 工具 / 用量）+
+  四个 mixin：`amo_api.py`（面板 API）、`amo_proactive.py`（主动消息/问候）、
+  `amo_schedule.py`（日程/日记/天气）、`amo_llm.py`（LLM/记忆/回复）；main 只留组装与核心类，
+  降到 9,954 行；
+- 827 处静默 `except Exception` 改成「计数 + 限流 warning」：同一个点 10 分钟最多一条、
+  全局 15 秒最多一条；`/status` 的 `counts.swallowed` 给出被吞最多的 10 个点；
+- 新增 `amo_observability.py` 与 4 项单测；
+- CI 增加 `mypy`（5 个纯模块）和 `coverage` 30% 底线，`requirements-dev.txt` 补依赖；
+- 单测 470 项（7 项 Windows 无 tzset 跳过）。
+
 ### 跨平台归一：同一个人的 QQ / 飞书两边记忆真正相通
 
 - **平台名不再被写成机器人名字**：QQ 的 umo 前缀是 `大肥鱼`，以前 `platform` 直接取第一段，

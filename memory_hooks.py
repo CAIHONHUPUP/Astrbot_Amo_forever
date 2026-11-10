@@ -15,6 +15,10 @@
 """
 
 from __future__ import annotations
+try:
+    from .amo_observability import note as _note_swallowed
+except ImportError:  # 直接按文件加载时
+    from amo_observability import note as _note_swallowed
 
 import asyncio
 import re
@@ -116,8 +120,8 @@ def _warn_once(logger, key, message, gap=600.0):
     _WARN_AT[key] = now
     try:
         logger.warning(message)
-    except Exception:
-        pass
+    except Exception as _amo_exc:
+        _note_swallowed("memory_hooks._warn_once", _amo_exc)
 
 
 class ChatBuffer:
@@ -255,8 +259,8 @@ class MemoryProvider:
     def note(self, message):
         try:
             self.rt.logger.info("[记忆] " + str(message))
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("memory_hooks.MemoryProvider.note", _amo_exc)
 
 
 class AmoDataProvider(MemoryProvider):
@@ -322,8 +326,10 @@ class AmoDataProvider(MemoryProvider):
             try:
                 result = await method(self.rt.bot_id(), str(uid), content)
             except Exception as exc:
+                _note_swallowed("memory_hooks.AmoDataProvider.remember", exc)
                 return {"ok": False, "reason": str(exc)}
         except Exception as exc:
+            _note_swallowed("memory_hooks.AmoDataProvider.remember", exc)
             return {"ok": False, "reason": str(exc)}
         if isinstance(result, dict):
             return result
@@ -374,6 +380,7 @@ class AmoDataProvider(MemoryProvider):
                     last_exc = exc
                     continue
                 except Exception as exc:
+                    _note_swallowed("memory_hooks.AmoDataProvider.recall", exc)
                     last_exc = exc
                     break  # 这个方法本身坏了，换下一个候选方法名
                 return self.rt.normalize_memories(rows)
@@ -388,7 +395,8 @@ class AmoDataProvider(MemoryProvider):
             return {}
         try:
             return await method(self.rt.bot_id(), str(uid)) or {}
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("memory_hooks.AmoDataProvider.profile", _amo_exc)
             return {}
 
     async def save_profile(self, uid, **fields):
@@ -402,9 +410,11 @@ class AmoDataProvider(MemoryProvider):
                 return await method(self.rt.bot_id(), str(uid),
                                     name=fields.get("name"),
                                     relation=fields.get("relation")) or {}
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("memory_hooks.AmoDataProvider.save_profile", _amo_exc)
                 return {}
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("memory_hooks.AmoDataProvider.save_profile", _amo_exc)
             return {}
 
     async def recent(self, umo="", uid="", limit=30):
@@ -419,9 +429,11 @@ class AmoDataProvider(MemoryProvider):
         except TypeError:
             try:
                 rows = await method(self.rt.bot_id(), str(umo or ""), limit)
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("memory_hooks.AmoDataProvider.recent", _amo_exc)
                 return []
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("memory_hooks.AmoDataProvider.recent", _amo_exc)
             return []
         return [row for row in (rows or []) if isinstance(row, dict)]
 
@@ -503,6 +515,7 @@ class MemoryCompanionProvider(MemoryProvider):
             except TypeError:
                 continue
             except Exception as exc:
+                _note_swallowed("memory_hooks.MemoryCompanionProvider.remember", exc)
                 if self._blocked(exc):
                     self._mark_blocked(exc)
                 return {"ok": False, "reason": str(exc)}
@@ -526,9 +539,11 @@ class MemoryCompanionProvider(MemoryProvider):
                     rows = await method(None, query, top_k=limit)
                 except TypeError:
                     continue
-                except Exception:
+                except Exception as _amo_exc:
+                    _note_swallowed("memory_hooks.MemoryCompanionProvider.recall", _amo_exc)
                     return []
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("memory_hooks.MemoryCompanionProvider.recall", _amo_exc)
                 return []
             return self.rt.normalize_memories(rows)
         return []
@@ -540,7 +555,8 @@ class MemoryCompanionProvider(MemoryProvider):
             return {}
         try:
             return await getter(str(uid)) or {}
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("memory_hooks.MemoryCompanionProvider.profile", _amo_exc)
             return {}
 
 
@@ -659,6 +675,7 @@ class MemoryHub:
         try:
             return await provider.remember(uid, text, kind, importance, scope, group_id) or {"ok": False}
         except Exception as exc:
+            _note_swallowed("memory_hooks.MemoryHub.remember", exc)
             return {"ok": False, "reason": str(exc)}
 
     async def recall(self, uid, query="", limit=6, scope="", group_id=""):
@@ -693,7 +710,8 @@ class MemoryHub:
             return {}
         try:
             return await provider.save_profile(uid, **fields) or {}
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("memory_hooks.MemoryHub.save_profile", _amo_exc)
             return {}
 
     async def recent(self, umo="", uid="", limit=30):
@@ -702,7 +720,8 @@ class MemoryHub:
         if provider is not None and CAP_RECENT in provider.caps:
             try:
                 rows = await provider.recent(umo, uid, limit) or []
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("memory_hooks.MemoryHub.recent", _amo_exc)
                 rows = []
         if rows and umo:
             self.buffer.hydrate(umo, rows)

@@ -4,6 +4,10 @@
 评分规则支持可视化配置（低分/高分情况分维度填写）
 *注：已移除大模型上下文注入，完全依赖 AstrBot 原生对话流*
 """
+try:
+    from .amo_observability import note as _note_swallowed
+except ImportError:  # 直接按文件加载时
+    from amo_observability import note as _note_swallowed
 
 import json
 import random
@@ -453,7 +457,9 @@ def _validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
             total = sum(weights)
             v["dynamic_activity_weights"] = [w / total for w in weights] if total > 0 else [0.4, 0.3, 0.3]
         else: v["dynamic_activity_weights"] = [0.4, 0.3, 0.3]
-    except Exception: v["dynamic_activity_weights"] = [0.4, 0.3, 0.3]
+    except Exception as _amo_exc: 
+        _note_swallowed("heartflow_engine._validate_config", _amo_exc)
+        v["dynamic_activity_weights"] = [0.4, 0.3, 0.3]
 
     if "chat_whitelist" in v and not isinstance(v["chat_whitelist"], list): v["chat_whitelist"] = []
     if "judge_rules" not in v or not isinstance(v["judge_rules"], list): v["judge_rules"] = []
@@ -561,7 +567,8 @@ class HeartflowEngine:
         items = []
         try:
             raw = self.context.get_all_providers() or []
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("heartflow_engine.HeartflowEngine._list_chat_providers", _amo_exc)
             raw = []
         for provider in raw:
             config = getattr(provider, "provider_config", None) or {}
@@ -573,7 +580,8 @@ class HeartflowEngine:
             model = ""
             try:
                 model = str(provider.get_model() or "")
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("heartflow_engine.HeartflowEngine._list_chat_providers", _amo_exc)
                 model = str(config.get("model") or "")
             items.append({"id": pid, "model": model, "provider": provider})
         return items
@@ -595,7 +603,8 @@ class HeartflowEngine:
         try:
             using = self.context.get_using_provider()
             using_id = str((getattr(using, "provider_config", None) or {}).get("id") or "")
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("heartflow_engine.HeartflowEngine._auto_pick_judge_provider", _amo_exc)
             using_id = ""
         others = [item for item in providers if item["id"] != using_id]
         pool = others or providers
@@ -617,8 +626,8 @@ class HeartflowEngine:
                 % (pool[0]["id"], pool[0]["model"] or "?",
                    "；避开主对话模型 " + using_id if using_id and others else "")
             )
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("heartflow_engine.HeartflowEngine._auto_pick_judge_provider", _amo_exc)
         return chosen
 
     def judge_provider_info(self):
@@ -628,7 +637,8 @@ class HeartflowEngine:
         if configured:
             try:
                 provider = self.context.get_provider_by_id(configured)
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("heartflow_engine.HeartflowEngine.judge_provider_info", _amo_exc)
                 provider = None
             auto = False
         else:
@@ -640,7 +650,8 @@ class HeartflowEngine:
             info["id"] = str(config.get("id") or "")
             try:
                 info["model"] = str(provider.get_model() or "")
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("heartflow_engine.HeartflowEngine.judge_provider_info", _amo_exc)
                 info["model"] = str(config.get("model") or "")
         return info
 
@@ -717,7 +728,8 @@ class HeartflowEngine:
         text = event.message_str or ""
         try:
             msgs = self._get_raw_buffer(event.unified_msg_origin)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("heartflow_engine.HeartflowEngine._retrieve_addressing", _amo_exc)
             msgs = []
         current = None
         history = msgs
@@ -862,8 +874,8 @@ class HeartflowEngine:
                 # 上一轮已经判定「该回」、正在生成或等冷却：这条先只记账，别再触发一次
                 self._record_raw_message(event, is_bot=False)
                 return False
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("heartflow_engine.HeartflowEngine._should_process_message", _amo_exc)
 
         if event.is_at_or_wake_command:
             # @ 机器人 / 唤醒词不走进判定，但必须留在上下文里：
@@ -884,8 +896,8 @@ class HeartflowEngine:
                     # @ 别人的消息同理：不判定，但它是“上一条在对谁说”的证据。
                     self._record_raw_message(event, is_bot=False)
                     return False
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("heartflow_engine.HeartflowEngine._should_process_message", _amo_exc)
 
         if event.message_str.strip().startswith(("/", "#", "!", "！")):
             return False
@@ -922,7 +934,8 @@ class HeartflowEngine:
         }
         try:
             components = getattr(msg_obj, "message", None) or []
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("heartflow_engine.HeartflowEngine._message_meta", _amo_exc)
             components = []
         for component in components:
             try:
@@ -934,7 +947,8 @@ class HeartflowEngine:
                     meta["reply_to_id"] = str(getattr(component, "id", "") or "")
                     meta["reply_to_uid"] = str(getattr(component, "sender_id", "") or "")
                     meta["reply_to_name"] = str(getattr(component, "sender_nickname", "") or "")
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("heartflow_engine.HeartflowEngine._message_meta", _amo_exc)
                 continue
         return meta
 
@@ -954,7 +968,8 @@ class HeartflowEngine:
             self_id = ""
             try:
                 self_id = str(event.get_self_id())
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("heartflow_engine.HeartflowEngine._record_raw_message", _amo_exc)
                 self_id = ""
             at_ids = tuple(meta["at_ids"])
             buf.append(RawMessage(
@@ -1237,7 +1252,8 @@ class HeartflowEngine:
         if not provider:
             try:
                 provider = await self.context.get_using_provider_async(event.unified_msg_origin)
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("heartflow_engine.HeartflowEngine.judge_with_tiny_model", _amo_exc)
                 provider = None
         if not provider:
             return JudgeResult(should_reply=False, reasoning="提供商未配置或不存在")
@@ -1365,7 +1381,8 @@ class HeartflowEngine:
         if not provider:
             try:
                 provider = await self.context.get_using_provider_async(event.unified_msg_origin)
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("heartflow_engine.HeartflowEngine.judge_immersive_mode", _amo_exc)
                 provider = None
         if not provider:
             return JudgeResult(should_reply=False, reasoning="提供商未配置或不存在")
@@ -1627,8 +1644,8 @@ class HeartflowEngine:
                     texts = [c.text.strip() for c in result.chain if isinstance(c, Plain) and c.text and c.text.strip()]
                     if texts:
                         text = "\n".join(texts)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("heartflow_engine.HeartflowEngine.on_llm_response", _amo_exc)
         if text:
             self._record_bot_reply_manual(event.unified_msg_origin, text)
 
@@ -1658,8 +1675,8 @@ class HeartflowEngine:
                 elif non_plain_reply:
                     bot_reply_content = "[非文本回复]"
                     has_reply = True
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("heartflow_engine.HeartflowEngine.on_after_message_sent", _amo_exc)
 
         msg_str = (event.message_str or "").strip()
         is_command = msg_str.startswith(("/", "#", "!", "！"))

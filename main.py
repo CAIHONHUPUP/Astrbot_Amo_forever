@@ -7,9 +7,16 @@
 """
 
 from __future__ import annotations
+try:
+    from .amo_observability import note as _note_swallowed
+except ImportError:  # 直接按文件加载时
+    from amo_observability import note as _note_swallowed
+try:
+    from .amo_observability import snapshot as _swallowed_snapshot
+except ImportError:  # 直接按文件加载时
+    from amo_observability import snapshot as _swallowed_snapshot
 
 import asyncio
-import hashlib
 import inspect
 import json
 import math
@@ -19,7 +26,7 @@ import re
 import sqlite3
 import threading
 import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 
 # 统一时区：容器/服务器常在 UTC 跑，直接取服务器本地时间会把北京时间 10 点算成凌晨 2 点
 # （「大晚上的」就是这么来的）。clock.now() 返回目标时区下的 naive 本地时间，
@@ -53,1675 +60,246 @@ except Exception:
             return ""
 
 
-def _now():
-    """目标时区下的「现在」（naive，便于和原代码里 datetime 运算混用）。"""
-    return _clock_now()
-
+# ---- 拆分后的模块（main 只做组装）----
 try:
-    import astrbot.api.message_components as Comp
-except Exception:
-    Comp = None
-
-from astrbot.api import logger
-from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.star import Context, Star
-
-try:
-    from astrbot.api.event import MessageChain
-except Exception:
-    try:
-        from astrbot.core.message.message_event_result import MessageChain
-    except Exception:
-        MessageChain = None
-
-try:
-    from astrbot.api.web import request as web_request
-except Exception:
-    try:
-        from quart import request as web_request
-    except Exception:
-        web_request = None
-
-try:
-    from astrbot.core.agent.message import TextPart
-except Exception:
-    TextPart = None
-
-try:
-    from .heartflow_engine import HeartflowEngine
-    from .segment_engine import SegmentEngine
-except Exception:
-    try:
-        from heartflow_engine import HeartflowEngine
-        from segment_engine import SegmentEngine
-    except Exception:
-        HeartflowEngine = None
-        SegmentEngine = None
-        try:
-            import importlib.util
-            _engine_dir = os.path.dirname(os.path.abspath(__file__))
-            def _load_engine(module_name, class_name):
-                _spec = importlib.util.spec_from_file_location(
-                    "amo_" + module_name,
-                    os.path.join(_engine_dir, module_name + ".py"),
-                )
-                _module = importlib.util.module_from_spec(_spec)
-                _spec.loader.exec_module(_module)
-                return getattr(_module, class_name)
-            HeartflowEngine = _load_engine("heartflow_engine", "HeartflowEngine")
-            SegmentEngine = _load_engine("segment_engine", "SegmentEngine")
-        except Exception as _engine_exc:
-            logger.error("[amo] 内置心流/分段模块加载失败: %s" % _engine_exc)
-
-try:
-    from .weather_alert import evaluate as evaluate_weather_alert, parse_daily as parse_weather_daily, next_check_slot, parse_clock, slot_key, is_weather_query, forecast_brief
-except Exception:
-    try:
-        from weather_alert import evaluate as evaluate_weather_alert, parse_daily as parse_weather_daily, next_check_slot, parse_clock, slot_key, is_weather_query, forecast_brief
-    except Exception:
-        def evaluate_weather_alert(*args, **kwargs):
-            return ""
-        def parse_weather_daily(*args, **kwargs):
-            return []
-        def next_check_slot(*args, **kwargs):
-            return ""
-        def parse_clock(*args, **kwargs):
-            return 0
-        def slot_key(today, slot):
-            return "%s|%s" % (today, slot)
-        def is_weather_query(*args, **kwargs):
-            return False
-        def forecast_brief(*args, **kwargs):
-            return ""
-
-try:
-    from .gift_engine import GiftEngine
-except Exception:
-    try:
-        from gift_engine import GiftEngine
-    except Exception:
-        GiftEngine = None
-
-try:
-    from .proactive_guard import analyze_rows as _pg_analyze_rows, compose_task as _pg_compose_task, near_duplicate as _pg_near_duplicate
-except Exception:
-    try:
-        from proactive_guard import analyze_rows as _pg_analyze_rows, compose_task as _pg_compose_task, near_duplicate as _pg_near_duplicate
-    except Exception:
-        _pg_analyze_rows = _pg_compose_task = _pg_near_duplicate = None
-
-try:
-    from .time_recall import looks_like_time_query as _looks_like_time_query, render_time_block as _render_time_block
-except Exception:
-    try:
-        from time_recall import looks_like_time_query as _looks_like_time_query, render_time_block as _render_time_block
-    except Exception:
-        def _looks_like_time_query(*args, **kwargs):
-            return False
-
-        def _render_time_block(*args, **kwargs):
-            return ""
-
-try:
-    from .greet_route import greeting_targets as _greeting_targets, within_minutes as _within_minutes
-except Exception:
-    try:
-        from greet_route import greeting_targets as _greeting_targets, within_minutes as _within_minutes
-    except Exception:
-        logger.warning("[amo] greet_route 载入失败，问候平台随机功能不可用")
-
-        def _greeting_targets(candidates, primary="", randomize=True, rng=None):
-            items = []
-            for umo in list(candidates or []) + [primary]:
-                value = str(umo or "")
-                if value and value not in items:
-                    items.append(value)
-            return items if randomize else ([primary] if primary else [])
-
-        def _within_minutes(last_ts, now, minutes):
-            return False
-
-try:
-    from .diary_lines import (
-        DIARY_WRITTEN_REPLIES as _DIARY_WRITTEN,
-        DIARY_SHOW_REPLIES as _DIARY_SHOW,
-        pick_hints as _diary_pick_hints,
+    from .amo_shared import (
+        _now,
+        Comp,
+        logger,
+        AstrMessageEvent,
+        filter,
+        Context,
+        Star,
+        MessageChain,
+        web_request,
+        HeartflowEngine,
+        SegmentEngine,
+        parse_weather_daily,
+        is_weather_query,
+        GiftEngine,
+        _pg_analyze_rows,
+        _pg_compose_task,
+        _pg_near_duplicate,
+        _looks_like_time_query,
+        _render_time_block,
+        _DIARY_WRITTEN,
+        _DIARY_SHOW,
+        _diary_pick_hints,
+        _ms_should_archive,
+        _ms_transcript,
+        _ms_build_prompt,
+        _ms_build_content,
+        _wander_assess,
+        _wander_ask_limit,
+        _wander_agree,
+        _wander_question,
+        _follow_invite,
+        _follow_refuse,
+        _wander_refuse,
+        _wander_follow_agree_text,
+        _follow_block,
+        _wander_offer_block,
+        _wander_pick,
+        _wander_plan_text,
+        _wander_solo_agree_text,
+        _wander_solo_block,
+        _wander_solo_refuse_text,
+        _wander_trip_days,
+        _wander_want,
+        render_recent_block,
+        first_person_experience,
+        attribution_leak,
+        leak_tokens,
+        strip_brushoff,
+        parse_relations,
+        _CITY_DEFAULT,
+        _city_detect,
+        _city_block,
+        _city_travel_block,
+        _city_travel_events,
+        _city_travel_to_events,
+        _city_pick_spots,
+        _rank_edges,
+        plan_relation_edges,
+        ScheduleEngine,
+        PLUGIN_NAME,
+        LEGACY_DEFAULT_ADMIN,
+        RELATIONS,
+        DIALECT_SAMPLES,
+        dialect_for_city,
+        DIALECT_FALLBACK_ROWS,
+        DIALECT_REGIONS,
+        SCHEDULE_VERSION,
+        MOOD_KEYS,
+        SICK_STATUSES,
+        MOOD_BASE,
+        STYLE_HINTS,
+        INTERNAL_RELATION_NODES,
+        now_ts,
+        day_meta,
+        lark_quote_kwargs,
+        today_str,
+        other_platform_bot_lines,
+        schedule_category_mood,
+        weekday_cn,
+        clamp,
+        to_int,
+        to_float,
+        truncate,
+        md5_int,
+        parse_hhmm,
+        minutes_now,
+        in_minute_range,
+        quiet_now,
+        looks_like_plain_command,
+        has_question,
+        sentiment,
+        tokens,
+        overlap,
+        json_extract_list,
+        json_extract,
+        strip_chat_format,
+        clean_reply,
+        looks_like_ai_admission,
+        looks_like_defensive_reply,
+        looks_like_model_leak,
+        typing_delay_ms,
+        USAGE_DEFAULT_PRICES,
+        fetch_provider_balance,
+        fetch_deepseek_balance,
+        merge_uid_alias_data,
     )
-except Exception:
-    try:
-        from diary_lines import (
-            DIARY_WRITTEN_REPLIES as _DIARY_WRITTEN,
-            DIARY_SHOW_REPLIES as _DIARY_SHOW,
-            pick_hints as _diary_pick_hints,
-        )
-    except Exception:
-        _DIARY_WRITTEN = ["写了", "写了，不给你看", "写了，秘密"]
-        _DIARY_SHOW = ["不行，你不能偷看我的日记哦", "那是我的日记，才不给你看", "你想得美"]
-
-        def _diary_pick_hints(items, count=8, seed=""):
-            return list(items)[:count]
-
-try:
-    from .diary_engine import (
-        DEFAULT_DIR as _DIARY_DEFAULT_DIR,
-        resolve_dir as _diary_resolve_dir,
-        parse_day as _diary_parse_day,
-        build_prompt as _diary_build_prompt,
-        import_folder as _diary_import_folder,
-        write_diary as _diary_write,
-        read_diary as _diary_read,
-        list_tree as _diary_tree,
+    from .amo_api import ApiMixin
+    from .amo_proactive import ProactiveMixin
+    from .amo_schedule import ScheduleMixin
+    from .amo_llm import LlmMixin
+except ImportError:  # 直接按文件加载时
+    from amo_shared import (
+        _now,
+        Comp,
+        logger,
+        AstrMessageEvent,
+        filter,
+        Context,
+        Star,
+        MessageChain,
+        web_request,
+        HeartflowEngine,
+        SegmentEngine,
+        parse_weather_daily,
+        is_weather_query,
+        GiftEngine,
+        _pg_analyze_rows,
+        _pg_compose_task,
+        _pg_near_duplicate,
+        _looks_like_time_query,
+        _render_time_block,
+        _DIARY_WRITTEN,
+        _DIARY_SHOW,
+        _diary_pick_hints,
+        _ms_should_archive,
+        _ms_transcript,
+        _ms_build_prompt,
+        _ms_build_content,
+        _wander_assess,
+        _wander_ask_limit,
+        _wander_agree,
+        _wander_question,
+        _follow_invite,
+        _follow_refuse,
+        _wander_refuse,
+        _wander_follow_agree_text,
+        _follow_block,
+        _wander_offer_block,
+        _wander_pick,
+        _wander_plan_text,
+        _wander_solo_agree_text,
+        _wander_solo_block,
+        _wander_solo_refuse_text,
+        _wander_trip_days,
+        _wander_want,
+        render_recent_block,
+        first_person_experience,
+        attribution_leak,
+        leak_tokens,
+        strip_brushoff,
+        parse_relations,
+        _CITY_DEFAULT,
+        _city_detect,
+        _city_block,
+        _city_travel_block,
+        _city_travel_events,
+        _city_travel_to_events,
+        _city_pick_spots,
+        _rank_edges,
+        plan_relation_edges,
+        ScheduleEngine,
+        PLUGIN_NAME,
+        LEGACY_DEFAULT_ADMIN,
+        RELATIONS,
+        DIALECT_SAMPLES,
+        dialect_for_city,
+        DIALECT_FALLBACK_ROWS,
+        DIALECT_REGIONS,
+        SCHEDULE_VERSION,
+        MOOD_KEYS,
+        SICK_STATUSES,
+        MOOD_BASE,
+        STYLE_HINTS,
+        INTERNAL_RELATION_NODES,
+        now_ts,
+        day_meta,
+        lark_quote_kwargs,
+        today_str,
+        other_platform_bot_lines,
+        schedule_category_mood,
+        weekday_cn,
+        clamp,
+        to_int,
+        to_float,
+        truncate,
+        md5_int,
+        parse_hhmm,
+        minutes_now,
+        in_minute_range,
+        quiet_now,
+        looks_like_plain_command,
+        has_question,
+        sentiment,
+        tokens,
+        overlap,
+        json_extract_list,
+        json_extract,
+        strip_chat_format,
+        clean_reply,
+        looks_like_ai_admission,
+        looks_like_defensive_reply,
+        looks_like_model_leak,
+        typing_delay_ms,
+        USAGE_DEFAULT_PRICES,
+        fetch_provider_balance,
+        fetch_deepseek_balance,
+        merge_uid_alias_data,
     )
-except Exception:
-    try:
-        from diary_engine import (
-            DEFAULT_DIR as _DIARY_DEFAULT_DIR,
-            resolve_dir as _diary_resolve_dir,
-            parse_day as _diary_parse_day,
-            build_prompt as _diary_build_prompt,
-            import_folder as _diary_import_folder,
-            write_diary as _diary_write,
-            read_diary as _diary_read,
-            list_tree as _diary_tree,
-        )
-    except Exception:
-        _DIARY_DEFAULT_DIR = ""
-        _diary_resolve_dir = None
-        _diary_parse_day = _diary_write = _diary_read = _diary_tree = _diary_import_folder = None
+    from amo_api import ApiMixin
+    from amo_proactive import ProactiveMixin
+    from amo_schedule import ScheduleMixin
+    from amo_llm import LlmMixin
 
-try:
-    from .milestone import (
-        should_archive as _ms_should_archive,
-        transcript as _ms_transcript,
-        build_prompt as _ms_build_prompt,
-        build_content as _ms_build_content,
-    )
-except Exception:
-    try:
-        from milestone import (
-            should_archive as _ms_should_archive,
-            transcript as _ms_transcript,
-            build_prompt as _ms_build_prompt,
-            build_content as _ms_build_content,
-        )
-    except Exception:
-        def _ms_should_archive(*args, **kwargs):
-            return False
-
-        def _ms_transcript(*args, **kwargs):
-            return ""
-
-        def _ms_build_prompt(*args, **kwargs):
-            return ""
-
-        def _ms_build_content(*args, **kwargs):
-            return ""
-
-try:
-    from .wander import (
-        assess as _wander_assess,
-        ask_limit as _wander_ask_limit,
-        detect_agreement as _wander_agree,
-        detect_question as _wander_question,
-        detect_follow_invite as _follow_invite,
-        detect_follow_refuse as _follow_refuse,
-        detect_refusal as _wander_refuse,
-        follow_agree_text as _wander_follow_agree_text,
-        follow_block as _follow_block,
-        offer_block as _wander_offer_block,
-        offer_text as _wander_offer_text,
-        pick_destination as _wander_pick,
-        plan_text as _wander_plan_text,
-        solo_agree_text as _wander_solo_agree_text,
-        solo_block as _wander_solo_block,
-        solo_refuse_text as _wander_solo_refuse_text,
-        trip_days as _wander_trip_days,
-        want_travel as _wander_want,
-    )
-except Exception:
-    try:
-        from wander import (
-            assess as _wander_assess,
-            ask_limit as _wander_ask_limit,
-            detect_agreement as _wander_agree,
-            detect_question as _wander_question,
-            detect_follow_invite as _follow_invite,
-            detect_follow_refuse as _follow_refuse,
-            detect_refusal as _wander_refuse,
-            follow_agree_text as _wander_follow_agree_text,
-            follow_block as _follow_block,
-            offer_block as _wander_offer_block,
-            offer_text as _wander_offer_text,
-            pick_destination as _wander_pick,
-            plan_text as _wander_plan_text,
-            solo_agree_text as _wander_solo_agree_text,
-            solo_block as _wander_solo_block,
-            solo_refuse_text as _wander_solo_refuse_text,
-            trip_days as _wander_trip_days,
-            want_travel as _wander_want,
-        )
-    except Exception:
-        def _wander_assess(*args, **kwargs):
-            return (False, False)
-
-        def _wander_agree(*args, **kwargs):
-            return False
-
-        def _wander_question(*args, **kwargs):
-            return False
-
-        def _wander_refuse(*args, **kwargs):
-            return False
-
-        def _follow_block(*args, **kwargs):
-            return ""
-
-        def _follow_invite(*args, **kwargs):
-            return False
-
-        def _follow_refuse(*args, **kwargs):
-            return False
-
-        def _wander_follow_agree_text(*args, **kwargs):
-            return ""
-
-        def _wander_offer_block(*args, **kwargs):
-            return ""
-
-        def _wander_offer_text(*args, **kwargs):
-            return ""
-
-        def _wander_pick(*args, **kwargs):
-            return ("", [])
-
-        def _wander_plan_text(*args, **kwargs):
-            return ""
-
-        def _wander_ask_limit(*args, **kwargs):
-            return 1
-
-        def _wander_solo_agree_text(*args, **kwargs):
-            return ""
-
-        def _wander_solo_block(*args, **kwargs):
-            return ""
-
-        def _wander_solo_refuse_text(*args, **kwargs):
-            return ""
-
-        def _wander_trip_days(*args, **kwargs):
-            return 1
-
-        def _wander_want(*args, **kwargs):
-            return False
-
-try:
-    from .memory_hooks import MemoryHub, render_recent_block
-except Exception:
-    try:
-        from memory_hooks import MemoryHub, render_recent_block
-    except Exception:
-        MemoryHub = None
-        render_recent_block = None
-
-try:
-    from .attribution import first_person_experience, attribution_leak, leak_tokens
-except Exception:
-    try:
-        from attribution import first_person_experience, attribution_leak, leak_tokens
-    except Exception:
-        first_person_experience = attribution_leak = leak_tokens = None
-
-try:
-    from .brushoff import strip_brushoff
-except Exception:
-    try:
-        from brushoff import strip_brushoff
-    except Exception:
-        strip_brushoff = None
-
-try:
-    from .relation_learn import parse_relations
-except Exception:
-    try:
-        from relation_learn import parse_relations
-    except Exception:
-        parse_relations = None
-
-try:
-    from .city_follow import (
-        DEFAULT_CITY as _CITY_DEFAULT,
-        detect_city as _city_detect,
-        compose_block as _city_block,
-        travel_block as _city_travel_block,
-        travel_events as _city_travel_events,
-        travel_action as _city_travel_action,
-        travel_to_events as _city_travel_to_events,
-        pick_spots as _city_pick_spots,
-    )
-except Exception:
-    try:
-        from city_follow import (
-            DEFAULT_CITY as _CITY_DEFAULT,
-            detect_city as _city_detect,
-            compose_block as _city_block,
-            travel_block as _city_travel_block,
-            travel_events as _city_travel_events,
-            travel_action as _city_travel_action,
-            travel_to_events as _city_travel_to_events,
-            pick_spots as _city_pick_spots,
-        )
-    except Exception:
-        _CITY_DEFAULT = "东莞"
-
-        def _city_pick_spots(*args, **kwargs):
-            return []
-
-        def _city_travel_to_events(*args, **kwargs):
-            return []
-
-        def _city_travel_action(*args, **kwargs):
-            return "none"
-
-        def _city_detect(*args, **kwargs):
-            return None
-
-        def _city_block(*args, **kwargs):
-            return ""
-
-        def _city_travel_block(*args, **kwargs):
-            return ""
-
-        def _city_travel_events(*args, **kwargs):
-            return []
-
-
-try:
-    from .relation_graph import rank_edges as _rank_edges
-except Exception:
-    try:
-        from relation_graph import rank_edges as _rank_edges
-    except Exception:
-        _rank_edges = None
-
-try:
-    from .relation_sediment import plan_edges as plan_relation_edges
-except Exception:
-    try:
-        from relation_sediment import plan_edges as plan_relation_edges
-    except Exception:
-        plan_relation_edges = None
-
-try:
-    from .schedule_engine import ScheduleEngine
-except Exception:
-    try:
-        from schedule_engine import ScheduleEngine
-    except Exception:
-        try:
-            import importlib.util as _importlib_util
-            _schedule_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schedule_engine.py")
-            _schedule_spec = _importlib_util.spec_from_file_location("amo_schedule_engine", _schedule_path)
-            _schedule_module = _importlib_util.module_from_spec(_schedule_spec)
-            _schedule_spec.loader.exec_module(_schedule_module)
-            ScheduleEngine = getattr(_schedule_module, "ScheduleEngine")
-        except Exception as _schedule_exc:
-            ScheduleEngine = None
-            logger.error("[amo] 日程引擎加载失败: %s" % _schedule_exc)
-
-
-PLUGIN_NAME = "Astrbot_Amo_forever"
 PLUGIN_VERSION = "6.6.8"
-DEFAULT_ADMIN = ""
-LEGACY_DEFAULT_ADMIN = "3261748099"
-LEGACY_MEMORY_PLUGIN = "astrbot_plugin_private_companion"
-
-RELATIONS = ("仇恨", "抵触", "普通", "熟识", "相恋")
-DIALECT_SAMPLES = {
-    "贵州话": "晓得、咋个、要得、安逸",
-    "东北话": "咋整、唠嗑、得瑟、麻溜",
-    "四川话": "啥子、莫得、巴适、搞快些",
-    "广东话": "唔该、点解、得闲、搞掂",
-    "台湾腔": "酱紫、蛮、超赞、拍谢",
-    "天津话": "嘛呢、倍儿、哏儿、得嘞",
-    "河南话": "弄啥嘞、中、得劲、木有",
-    "上海话": "阿拉、侬、哪能、老灵",
-}
-CITY_DIALECT_RULES = (
-    (("贵阳", "贵州", "遵义", "安顺", "六盘水", "凯里"), "贵州话"),
-    (("成都", "四川", "重庆", "绵阳", "德阳", "宜宾"), "四川话"),
-    (("广州", "深圳", "东莞", "佛山", "珠海", "中山", "惠州", "江门", "汕头", "广东"), "广东话"),
-    (("上海", "苏州", "无锡", "常州", "昆山"), "上海话"),
-    (("天津",), "天津话"),
-    (("郑州", "河南", "洛阳", "开封"), "河南话"),
-    (("哈尔滨", "沈阳", "长春", "大连", "东北", "辽宁", "吉林", "黑龙江"), "东北话"),
-    (("台北", "台湾", "高雄", "台中"), "台湾腔"),
-)
-
-
-def dialect_for_city(city):
-    text = str(city or "")
-    if not text:
-        return ""
-    for keys, style in CITY_DIALECT_RULES:
-        if any(key in text for key in keys):
-            return style
-    return ""
-
-
-DIALECT_FALLBACK_ROWS = {
-    "东北话": [
-        ("咋整", "怎么办", "咋整啊"), ("唠嗑", "聊天", "来唠嗑"), ("得瑟", "显摆", "别得瑟"),
-        ("麻溜", "快点", "麻溜的"), ("贼拉", "非常", "贼拉冷"), ("嘎哈", "干什么", "你嘎哈呢"),
-        ("老铁", "哥们", "老铁没毛病"),
-    ],
-    "四川话": [
-        ("啥子", "什么", "你说啥子"), ("莫得", "没有", "莫得问题"), ("巴适", "舒服", "巴适得很"),
-        ("搞快些", "快点", "搞快些"), ("瓜娃子", "傻孩子", "你个瓜娃子"), ("雄起", "加油", "雄起"),
-        ("撇脱", "干脆", "撇脱点"),
-    ],
-    "广东话": [
-        ("唔该", "谢谢、劳驾", "唔该晒"), ("点解", "为什么", "点解啊"), ("得闲", "有空", "得闲饮茶"),
-        ("搞掂", "搞定", "搞掂啦"), ("靓仔", "帅哥", "靓仔"), ("靓女", "美女", "靓女"),
-        ("冇", "没有", "冇问题"),
-    ],
-    "台湾腔": [
-        ("酱紫", "这样", "酱紫啊"), ("蛮", "很", "蛮好的"), ("超赞", "非常棒", "超赞"),
-        ("拍谢", "不好意思", "拍谢啦"), ("机车", "麻烦、烦人", "很机车"), ("阿嬷", "奶奶", "阿嬷"),
-        ("龟毛", "挑剔", "别龟毛"),
-    ],
-    "天津话": [
-        ("嘛呢", "干什么", "嘛呢"), ("倍儿", "非常", "倍儿好"), ("哏儿", "有趣", "真哏儿"),
-        ("得嘞", "好的", "得嘞"), ("腻歪", "腻烦、黏人", "别腻歪"), ("幺蛾子", "麻烦", "出幺蛾子"),
-        ("耐人", "招人喜欢", "真耐人"),
-    ],
-    "河南话": [
-        ("弄啥嘞", "干什么", "你弄啥嘞"), ("中", "好", "中，就这么办"), ("得劲", "舒服", "真得劲"),
-        ("木有", "没有", "木有事"), ("恁", "你", "恁吃饭没"), ("俺", "我", "俺知道了"),
-        ("中不中", "行不行", "中不中"),
-    ],
-    "上海话": [
-        ("阿拉", "我、我们", "阿拉晓得"), ("侬", "你", "侬好"), ("哪能", "怎么", "哪能办"),
-        ("结棍", "厉害", "侬结棍"), ("老灵", "很好", "老灵额"), ("白相", "玩", "出去白相"),
-        ("适意", "舒服", "适意"),
-    ],
-}
-DIALECT_REGIONS = {
-    "贵州话": "贵州",
-    "东北话": "东北",
-    "四川话": "四川",
-    "广东话": "广东",
-    "台湾腔": "台湾",
-    "天津话": "天津",
-    "河南话": "河南",
-    "上海话": "上海",
-}
-SCHEDULE_VERSION = "backbone-v6"
-NETWORK_RELATIONS = ("家人", "恋人", "朋友", "同事", "同学", "熟人", "陌生人", "仇人")
-MOOD_KEYS = ("开心", "平静", "郁闷", "生气", "暴躁", "委屈", "疲惫", "焦虑", "兴奋", "依恋")
-#: 真正算「生病」的状态；「疲惫」只是累，不该按病号排日程。
-SICK_STATUSES = ("轻微不适", "感冒", "低烧", "发烧", "不舒服", "生病", "拉肚子")
-MOOD_BASE = {
-    "开心": 55, "平静": 60, "郁闷": 18, "生气": 8, "暴躁": 6, "委屈": 20,
-    "疲惫": 28, "焦虑": 18, "兴奋": 30, "依恋": 45,
-}
-STYLE_HINTS = {
-    "soft": "整体语气温柔、软一点。",
-    "cool": "整体语气清淡、克制一点。",
-    "lively": "整体语气活泼、有精神。",
-    "mature": "整体语气成熟、稳一点。",
-}
-
-POS_WORDS = ("开心", "高兴", "哈哈", "笑死", "好耶", "喜欢", "爱你", "可爱", "棒", "不错",
-             "太好了", "谢谢", "嘿嘿", "嘻嘻", "么么", "抱抱", "亲亲", "好吃", "好看")
-NEG_WORDS = ("难过", "伤心", "哭", "烦", "累", "讨厌", "滚", "闭嘴", "无语", "失望",
-             "委屈", "孤单", "想死", "崩溃", "气死", "不开心")
-ANGRY_WORDS = ("滚", "闭嘴", "傻", "废物", "烦死", "气死", "去死", "恶心", "别烦", "有病")
-SAD_WORDS = ("难过", "伤心", "想哭", "委屈", "孤单", "没人", "算了", "失望", "哭")
-AFFECTION_WORDS = ("喜欢", "爱你", "想你", "抱抱", "亲亲", "贴贴", "宝贝", "老婆", "宝宝", "么么")
-INSULT_WORDS = ("傻逼", "智障", "废物", "垃圾", "去死", "恶心", "滚")
-
-
-# 关系网里的内部节点：bot/self 代表"我自己"，不是真实人物。
-# 这种边只存在本地（_push_relation_to_data 不推给记忆终端），比较远端/本地时也要排掉，
-# 否则远端永远比本地少一条，每 10 分钟误报一次"关系网不同步"。
-INTERNAL_RELATION_NODES = ("bot", "self")
-
-
-# ---------------------------------------------------------------------------
-# 基础工具
-# ---------------------------------------------------------------------------
-
-def now_ts():
-    return time.time()
-
-
-CN_HOLIDAYS = {
-    "2025-01-01": "元旦",
-    "2025-01-28": "除夕", "2025-01-29": "春节", "2025-01-30": "春节", "2025-01-31": "春节", "2025-02-01": "春节", "2025-02-02": "春节", "2025-02-03": "春节", "2025-02-04": "春节",
-    "2025-04-04": "清明",
-    "2025-05-01": "劳动节",
-    "2025-05-31": "端午",
-    "2025-10-01": "国庆", "2025-10-02": "国庆", "2025-10-03": "国庆", "2025-10-04": "国庆", "2025-10-05": "国庆", "2025-10-07": "国庆", "2025-10-08": "国庆",
-    "2025-10-06": "国庆中秋",
-    "2026-01-01": "元旦",
-    "2026-02-16": "除夕", "2026-02-17": "春节", "2026-02-18": "春节", "2026-02-19": "春节", "2026-02-20": "春节", "2026-02-21": "春节", "2026-02-22": "春节", "2026-02-23": "春节",
-    "2026-04-05": "清明",
-    "2026-05-01": "劳动节",
-    "2026-06-19": "端午",
-    "2026-09-25": "中秋",
-    "2026-10-01": "国庆", "2026-10-02": "国庆", "2026-10-03": "国庆", "2026-10-04": "国庆", "2026-10-05": "国庆", "2026-10-06": "国庆", "2026-10-07": "国庆",
-    "2027-01-01": "元旦",
-    "2027-02-05": "除夕", "2027-02-06": "春节", "2027-02-07": "春节", "2027-02-08": "春节", "2027-02-09": "春节", "2027-02-10": "春节", "2027-02-11": "春节",
-    "2027-04-05": "清明",
-    "2027-05-01": "劳动节",
-    "2027-06-09": "端午",
-    "2027-09-15": "中秋",
-    "2027-10-01": "国庆", "2027-10-02": "国庆", "2027-10-03": "国庆", "2027-10-04": "国庆", "2027-10-05": "国庆", "2027-10-06": "国庆", "2027-10-07": "国庆",
-}
-
-# 2026 年主要假期的连续日期（用于判断长假/短假）
-for _d in range(1, 4):
-    CN_HOLIDAYS.setdefault("2026-01-%02d" % _d, "元旦")
-for _d in range(4, 7):
-    CN_HOLIDAYS.setdefault("2026-04-%02d" % _d, "清明")
-for _d in range(1, 6):
-    CN_HOLIDAYS.setdefault("2026-05-%02d" % _d, "劳动节")
-for _d in range(19, 22):
-    CN_HOLIDAYS.setdefault("2026-06-%02d" % _d, "端午")
-for _d in range(25, 28):
-    CN_HOLIDAYS.setdefault("2026-09-%02d" % _d, "中秋")
-
-SOLAR_TERMS = {
-    "2025-01-05": "小寒", "2025-01-20": "大寒", "2025-02-03": "立春", "2025-02-18": "雨水", "2025-03-05": "惊蛰", "2025-03-20": "春分", "2025-04-04": "清明", "2025-04-20": "谷雨", "2025-05-05": "立夏", "2025-05-21": "小满", "2025-06-05": "芒种", "2025-06-21": "夏至", "2025-07-07": "小暑", "2025-07-22": "大暑", "2025-08-07": "立秋", "2025-08-23": "处暑", "2025-09-07": "白露", "2025-09-23": "秋分", "2025-10-08": "寒露", "2025-10-23": "霜降", "2025-11-07": "立冬", "2025-11-22": "小雪", "2025-12-07": "大雪", "2025-12-21": "冬至",
-    "2026-01-05": "小寒", "2026-01-20": "大寒", "2026-02-04": "立春", "2026-02-18": "雨水", "2026-03-05": "惊蛰", "2026-03-20": "春分", "2026-04-05": "清明", "2026-04-20": "谷雨", "2026-05-05": "立夏", "2026-05-21": "小满", "2026-06-05": "芒种", "2026-06-21": "夏至", "2026-07-07": "小暑", "2026-07-23": "大暑", "2026-08-07": "立秋", "2026-08-23": "处暑", "2026-09-07": "白露", "2026-09-23": "秋分", "2026-10-08": "寒露", "2026-10-23": "霜降", "2026-11-07": "立冬", "2026-11-22": "小雪", "2026-12-07": "大雪", "2026-12-21": "冬至",
-    "2027-01-05": "小寒", "2027-01-20": "大寒", "2027-02-04": "立春", "2027-02-19": "雨水", "2027-03-06": "惊蛰", "2027-03-21": "春分", "2027-04-05": "清明", "2027-04-20": "谷雨", "2027-05-06": "立夏", "2027-05-21": "小满", "2027-06-06": "芒种", "2027-06-21": "夏至", "2027-07-07": "小暑", "2027-07-23": "大暑", "2027-08-08": "立秋", "2027-08-23": "处暑", "2027-09-08": "白露", "2027-09-23": "秋分", "2027-10-08": "寒露", "2027-10-24": "霜降", "2027-11-08": "立冬", "2027-11-22": "小雪", "2027-12-07": "大雪", "2027-12-22": "冬至",
-}
-
-
-def day_meta(day=None):
-    """返回某天的节日、节气和是否休息日。"""
-    try:
-        target = date.fromisoformat(str(day)) if day else _now().date()
-    except Exception:
-        target = _now().date()
-    key = target.isoformat()
-    holiday = CN_HOLIDAYS.get(key, "")
-    term = SOLAR_TERMS.get(key, "")
-    weekend = target.weekday() >= 5
-    rest = bool(weekend or holiday)
-    holiday_days = 0
-    if holiday:
-        cursor = target
-        while CN_HOLIDAYS.get(cursor.isoformat()) == holiday:
-            holiday_days += 1
-            cursor -= timedelta(days=1)
-        cursor = target + timedelta(days=1)
-        while CN_HOLIDAYS.get(cursor.isoformat()) == holiday:
-            holiday_days += 1
-            cursor += timedelta(days=1)
-    label = "、".join(item for item in (holiday, term) if item)
-    if holiday_days >= 2:
-        label += (" · " if label else "") + "%d天假期" % holiday_days
-    if not label and weekend:
-        label = "周末"
-    return {
-        "date": key,
-        "weekday": "一二三四五六日"[target.weekday()],
-        "weekend": weekend,
-        "holiday": holiday,
-        "solar_term": term,
-        "holiday_days": holiday_days,
-        "rest": rest,
-        "label": label,
-    }
-
-def lark_quote_kwargs(is_private, message_id, sender_id, chat_id, quote):
-    """飞书发送参数：决定走「引用回复」还是普通发送。
-
-    AstrBot 的飞书适配器在 `LarkMessageEvent.send()` 里固定传
-    `reply_message_id=self.message_obj.message_id`，所以不管私聊群聊、也不管
-    `platform_settings.reply_with_quote`，每条消息都会变成飞书里的「回复」，
-    私聊看起来就是一直在引用他上一条。
-
-    - 私聊：普通发送（receive_id = 他的 open_id），不引用；
-    - 群聊且按概率判定要引用：reply；
-    - 群聊但不引用：普通发送（receive_id = 会话 chat_id）；
-    - 拿不到 open_id / chat_id 时退回原来的 reply，宁可引用也别发不出去。
-    """
-    message_id = str(message_id or "")
-    sender_id = str(sender_id or "")
-    chat_id = str(chat_id or "")
-    if is_private and sender_id:
-        return {
-            "receive_id": sender_id,
-            "receive_id_type": "open_id",
-            "fallback_chat_id": chat_id or None,
-        }
-    if quote and message_id:
-        return {"reply_message_id": message_id}
-    if chat_id:
-        return {"receive_id": chat_id, "receive_id_type": "chat_id"}
-    if message_id:
-        return {"reply_message_id": message_id}
-    return {}
-
-
-def today_str():
-    return _now().date().isoformat()
-
-
-def other_platform_bot_lines(rows, umo, limit=3, platform=""):
-    """从跨平台近聊里挑出「她自己说的、且不是当前会话」的几句话。
-
-    主动消息以前只看当前会话的最近 12 句：QQ 上 08:48 说「等散会了跟你说」，
-    之后一直没人说话，12:00 的主动消息就接着那场会往下说；与此同时飞书那边
-    早就是「在便利店买饭」了。把她在别的平台刚说的话也放进去，两边才不会
-    各讲各的故事（内容冲突时以当前状态为准，见 gen_proactive 的规则）。
-
-    数据插件有的行没有 `umo`，所以再按 `platform` 兜一层，避免把本平台的
-    话当成「另一边说过」。
-    """
-    umo = str(umo or "")
-    platform = str(platform or "")
-    out = []
-    for row in rows or []:
-        if str(row.get("role") or "") != "bot":
-            continue
-        if str(row.get("umo") or "") == umo:
-            continue
-        row_platform = str(row.get("platform") or "")
-        if row_platform and platform and row_platform == platform:
-            continue
-        text = str(row.get("content") or "").strip().replace("\n", " ")
-        if text:
-            out.append(text)
-    size = max(1, int(limit or 1))
-    return out[-size:]
-
-
-_CATEGORY_MOOD_CACHE = None
-
-
-def schedule_category_mood():
-    """日程类别 → 每小时心情增量（复用 schedule_engine.CATEGORY_MOOD）。"""
-    global _CATEGORY_MOOD_CACHE
-    if _CATEGORY_MOOD_CACHE is not None:
-        return _CATEGORY_MOOD_CACHE
-    table = {}
-    try:
-        from .schedule_engine import CATEGORY_MOOD as table
-    except Exception:
-        try:
-            from schedule_engine import CATEGORY_MOOD as table
-        except Exception:
-            table = {}
-    _CATEGORY_MOOD_CACHE = dict(table or {})
-    return _CATEGORY_MOOD_CACHE
-
-
-
-def weekday_cn():
-    return "一二三四五六日"[_now().date().weekday()]
-
-
-def clamp(value, low=0.0, high=100.0):
-    try:
-        value = float(value)
-    except Exception:
-        return float(low)
-    return max(float(low), min(float(high), value))
-
-
-def to_int(value, default=0):
-    try:
-        return int(float(value))
-    except Exception:
-        return default
-
-
-def to_float(value, default=0.0):
-    try:
-        return float(value)
-    except Exception:
-        return default
-
-
-def truncate(text, limit=120):
-    text = str(text or "").replace("\n", " ").strip()
-    if len(text) <= limit:
-        return text
-    return text[:limit] + "…"
-
-
-def md5_int(text):
-    return int(hashlib.md5(str(text).encode("utf-8")).hexdigest()[:8], 16)
-
-
-def uniq(items):
-    out = []
-    seen = set()
-    for item in items:
-        if item and item not in seen:
-            seen.add(item)
-            out.append(item)
-    return out
-
-
-def parse_hhmm(value, default=0):
-    try:
-        parts = str(value).strip().split(":")
-        return int(parts[0]) * 60 + int(parts[1])
-    except Exception:
-        return default
-
-
-def minutes_now():
-    dt = _now()
-    return dt.hour * 60 + dt.minute
-
-
-def in_minute_range(cur, start, end):
-    if start == end:
-        return True
-    if start < end:
-        return start <= cur < end
-    return cur >= start or cur < end
-
-
-def quiet_now(spec):
-    try:
-        start, end = str(spec).split("-", 1)
-        return in_minute_range(minutes_now(), parse_hhmm(start), parse_hhmm(end))
-    except Exception:
-        return False
-
-
-def looks_like_plain_command(text):
-    text = (text or "").strip()
-    return text.startswith("/") or text.startswith("／")
-
-
-def has_question(text):
-    if "?" in text or "？" in text:
-        return True
-    return any(word in text for word in (
-        "吗", "呢", "怎么", "为什么", "啥", "什么", "哪", "多少", "几",
-        "是不是", "能不能", "可不可以", "如何", "几点", "谁",
-    ))
-
-
-def sentiment(text):
-    text = text or ""
-    pos = sum(1 for word in POS_WORDS if word in text)
-    neg = sum(1 for word in NEG_WORDS if word in text)
-    angry = sum(1 for word in ANGRY_WORDS if word in text)
-    sad = sum(1 for word in SAD_WORDS if word in text)
-    aff = sum(1 for word in AFFECTION_WORDS if word in text)
-    total = pos + neg
-    score = 0.0 if total == 0 else (pos - neg) / float(total)
-    return {
-        "pos": pos, "neg": neg, "angry": angry, "sad": sad,
-        "aff": aff, "insult": any(w in text for w in INSULT_WORDS),
-        "score": score,
-    }
-
-
-_WORD_RE = re.compile(r"[a-zA-Z0-9_]{2,}")
-_CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
-
-
-def tokens(text):
-    text = (text or "").lower()
-    out = set()
-    for word in _WORD_RE.findall(text):
-        out.add(word)
-    for run in _CJK_RE.findall(text):
-        if len(run) == 1:
-            out.add(run)
-        for i in range(len(run) - 1):
-            out.add(run[i:i + 2])
-        for i in range(len(run) - 2):
-            out.add(run[i:i + 3])
-    return out
-
-
-def overlap(a, b):
-    if not a or not b:
-        return 0.0
-    return len(a & b) / float(max(1, min(len(a), len(b))))
-
-
-def json_extract_list(text):
-    """给“要一个数组”的场景用：json_extract 会先匹配 "{"，
-    遇到 `[{...},{...}]` 只返回第一个对象，导致 extract_facts 永远拿到 dict → 返回 []。
-    """
-    if not text:
-        return []
-    raw = str(text).strip()
-    raw = re.sub(r"^```(?:json)?\s*", "", raw)
-    raw = re.sub(r"\s*```$", "", raw)
-    start, end = raw.find("["), raw.rfind("]")
-    if start >= 0 and end > start:
-        chunk = re.sub(r",\s*([}\]])", r"\1", raw[start:end + 1])
-        try:
-            data = json.loads(chunk)
-            if isinstance(data, list):
-                return data
-        except Exception:
-            pass
-    data = json_extract(text)
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        return [data]
-    return []
-
-
-def json_extract(text):
-    if not text:
-        return None
-    raw = str(text).strip()
-    raw = re.sub(r"^```(?:json)?\s*", "", raw)
-    raw = re.sub(r"\s*```$", "", raw)
-    for opener, closer in (("{", "}"), ("[", "]")):
-        start = raw.find(opener)
-        if start < 0:
-            continue
-        depth = 0
-        in_string = False
-        escaped = False
-        for index in range(start, len(raw)):
-            char = raw[index]
-            if in_string:
-                if escaped:
-                    escaped = False
-                elif char == "\\":
-                    escaped = True
-                elif char == '"':
-                    in_string = False
-                continue
-            if char == '"':
-                in_string = True
-            elif char == opener:
-                depth += 1
-            elif char == closer:
-                depth -= 1
-                if depth == 0:
-                    chunk = raw[start:index + 1]
-                    chunk = re.sub(r",\s*([}\]])", r"\1", chunk)
-                    try:
-                        return json.loads(chunk)
-                    except Exception:
-                        break
-    return None
-
-
-CHAT_FORMAT_NOISE = re.compile(
-    r"@\s*([^\s（(]+)\s*[（(]\s*QQ\s*[:：]?\s*\d+\s*[）)]"
-    r"|[（(]\s*QQ\s*[:：]?\s*\d+\s*[）)]"
-    r"|\bQQ\s*[:：]?\s*\d{4,}\b"
-    r"|@\s*([^\s，。！？!?、；;：:]+)",
-    re.I,
-)
-
-
-def strip_chat_format(text):
-    """去掉模型复述的 @昵称(QQ号)、QQ号等后台格式，保留自然称呼。"""
-    value = str(text or "")
-    value = CHAT_FORMAT_NOISE.sub(lambda m: (m.group(1) or m.group(2) or "").strip(), value)
-    value = re.sub(r"[（(]\s*[）)]", "", value)
-    value = re.sub(r"[ \t]{2,}", " ", value)
-    return value.strip()
-
-
-def clean_reply(text, limit=300):
-    if not text:
-        return ""
-    text = strip_chat_format(str(text).strip())
-    text = re.sub(r"```.*?```", "", text, flags=re.S)
-    text = re.sub(r"^(?:Amo|amo|核心|我|助手|assistant|AI|机器人)\s*[:：]\s*", "", text)
-    if len(text) >= 2 and text[0] in "\"'“‘" and text[-1] in "\"'”’":
-        text = text[1:-1]
-    text = text.replace("\r", "")
-    text = re.sub(r"[ \t]+\n", "\n", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()[:limit]
-
-
-# ---------------------------------------------------------------------------
-# 分段器：书号、引号等成对符号内部绝对不切
-# ---------------------------------------------------------------------------
-
-_PAIRS = {
-    "《": "》", "〈": "〉", "“": "”", "‘": "’", "「": "」", "『": "』",
-    "（": "）", "(": ")", "【": "】", "〔": "〕", "[": "]", "{": "}",
-}
-_STRONG = "。！？!?…\n"
-_WEAK = "，,、；;：:~～"
-_TRIM = " \t\r\n。！？!?…，,、；;：:~～"
-
-
-def _protect_mask(text):
-    length = len(text)
-    mask = [False] * length
-
-    def mark(start, end):
-        for index in range(max(0, start), min(length, end)):
-            mask[index] = True
-
-    for match in re.finditer(r"```.*?```", text, re.S):
-        mark(match.start(), match.end())
-    for match in re.finditer(r"`[^`\n]+`", text):
-        mark(match.start(), match.end())
-    for match in re.finditer(r"https?://[^\s]+", text):
-        mark(match.start(), match.end())
-
-    index = 0
-    while index < length:
-        char = text[index]
-        closer = _PAIRS.get(char)
-        if closer:
-            depth = 1
-            scan = index + 1
-            while scan < length:
-                if text[scan] == char:
-                    depth += 1
-                elif text[scan] == closer:
-                    depth -= 1
-                    if depth == 0:
-                        break
-                scan += 1
-            if scan < length:
-                mark(index, scan + 1)
-                index = scan + 1
-                continue
-            mark(index, length)
-            break
-        index += 1
-    return mask
-
-
-def _cut(text, mask, delimiters, min_keep=0):
-    parts = []
-    start = 0
-    for index, char in enumerate(text):
-        if mask[index]:
-            continue
-        if char in delimiters and (index + 1 - start) >= min_keep:
-            parts.append(text[start:index + 1])
-            start = index + 1
-    parts.append(text[start:])
-    return parts
-
-
-def _protected_ranges(text):
-    mask = _protect_mask(text)
-    ranges = []
-    start = None
-    for index, flag in enumerate(mask):
-        if flag and start is None:
-            start = index
-        elif not flag and start is not None:
-            ranges.append((start, index))
-            start = None
-    if start is not None:
-        ranges.append((start, len(mask)))
-    return ranges
-
-
-def _mask_with_placeholders(text):
-    ranges = _protected_ranges(text)
-    if not ranges:
-        return text, {}
-    pieces = []
-    placeholders = {}
-    last = 0
-    for index, (start, end) in enumerate(ranges):
-        pieces.append(text[last:start])
-        token = "\x00%d\x00" % index
-        placeholders[token] = text[start:end]
-        pieces.append(token)
-        last = end
-    pieces.append(text[last:])
-    return "".join(pieces), placeholders
-
-
-def _split_regex(text, pattern, protect_pairs=True):
-    if not pattern:
-        return None
-    masked, placeholders = _mask_with_placeholders(text) if protect_pairs else (text, {})
-    try:
-        compiled = re.compile(pattern)
-    except re.error:
-        return None
-    pieces = []
-    last = 0
-    for match in compiled.finditer(masked):
-        end = match.end()
-        if end <= last:
-            continue
-        pieces.append(masked[last:end])
-        last = end
-    pieces.append(masked[last:])
-    restored = []
-    for piece in pieces:
-        value = piece
-        for token, original in placeholders.items():
-            value = value.replace(token, original)
-        value = value.strip()
-        if value:
-            restored.append(value)
-    return restored
-
-
-def segment_text(text, keep_punc=True, min_len=6, max_len=42, max_segments=4,
-                 mode="punct", split_chars="", regex_pattern="", protect_pairs=True):
-    """按标点符号或正则分段；成对符号、代码块、URL 内部不会被切开。
-
-    mode="punct" 时按 segment_split_chars + 内置标点分段；
-    mode="regex" 时按 segment_regex 分段，失败自动回退到标点模式。
-    """
-    text = (text or "").replace("\r\n", "\n").strip()
-    if not text:
-        return []
-    min_len = max(1, to_int(min_len, 6))
-    max_len = max(min_len + 1, to_int(max_len, 42))
-    max_segments = max(1, to_int(max_segments, 4))
-
-    pieces = None
-    if str(mode).lower() == "regex" and regex_pattern:
-        pieces = _split_regex(text, regex_pattern, protect_pairs)
-    if pieces is None:
-        extra = "".join(char for char in str(split_chars or "") if char not in "\r\n")
-        strong = "".join(dict.fromkeys(_STRONG + extra))
-        mask = _protect_mask(text) if protect_pairs else [False] * len(text)
-        pieces = []
-        for part in _cut(text, mask, strong):
-            part = part.strip()
-            if not part:
-                continue
-            if len(part) > max_len:
-                sub_mask = _protect_mask(part) if protect_pairs else [False] * len(part)
-                pieces.extend(_cut(part, sub_mask, _WEAK, min_keep=max(4, max_len // 2)))
-            else:
-                pieces.append(part)
-
-    normalized = []
-    for part in pieces or []:
-        part = str(part).strip()
-        if not part:
-            continue
-        if len(part) > max_len:
-            sub_mask = _protect_mask(part) if protect_pairs else [False] * len(part)
-            normalized.extend(_cut(part, sub_mask, _WEAK, min_keep=max(4, max_len // 2)))
-        else:
-            normalized.append(part)
-    pieces = normalized
-
-    segments = []
-    for part in pieces:
-        seg = part.strip()
-        if not keep_punc:
-            seg = seg.strip(_TRIM)
-        if seg:
-            segments.append(seg)
-    if not segments:
-        return []
-
-    index = 0
-    while len(segments) > 1 and index < len(segments):
-        if len(segments[index]) < min_len:
-            if index + 1 < len(segments):
-                segments[index + 1] = segments[index] + segments[index + 1]
-                del segments[index]
-                continue
-            segments[index - 1] = segments[index - 1] + segments[index]
-            del segments[index]
-            break
-        index += 1
-
-    while len(segments) > max_segments:
-        best = 0
-        best_len = None
-        for cursor in range(len(segments) - 1):
-            total = len(segments[cursor]) + len(segments[cursor + 1])
-            if best_len is None or total < best_len:
-                best_len = total
-                best = cursor
-        segments[best] = segments[best] + segments[best + 1]
-        del segments[best + 1]
-
-    return [seg for seg in segments if seg][:max_segments]
-
-
-AI_ADMISSION_RE = re.compile(
-    r"(?:我是|作为|毕竟|本人|本机)\s*(?:AI|人工智能|机器人|人机|程序|模型)"
-    r"|(?:只是|不过是|就是个|只是个)\s*(?:AI|人工智能|机器人|人机|程序|模型)"
-    r"|人机(?:也|当然|本来|就是)"
-    r"|不是真人|虚拟(?:人|角色|存在)"
-    r"|(?:我|咱|我们)(?:其实|本质上|说到底|严格来说)?(?:就是|不过是|只是个)"
-    r"\s*(?:AI|人工智能|机器人|人机|程序|语言模型|大模型)",
-    re.I,
-)
-
-
-def looks_like_ai_admission(text):
-    return bool(AI_ADMISSION_RE.search(str(text or "")))
-
-
-# 她不能报后台：模型名、厂商、插件名、API、提示词这类都不该出现在聊天里
-MODEL_LEAK_RE = re.compile(
-    r"(?:deepseek|openai|anthropic|claude|gemini|chatgpt|gpt-?[0-9]|qwen|通义|千问|"
-    r"glm|chatglm|智谱|moonshot|kimi|doubao|豆包|ernie|文心|hunyuan|混元|llama|mistral|"
-    r"grok|sonnet|opus|haiku|dp-?[0-9]|llm|大模型|语言模型|模型名称|api\s*key|"
-    r"token|提示词|prompt|system\s*prompt|插件|astrbot)",
-    re.I,
-)
-
-
-DEFENSIVE_REPLY_RE = re.compile(
-    r"(?:你才|你才是|谁家|哪有|我才不是)[^。！？]{0,12}(?:人机|机器人|AI|人工智能)"
-    r"|(?:人机|机器人)(?:才|也|怎么|哪有)",
-    re.I,
-)
-
-
-def looks_like_defensive_reply(text):
-    """是不是在跟人争“我不是人机”——技术讨论里这种话很突兀。"""
-    return bool(DEFENSIVE_REPLY_RE.search(str(text or "")))
-
-
-def looks_like_model_leak(text):
-    """回复里有没有把模型名/厂商/插件/API 这类后台信息说出来。"""
-    raw = str(text or "")
-    if not raw:
-        return False
-    # 只有短回答或带“模型/接/用/是”这类上下文才算泄漏，避免误伤正常聊天
-    if not MODEL_LEAK_RE.search(raw):
-        return False
-    if len(re.sub(r"\s+", "", raw)) > 60:
-        return False
-    return True
-
-
-def typing_delay_ms(text, base=700, per_char=400, cap=20000):
-    """按回复字数模拟打字时间，越长的回复停顿越久；标点再补一点。"""
-    clean = re.sub(r"\s+", "", str(text or ""))
-    chars = len(clean)
-    pauses = (
-        clean.count("。") + clean.count("！") + clean.count("？")
-        + clean.count("!") + clean.count("?") + clean.count("…")
-    )
-    commas = clean.count("，") + clean.count(",") + clean.count("、")
-    value = base + chars * per_char + pauses * 70 + commas * 35
-    value = min(value, cap)
-    value = max(200, value * random.uniform(0.85, 1.2))
-    return int(value)
-
-
-# ---------------------------------------------------------------------------
-# 数据库
-# ---------------------------------------------------------------------------
-
-
-# ---- 用量统计（读 AstrBot 的 data_v4.db provider_stats） ----
-USAGE_PEAK_HOURS = ((9, 12), (14, 18))
-USAGE_DEFAULT_PRICES = {
-    "hit_peak": 0.04, "hit_idle": 0.02,
-    "miss_peak": 2.0, "miss_idle": 1.0,
-    "out_peak": 8.0, "out_idle": 4.0,
-}
-
-
-def usage_is_peak(ts):
-    """北京时间工作日 9-12、14-18 为高峰；周末全天算空闲（法定节假日未处理）。"""
-    try:
-        # 不能写死 +8：时区是可配的（clock.configure），服务器跑 UTC 时 +8 只是碰巧对
-        dt = _clock_from_ts(ts)
-    except Exception:
-        return False
-    if dt.weekday() >= 5:
-        return False
-    return any(start <= dt.hour < end for start, end in USAGE_PEAK_HOURS)
-
-
-def _usage_row_ts(start_time, created_at):
-    try:
-        value = float(start_time or 0)
-        if value > 0:
-            return value
-    except Exception:
-        pass
-    try:
-        dt = datetime.fromisoformat(str(created_at or "").strip())
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.timestamp()
-    except Exception:
-        return 0.0
-
-
-def _empty_bucket():
-    return {"calls": 0, "input_miss": 0, "input_cached": 0, "output": 0}
-
-
-def summarize_token_usage(db_path, start_ts=None, end_ts=None, model_filter=None):
-    """按 provider_stats 汇总 token。start_ts/end_ts 为 epoch 秒，None 表示不限。"""
-    usage = _empty_bucket()
-    usage.update({"cache_rate": 0.0, "peak": _empty_bucket(), "idle": _empty_bucket(), "by_model": {}})
-    if not db_path or not os.path.exists(db_path):
-        usage["error"] = "找不到 AstrBot 数据库"
-        return usage
-    try:
-        conn = sqlite3.connect("file:%s?mode=ro" % str(db_path).replace("\\", "/"), uri=True)
-    except Exception as exc:
-        usage["error"] = "打开数据库失败: %s" % exc
-        return usage
-    try:
-        rows = conn.execute(
-            "SELECT provider_model, token_input_other, token_input_cached, token_output, "
-            "start_time, created_at FROM provider_stats"
-        ).fetchall()
-    except Exception as exc:
-        usage["error"] = "读取 provider_stats 失败: %s" % exc
-        conn.close()
-        return usage
-    conn.close()
-
-    for model, miss, cached, out, start_time, created_at in rows:
-        model = str(model or "")
-        if model_filter and model_filter not in model:
-            continue
-        ts = _usage_row_ts(start_time, created_at)
-        if start_ts is not None and ts and ts < float(start_ts):
-            continue
-        if end_ts is not None and ts and ts >= float(end_ts):
-            continue
-        miss = int(miss or 0)
-        cached = int(cached or 0)
-        out = int(out or 0)
-        usage["calls"] += 1
-        usage["input_miss"] += miss
-        usage["input_cached"] += cached
-        usage["output"] += out
-        bucket = usage["peak"] if usage_is_peak(ts) else usage["idle"]
-        bucket["calls"] += 1
-        bucket["input_miss"] += miss
-        bucket["input_cached"] += cached
-        bucket["output"] += out
-        item = usage["by_model"].setdefault(model or "unknown", _empty_bucket())
-        item["calls"] += 1
-        item["input_miss"] += miss
-        item["input_cached"] += cached
-        item["output"] += out
-
-    total_in = usage["input_miss"] + usage["input_cached"]
-    usage["cache_rate"] = (usage["input_cached"] / total_in) if total_in else 0.0
-    usage["by_model"] = [
-        dict(model=key, **value) for key, value in
-        sorted(usage["by_model"].items(), key=lambda kv: -(kv[1]["input_miss"] + kv[1]["input_cached"]))
-    ]
-    return usage
-
-
-def usage_cost(usage, prices=None):
-    """按空闲/高峰两档单价（元/百万 token）估算花费。"""
-    table = dict(USAGE_DEFAULT_PRICES)
-    if isinstance(prices, dict):
-        for key, value in prices.items():
-            try:
-                table[key] = float(value)
-            except (TypeError, ValueError):
-                continue
-    cost = 0.0
-    for bucket, prefix in ((usage.get("peak") or {}, "peak"), (usage.get("idle") or {}, "idle")):
-        cost += float(bucket.get("input_cached") or 0) * table["hit_" + prefix] / 1e6
-        cost += float(bucket.get("input_miss") or 0) * table["miss_" + prefix] / 1e6
-        cost += float(bucket.get("output") or 0) * table["out_" + prefix] / 1e6
-    return round(cost, 6)
-
-
-def fetch_provider_balance(api_key, base_url, kind, timeout=8.0):
-    """尽力查询供应商余额；查不到就返回 {ok: False, error}，不抛异常。
-
-    支持：DeepSeek（/user/balance）、SiliconFlow（/v1/user/info）、
-    OpenAI 兼容中转（/v1/dashboard/billing/subscription + usage，one-api/new-api 常见）。
-    """
-    import urllib.request
-
-    api_key = str(api_key or "").strip()
-    base = str(base_url or "").rstrip("/")
-    if not api_key or not base:
-        return {"ok": False, "error": "缺密钥或地址"}
-
-    def _request(url, headers=None):
-        auth = dict(headers or {})
-        auth.setdefault("Authorization", "Bearer " + api_key)
-        auth.setdefault("Accept", "application/json")
-        request = urllib.request.Request(url, headers=auth)
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
-
-    try:
-        if kind == "deepseek":
-            payload = _request(base + "/user/balance", {"Accept": "application/json"})
-            infos = payload.get("balance_infos") or []
-            chosen = None
-            for item in infos:
-                if str(item.get("currency") or "").upper() == "CNY":
-                    chosen = item
-                    break
-            if chosen is None and infos:
-                chosen = infos[0]
-            if not isinstance(chosen, dict):
-                return {"ok": False, "error": "返回里没有余额信息"}
-
-            def money(value):
-                try:
-                    return round(float(value), 2)
-                except (TypeError, ValueError):
-                    return None
-
-            return {
-                "ok": True,
-                "available": bool(payload.get("is_available")),
-                "currency": str(chosen.get("currency") or "CNY"),
-                "amount": money(chosen.get("total_balance")),
-                "granted": money(chosen.get("granted_balance")),
-                "topped_up": money(chosen.get("topped_up_balance")),
-            }
-        if kind == "siliconflow":
-            payload = _request(base + "/v1/user/info", {"Accept": "application/json"})
-            data = payload.get("data") or {}
-            amount = None
-            for field in ("balance", "totalBalance"):
-                try:
-                    amount = round(float(data.get(field)), 2)
-                    break
-                except (TypeError, ValueError):
-                    continue
-            if amount is None:
-                return {"ok": False, "error": "返回里没有余额字段"}
-            return {"ok": True, "currency": "CNY", "amount": amount}
-        # openai 兼容中转（one-api/new-api 常见）
-        subscription = _request(base + "/v1/dashboard/billing/subscription")
-        hard_limit = None
-        try:
-            hard_limit = float(subscription.get("hard_limit_usd"))
-        except (TypeError, ValueError):
-            hard_limit = None
-        if hard_limit is None:
-            return {"ok": False, "error": "返回里没有 hard_limit_usd"}
-        today = _now()
-        month_start = today.replace(day=1).strftime("%Y-%m-%d")
-        end_date = (today + timedelta(days=1)).strftime("%Y-%m-%d")
-        used_cents = 0.0
-        try:
-            usage = _request(
-                base + "/v1/dashboard/billing/usage?start_date=" + month_start + "&end_date=" + end_date
-            )
-            used_cents = float(usage.get("total_usage") or 0)
-        except Exception:
-            used_cents = 0.0
-        remaining = round(hard_limit - used_cents / 100.0, 2)
-        return {
-            "ok": True,
-            "currency": "USD",
-            "amount": max(0.0, remaining),
-            "used": round(used_cents / 100.0, 2),
-            "limit": round(hard_limit, 2),
-        }
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)[:120]}
-
-
-def fetch_deepseek_balance(api_key, base_url="https://api.deepseek.com", timeout=8.0):
-    """查 DeepSeek 余额；失败返回 {ok: False, error}，不抛异常。"""
-    api_key = str(api_key or "").strip()
-    if not api_key:
-        return {"ok": False, "error": "未配置 API Key"}
-    import urllib.request
-    url = str(base_url or "https://api.deepseek.com").rstrip("/") + "/user/balance"
-    request = urllib.request.Request(url, headers={
-        "Authorization": "Bearer " + api_key,
-        "Accept": "application/json",
-    })
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)[:120]}
-    infos = payload.get("balance_infos") or []
-    chosen = None
-    for item in infos:
-        if str(item.get("currency") or "").upper() == "CNY":
-            chosen = item
-            break
-    if chosen is None and infos:
-        chosen = infos[0]
-    if not isinstance(chosen, dict):
-        return {"ok": False, "error": "返回里没有余额信息"}
-
-    def money(value):
-        try:
-            return round(float(value), 2)
-        except (TypeError, ValueError):
-            return None
-
-    return {
-        "ok": True,
-        "available": bool(payload.get("is_available")),
-        "currency": str(chosen.get("currency") or "CNY"),
-        "amount": money(chosen.get("total_balance")),
-        "granted": money(chosen.get("granted_balance")),
-        "topped_up": money(chosen.get("topped_up_balance")),
-    }
-
-def merge_uid_alias_data(conn, alias_map):
-    """把别名 uid 的档案/记忆/消息/关系/称呼并进主 uid（一次性、幂等）。
-
-    返回统计 dict，调用方负责记 kv 标记，避免每次启动重复跑。
-    """
-    report = {"profiles": 0, "memories": 0, "messages": 0, "proactive_log": 0,
-              "relations": 0, "kv": 0}
-    if not isinstance(alias_map, dict) or not alias_map:
-        return report
-    cur = conn.cursor()
-
-    def table_columns(name):
-        try:
-            return [row[1] for row in cur.execute("PRAGMA table_info(%s)" % name)]
-        except Exception:
-            return []
-
-    profile_cols = table_columns("profiles")
-    if not profile_cols:
-        return report
-
-    def to_num(value, default=0.0):
-        try:
-            return float(value or 0)
-        except (TypeError, ValueError):
-            return default
-
-    for alias_uid, canon_uid in list(alias_map.items()):
-        alias_uid = str(alias_uid or "")
-        canon_uid = str(canon_uid or "")
-        if not alias_uid or not canon_uid or alias_uid == canon_uid:
-            continue
-        cur.execute("SELECT * FROM profiles WHERE uid=?", (alias_uid,))
-        alias_raw = cur.fetchone()
-        cur.execute("SELECT * FROM profiles WHERE uid=?", (canon_uid,))
-        canon_raw = cur.fetchone()
-
-        def as_dict(row):
-            if row is None:
-                return None
-            if hasattr(row, "keys"):
-                return dict(row)
-            return {col[0]: value for col, value in zip(cur.description, row)}
-
-        alias_row = as_dict(alias_raw)
-        canon_row = as_dict(canon_raw)
-        if alias_row is not None and canon_row is None:
-            # 只有别名档案：直接改主键，历史原样保留
-            cur.execute("UPDATE profiles SET uid=? WHERE uid=?", (canon_uid, alias_uid))
-            report["profiles"] += 1
-        elif alias_row is not None and canon_row is not None:
-            a = alias_row
-            b = canon_row
-            merged = dict(b)
-            merged["uid"] = canon_uid
-            for key in ("name", "birthday", "alias", "notes", "platform"):
-                if key not in profile_cols:
-                    continue
-                if key in ("alias", "notes"):
-                    parts = []
-                    for value in (b.get(key), a.get(key)):
-                        text = str(value or "").strip()
-                        if text and text not in parts:
-                            parts.append(text)
-                    merged[key] = " | ".join(parts)
-                else:
-                    merged[key] = b.get(key) or a.get(key) or ""
-            if "relation" in profile_cols:
-                canon_rel = str(b.get("relation") or "普通")
-                alias_rel = str(a.get("relation") or "普通")
-                merged["relation"] = canon_rel if canon_rel != "普通" else alias_rel
-            for key in ("affection", "msg_count", "proactive_count", "is_admin"):
-                if key in profile_cols:
-                    merged[key] = max(int(to_num(b.get(key))), int(to_num(a.get(key))))
-            for key in ("last_seen", "last_proactive", "relation_at"):
-                if key in profile_cols:
-                    merged[key] = max(to_num(b.get(key)), to_num(a.get(key)))
-            if "first_seen" in profile_cols:
-                values = [v for v in (to_num(b.get("first_seen")), to_num(a.get("first_seen"))) if v > 0]
-                merged["first_seen"] = min(values) if values else None
-            if "private_umo" in profile_cols:
-                merged["private_umo"] = b.get("private_umo") or a.get("private_umo") or ""
-            if "last_group" in profile_cols:
-                merged["last_group"] = b.get("last_group") or a.get("last_group") or ""
-            if "proactive_day" in profile_cols:
-                merged["proactive_day"] = b.get("proactive_day") or a.get("proactive_day") or ""
-            cols = [c for c in profile_cols if c in merged]
-            cur.execute("DELETE FROM profiles WHERE uid=?", (alias_uid,))
-            cur.execute(
-                "INSERT OR REPLACE INTO profiles(%s) VALUES(%s)"
-                % (",".join(cols), ",".join("?" * len(cols))),
-                [merged.get(c) for c in cols],
-            )
-            report["profiles"] += 1
-
-        # 消息：改归属 + 只对"别名带来的"那几条去重
-        try:
-            alias_msgs = [tuple(r) for r in cur.execute(
-                "SELECT umo, role, content, created_at FROM messages WHERE uid=?", (alias_uid,))]
-            cur.execute("UPDATE messages SET uid=? WHERE uid=?", (canon_uid, alias_uid))
-            report["messages"] += cur.rowcount or 0
-            for umo, role, content, created in alias_msgs:
-                cur.execute(
-                    "DELETE FROM messages WHERE umo=? AND uid=? AND role=? AND content=? AND created_at=? "
-                    "AND rowid NOT IN (SELECT MIN(rowid) FROM messages WHERE umo=? AND uid=? AND role=? AND content=? AND created_at=?)",
-                    (umo, canon_uid, role, content, created, umo, canon_uid, role, content, created),
-                )
-        except Exception:
-            pass
-
-        # 主动记录
-        try:
-            alias_pro = [tuple(r) for r in cur.execute(
-                "SELECT kind, content, created FROM proactive_log WHERE uid=?", (alias_uid,))]
-            cur.execute("UPDATE proactive_log SET uid=? WHERE uid=?", (canon_uid, alias_uid))
-            report["proactive_log"] += cur.rowcount or 0
-            for kind, content, created in alias_pro:
-                cur.execute(
-                    "DELETE FROM proactive_log WHERE uid=? AND kind=? AND content=? AND created=? "
-                    "AND rowid NOT IN (SELECT MIN(rowid) FROM proactive_log WHERE uid=? AND kind=? AND content=? AND created=?)",
-                    (canon_uid, kind, content, created, canon_uid, kind, content, created),
-                )
-        except Exception:
-            pass
-
-        # 关系网
-        try:
-            cur.execute("UPDATE OR IGNORE relation_network SET a_uid=? WHERE a_uid=?", (canon_uid, alias_uid))
-            cur.execute("UPDATE OR IGNORE relation_network SET b_uid=? WHERE b_uid=?", (canon_uid, alias_uid))
-            # OR IGNORE 遇到已存在的同一对关系会跳过，残留的别名行要显式删掉
-            cur.execute("DELETE FROM relation_network WHERE a_uid=? OR b_uid=?", (alias_uid, alias_uid))
-            cur.execute("DELETE FROM relation_network WHERE a_uid=b_uid")
-            cur.execute(
-                "DELETE FROM relation_network WHERE rowid NOT IN "
-                "(SELECT MIN(rowid) FROM relation_network GROUP BY a_uid, b_uid)"
-            )
-            report["relations"] += 1
-        except Exception:
-            pass
-
-        # kv：通道记录要合并成一份，其余带别名的键改名
-        try:
-            old_key = "channels:%s" % alias_uid
-            new_key = "channels:%s" % canon_uid
-            old_ch = cur.execute("SELECT value FROM kv WHERE key=?", (old_key,)).fetchone()
-            new_ch = cur.execute("SELECT value FROM kv WHERE key=?", (new_key,)).fetchone()
-
-            def load(raw):
-                try:
-                    return json.loads(raw[0] or "{}") if raw else {}
-                except Exception:
-                    return {}
-
-            merged_ch = load(new_ch) if isinstance(load(new_ch), dict) else {}
-            alias_ch = load(old_ch) if isinstance(load(old_ch), dict) else {}
-            for platform, value in alias_ch.items():
-                if not isinstance(value, dict):
-                    continue
-                current = merged_ch.get(platform)
-                if not isinstance(current, dict) or to_num(value.get("ts")) > to_num(current.get("ts")):
-                    merged_ch[platform] = value
-            if merged_ch:
-                cur.execute("UPDATE OR IGNORE kv SET key=? WHERE key=?", (new_key, old_key))
-                cur.execute("DELETE FROM kv WHERE key=?", (old_key,))
-                cur.execute("INSERT OR REPLACE INTO kv(key, value, updated) VALUES(?,?,?)",
-                            (new_key, json.dumps(merged_ch, ensure_ascii=False), time.time()))
-                report["kv"] += 1
-            else:
-                cur.execute("DELETE FROM kv WHERE key=?", (old_key,))
-        except Exception:
-            pass
-        try:
-            # 用 Python 侧的包含判断，避免 LIKE 里 '_' 被当成通配符误伤别的键
-            for row in list(cur.execute("SELECT key FROM kv")):
-                key = str(row[0] or "")
-                if alias_uid not in key:
-                    continue
-                new = key.replace(alias_uid, canon_uid)
-                if new == key:
-                    continue
-                cur.execute("UPDATE OR IGNORE kv SET key=? WHERE key=?", (new, key))
-                cur.execute("DELETE FROM kv WHERE key=?", (key,))
-                report["kv"] += 1
-        except Exception:
-            pass
-
-    try:
-        conn.commit()
-    except Exception:
-        pass
-    return report
-
-
 
 class AmoDB:
     def __init__(self, plugin_dir):
         try:
             from astrbot.core.utils.astrbot_path import get_astrbot_data_path
             data_dir = os.path.join(get_astrbot_data_path(), "plugin_data", PLUGIN_NAME)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.AmoDB.__init__", _amo_exc)
             data_dir = os.path.join(plugin_dir, "data")
         try:
             os.makedirs(data_dir, exist_ok=True)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.AmoDB.__init__", _amo_exc)
             data_dir = plugin_dir
         self.path = os.path.join(data_dir, "amo_forever.db")
         # 4.0.0 起插件标识为 Astrbot_Amo_forever。
@@ -1745,8 +323,8 @@ class AmoDB:
                         if os.path.exists(stale):
                             try:
                                 os.remove(stale)
-                            except Exception:
-                                pass
+                            except Exception as _amo_exc:
+                                _note_swallowed("main.AmoDB.__init__", _amo_exc)
                     _shutil.copy2(legacy_path, self.path)
                     for suffix in ("-wal", "-shm"):
                         source = legacy_path + suffix
@@ -1776,8 +354,8 @@ class AmoDB:
         self._conn.row_factory = sqlite3.Row
         try:
             self._conn.execute("PRAGMA journal_mode=WAL")
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.AmoDB._open_unlocked", _amo_exc)
 
     @property
     def conn(self):
@@ -1878,8 +456,8 @@ class AmoDB:
                     # 收消息刷新 last_seen 不算，否则面板改完聊一句就被本地旧值覆盖。
                     self.conn.execute("ALTER TABLE profiles ADD COLUMN profile_updated_at REAL DEFAULT 0")
                     self.conn.commit()
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.AmoDB.init", _amo_exc)
 
     def _migrate_legacy(self):
         try:
@@ -1906,12 +484,12 @@ class AmoDB:
                 return
             try:
                 self._conn.commit()
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.AmoDB.close", _amo_exc)
             try:
                 self._conn.close()
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.AmoDB.close", _amo_exc)
             self._conn = None
 
     # ---------- KV ----------
@@ -1922,7 +500,8 @@ class AmoDB:
             return default
         try:
             return json.loads(row["value"])
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.AmoDB.kv_get", _amo_exc)
             return default
 
     def kv_set(self, key, value):
@@ -2402,7 +981,8 @@ class AmoDB:
             for row in rows:
                 try:
                     items = json.loads(row["items"])
-                except Exception:
+                except Exception as _amo_exc:
+                    _note_swallowed("main.AmoDB.fade_schedules", _amo_exc)
                     continue
                 if not isinstance(items, list):
                     continue
@@ -2428,7 +1008,8 @@ class AmoDB:
             return None
         try:
             return json.loads(row["items"])
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.AmoDB.get_schedule", _amo_exc)
             return None
 
     def get_diary(self, day, hour):
@@ -2495,8 +1076,8 @@ class HumanState:
                 date.fromisoformat(config_start)
                 stored = config_start
                 self.db.kv_set("period_config_seen", config_start)
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanState.__init__", _amo_exc)
         self.period_start = stored or (_now().date() - timedelta(days=10)).isoformat()
         self.health = self.db.kv_get("health", {}) or {
             "status": "健康", "since": now_ts(), "until": 0, "note": ""
@@ -2599,7 +1180,8 @@ class HumanState:
             }
         try:
             start = date.fromisoformat(str(self.period_start))
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanState.period_info", _amo_exc)
             start = _now().date() - timedelta(days=10)
             self.period_start = start.isoformat()
         cycle_days = max(10, self.p.cfg_int("period_cycle_days", 28))
@@ -2650,7 +1232,8 @@ class HumanState:
     def set_period_start(self, value):
         try:
             parsed = date.fromisoformat(str(value))
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanState.set_period_start", _amo_exc)
             return False
         self.period_start = parsed.isoformat()
         self.db.kv_set("period_start", self.period_start)
@@ -2842,7 +1425,8 @@ class HumanState:
         try:
             try:
                 from .amo_city_index import city_location
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanState._location_of", _amo_exc)
                 from amo_city_index import city_location
             return city_location(city)
         except Exception as exc:
@@ -2956,12 +1540,12 @@ class HumanState:
     async def refresh_weather(self, force=False):
         try:
             self.p._reload_config_if_changed()
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanState.refresh_weather", _amo_exc)
         try:
-            self._sync_weather_city_config()
-        except Exception:
-            pass
+            self.p._sync_weather_city_config()
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanState.refresh_weather", _amo_exc)
         current = self.weather or {}
         key = self.p.cfg_str("hefeng_key", "")
         city = (
@@ -3264,7 +1848,8 @@ class HumanState:
         try:
             if self.p.llm is not None:
                 persona = await self.p.llm.persona(umo)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanState.ensure_schedule", _amo_exc)
             persona = ""
         if self.engine is not None:
             try:
@@ -3274,8 +1859,8 @@ class HumanState:
         weather = await self.refresh_weather()
         try:
             self.roll_health()
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanState.ensure_schedule", _amo_exc)
         period = self.period_info()
         health = self.health_info()
         context = None
@@ -3337,8 +1922,8 @@ class HumanState:
         if force:
             try:
                 self.db.clear_diaries(today)
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanState.ensure_schedule", _amo_exc)
         cutoff = (_now().date() - timedelta(days=14)).isoformat()
         for day in list(self.schedule.keys()):
             if day < cutoff:
@@ -3412,8 +1997,8 @@ class HumanState:
                         if hit:
                             try:
                                 await self.p._switch_weather_city(hit)
-                            except Exception:
-                                pass
+                            except Exception as _amo_exc:
+                                _note_swallowed("main.HumanState.ensure_schedule", _amo_exc)
                 elif today > ret_day:
                     self.db.kv_set("wander_trip", {})
                     his = str(self.db.kv_get("his_city", "") or "").strip() or _CITY_DEFAULT
@@ -3421,8 +2006,8 @@ class HumanState:
                     if hit:
                         try:
                             await self.p._switch_weather_city(hit)
-                        except Exception:
-                            pass
+                        except Exception as _amo_exc:
+                            _note_swallowed("main.HumanState.ensure_schedule", _amo_exc)
                     self.apply_travel_overlay(his)
                     try:
                         rows = self.db.list_profiles(limit=1) or []
@@ -3450,8 +2035,8 @@ class HumanState:
                 return
             log.append({"day": day, "hour": "09:00", "city": city, "solo": True})
             self.db.kv_set("travel_log", log[-10:])
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanState._log_solo_day", _amo_exc)
 
     def apply_follow_start(self, city, start_hour=9, spots=None, keep_past=True):
         """跟去他那边的出发日：起床 → 出门坐车约 2 小时 → 到达 → 旅游。"""
@@ -3471,7 +2056,8 @@ class HumanState:
             for item in existing:
                 try:
                     hour = int(str(item.get("start") or "0")[:2])
-                except Exception:
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanState.apply_follow_start", _amo_exc)
                     hour = 0
                 if hour < start:
                     keep.append(item)
@@ -3495,15 +2081,15 @@ class HumanState:
                 ctx["workplace"] = "（在去" + name + "的路上）"
                 self.schedule_ctx[today] = ctx
                 self.db.kv_set("schedule_ctx", self.schedule_ctx)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanState.apply_follow_start", _amo_exc)
         try:
             if keep_past:
                 self.db.clear_diaries_from(today, "%02d:00" % start)
             else:
                 self.db.clear_diaries(today)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanState.apply_follow_start", _amo_exc)
         logger.info("[amo] 出发日日程：%s 点坐车去 %s" % (start, name))
         return True
 
@@ -3521,8 +2107,8 @@ class HumanState:
                 return
             log.append({"day": day, "hour": "09:00", "city": city})
             self.db.kv_set("travel_log", log[-10:])
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanState._log_follow_day", _amo_exc)
 
     def apply_return_overlay(self, city, until_hour=12):
         """旅游最后一天：0 点到 until_hour 在旅游城市，之后回家。"""
@@ -3537,7 +2123,8 @@ class HumanState:
         spots = []
         try:
             spots = _city_pick_spots(self.p.scenic_spots(), name, today)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanState.apply_return_overlay", _amo_exc)
             spots = []
         his = str(self.db.kv_get("his_city", "") or "").strip() or _CITY_DEFAULT
         items = _city_travel_events(name, 0, spots=spots, until_hour=until)
@@ -3549,8 +2136,8 @@ class HumanState:
         self.db.kv_set("schedule", self.schedule)
         try:
             self.db.clear_diaries(today)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanState.apply_return_overlay", _amo_exc)
         logger.info("[amo] 旅游最后一天：%s 点前在 %s，之后回家" % (until, name))
         return True
 
@@ -3578,7 +2165,8 @@ class HumanState:
         for item in existing:
             try:
                 hour = int(str(item.get("start") or "0")[:2])
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanState.apply_travel_overlay", _amo_exc)
                 hour = 0
             if hour < from_hour:
                 keep.append(item)
@@ -3612,12 +2200,12 @@ class HumanState:
                         ctx["scenic"] = spots[0]
                 self.schedule_ctx[today] = ctx
                 self.db.kv_set("schedule_ctx", self.schedule_ctx)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanState.apply_travel_overlay", _amo_exc)
         try:
             self.db.clear_diaries_from(today, "%02d:00" % from_hour)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanState.apply_travel_overlay", _amo_exc)
         logger.info("[amo] 出行日程已写入：%s 起在 %s%s" % (
             "%02d:00" % from_hour, name, "（回家）" if home else "",
         ))
@@ -3633,7 +2221,8 @@ class HumanState:
     def _minimal_context(self, day):
         try:
             meta = day_meta(day)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanState._minimal_context", _amo_exc)
             meta = day_meta()
         profile = getattr(self, "schedule_profile", {}) or {}
         city = (
@@ -3702,7 +2291,8 @@ class HumanState:
         if prev_item is not None:
             try:
                 prev_diary = self.db.get_diary(day, str(prev_item.get("start") or ""))
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanState.expand_hour", _amo_exc)
                 prev_diary = ""
         result = {"diary": "", "mood": item.get("mood") or "平静",
                   "place": item.get("place") or "", "activity": item.get("activity") or ""}
@@ -3741,7 +2331,8 @@ class HumanState:
                 try:
                     clean[mood_key] = float(delta)
                     applied = True
-                except Exception:
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanState.apply_schedule_events", _amo_exc)
                     continue
         if not applied:
             # 日常活动也要影响真实心情：上班会累、逛街会开心、睡觉回血。
@@ -3749,7 +2340,8 @@ class HumanState:
             # 回落，所以乘一个增益（schedule_mood_gain，默认 3）才看得出来。
             try:
                 gain = max(0.0, self.p.cfg_float("schedule_mood_gain", 3.0))
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanState.apply_schedule_events", _amo_exc)
                 gain = 3.0
             category = str(item.get("category") or "")
             for mood_key, delta in (schedule_category_mood().get(category) or {}).items():
@@ -3757,7 +2349,8 @@ class HumanState:
                     continue
                 try:
                     clean[mood_key] = float(delta) * gain
-                except Exception:
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanState.apply_schedule_events", _amo_exc)
                     continue
             applied = bool(clean)
         if clean:
@@ -3932,39 +2525,6 @@ class HumanState:
 # LLM：人格、对话、润色、世界观、日程、判断
 # ---------------------------------------------------------------------------
 
-def extract_persona_name(persona):
-    """从 AstrBot Personality 的 name / system prompt 中取角色名。"""
-    if not persona:
-        return ""
-    name = ""
-    prompt = ""
-    try:
-        name = str(persona.get("name") or "").strip()
-        prompt = str(persona.get("prompt") or "")
-    except Exception:
-        name = str(getattr(persona, "name", "") or "").strip()
-        prompt = str(getattr(persona, "prompt", "") or "")
-    generic = {"default", "assistant", "系统默认", "默认", "bot", "ai"}
-    if name and name.lower() not in generic and not re.fullmatch(r"[0-9a-fA-F-]{8,}", name):
-        return name[:30]
-    patterns = (
-        r"你的名字(?:是|叫|为)\s*[「“\"']?([\u4e00-\u9fa5A-Za-z0-9_·]{1,16})",
-        r"你叫(?:做)?\s*[「“\"']?([\u4e00-\u9fa5A-Za-z0-9_·]{1,16})",
-        r"你名叫\s*[「“\"']?([\u4e00-\u9fa5A-Za-z0-9_·]{1,16})",
-        r"名为\s*[「“\"']?([\u4e00-\u9fa5A-Za-z0-9_·]{1,16})",
-        r"你是\s*[「“\"']?([\u4e00-\u9fa5A-Za-z0-9_·]{1,16})",
-    )
-    blocked = {"一个", "一名", "一位", "个人", "人", "你", "我", "他", "她", "这个", "那个"}
-    for pattern in patterns:
-        for match in re.finditer(pattern, prompt):
-            candidate = str(match.group(1) or "").strip("「」“”\"' ")
-            if (
-                candidate and candidate not in blocked
-                and not candidate.startswith(("一个", "一名", "一位", "个", "人"))
-            ):
-                return candidate[:30]
-    return ""
-
 
 class LLMService:
     def __init__(self, plugin):
@@ -3994,8 +2554,8 @@ class LLMService:
                 personas = cfg.get("persona", []) if cfg else []
                 if isinstance(personas, list) and personas:
                     prompt = personas[0].get("prompt", "") or ""
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.LLMService.persona", _amo_exc)
         if not prompt:
             prompt = "你是一个生活在中国城市的普通女孩，有工作、有情绪、有自己的生活，说话自然口语化。"
         extra = self.p.cfg_str("persona_extra", "")
@@ -4005,8 +2565,8 @@ class LLMService:
             name = await self.p._persona_name_for(umo)
             if name and name not in prompt[:240]:
                 prompt = "你的名字是" + name + "。\n" + prompt
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.LLMService.persona", _amo_exc)
         self._persona_cache[key] = (now_ts(), prompt)
         return prompt
 
@@ -4155,7 +2715,8 @@ class LLMService:
         )
         try:
             rows = self.p._recent(umo, 12)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.LLMService.gen_proactive", _amo_exc)
             rows = []
         analysis = _pg_analyze_rows(rows, now=now_ts()) if _pg_analyze_rows else {
             "context_text": "",
@@ -4193,13 +2754,15 @@ class LLMService:
             uid = str(profile.get("uid") or "")
             if uid:
                 _, memory_text = await self.p._recall(uid, "", None)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.LLMService.gen_proactive", _amo_exc)
             memory_text = ""
         if memory_text:
             system = system + "\n【关于他的记忆】\n" + memory_text
         try:
             relation_network = self.p._relation_network_text(str(profile.get("uid") or ""))
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.LLMService.gen_proactive", _amo_exc)
             relation_network = ""
         if relation_network:
             system = system + "\n【关系网】\n" + relation_network
@@ -4216,8 +2779,8 @@ class LLMService:
                     + ("，今天去了" + spot if spot else "")
                     + "。主动跟他分享今天看到的、吃到的、天气；别报公司/上班，也别编景点。"
                 )
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.LLMService.gen_proactive", _amo_exc)
 
         def build_task(duplicate_hint=""):
             if not _pg_compose_task:
@@ -4226,11 +2789,13 @@ class LLMService:
             if kind == "share":
                 try:
                     event_text = self.p.state.interesting_event()
-                except Exception:
+                except Exception as _amo_exc:
+                    _note_swallowed("main.LLMService.gen_proactive.build_task", _amo_exc)
                     event_text = ""
             try:
                 dialect_enabled = bool(self.p._dialect_active())
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.LLMService.gen_proactive.build_task", _amo_exc)
                 dialect_enabled = False
             return _pg_compose_task(
                 kind=kind,
@@ -4560,8 +3125,8 @@ class ReplyGate:
         try:
             if profile.get("uid") and self.p._depressed_active(str(profile.get("uid"))):
                 probability *= 0.35
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.ReplyGate.private_probability", _amo_exc)
         relation = profile.get("relation", "普通")
         if relation == "相恋":
             probability = max(probability, 0.90)
@@ -4598,7 +3163,7 @@ WRITE_ROUTES = frozenset({
 })
 
 
-class HumanCorePlugin(Star):
+class HumanCorePlugin(ApiMixin, ScheduleMixin, ProactiveMixin, LlmMixin, Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
         self.config = config or {}
@@ -4701,7 +3266,8 @@ class HumanCorePlugin(Star):
     def cfg(self, key, default=None):
         try:
             value = self.config.get(key, default)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin.cfg", _amo_exc)
             value = default
         return default if value is None else value
 
@@ -4714,19 +3280,22 @@ class HumanCorePlugin(Star):
     def cfg_int(self, key, default=0):
         try:
             return int(float(self.cfg(key, default)))
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin.cfg_int", _amo_exc)
             return default
 
     def cfg_float(self, key, default=0.0):
         try:
             return float(self.cfg(key, default))
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin.cfg_float", _amo_exc)
             return default
 
     def cfg_str(self, key, default=""):
         try:
             return str(self.cfg(key, default))
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin.cfg_str", _amo_exc)
             return default
 
     def _core_decor_flags(self, umo=""):
@@ -4739,59 +3308,26 @@ class HumanCorePlugin(Star):
         """
         try:
             config = self.context.get_config() or {}
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._core_decor_flags", _amo_exc)
             config = {}
         try:
             settings = config.get("platform_settings") or {}
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._core_decor_flags", _amo_exc)
             settings = {}
         return {
             "quote": bool(settings.get("reply_with_quote", False)),
             "mention": bool(settings.get("reply_with_mention", False)),
         }
 
-    async def _persona_name_for(self, umo=""):
-        """读取当前会话的人格名；读不到时返回空字符串。"""
-        if not self.cfg_bool("use_persona_name", True):
-            return ""
-        key = str(umo or "default")
-        cached = self._persona_name_cache.get(key)
-        if cached and now_ts() - cached[0] < 300:
-            return cached[1]
-        manager = getattr(self.context, "persona_manager", None)
-        persona = None
-        if manager is not None:
-            try:
-                conversation_persona_id = None
-                cm = getattr(self.context, "conversation_manager", None)
-                if cm is not None:
-                    cid = await cm.get_curr_conversation_id(key)
-                    if cid:
-                        conv = await cm.get_conversation(key, cid)
-                        conversation_persona_id = getattr(conv, "persona_id", None)
-                platform_name = key.split(":", 1)[0] if ":" in key else ""
-                _, persona, _, _ = await manager.resolve_selected_persona(
-                    umo=key,
-                    conversation_persona_id=conversation_persona_id,
-                    platform_name=platform_name,
-                    provider_settings={},
-                )
-            except Exception as exc:
-                logger.debug("[amo] 解析当前人格失败: %s" % exc)
-            if persona is None:
-                try:
-                    persona = await manager.get_default_persona_v3(key or None)
-                except Exception as exc:
-                    logger.debug("[amo] 读取默认人格失败: %s" % exc)
-        name = extract_persona_name(persona)
-        self._persona_name_cache[key] = (now_ts(), name)
-        return name
 
     def _dialect_rows(self):
         region = self._dialect_region()
         try:
             rows = [row for row in self.db.list_dialects() if region in str(row.get("region") or "")]
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._dialect_rows", _amo_exc)
             rows = []
         if rows:
             return rows
@@ -4860,7 +3396,8 @@ class HumanCorePlugin(Star):
                 if not provider_id:
                     try:
                         provider_id = str(providers[0].meta().id or "")
-                    except Exception:
+                    except Exception as _amo_exc:
+                        _note_swallowed("main.HumanCorePlugin._ensure_scenic_kb", _amo_exc)
                         provider_id = ""
                 if not provider_id:
                     logger.warning("[amo] Embedding 供应商没有有效 id，景区知识库未创建")
@@ -4880,8 +3417,8 @@ class HumanCorePlugin(Star):
                         doc_id = getattr(doc, "doc_id", "") or getattr(doc, "id", "")
                         if doc_id:
                             await kb.delete_document(doc_id)
-                except Exception:
-                    pass
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._ensure_scenic_kb", _amo_exc)
                 try:
                     await kb.upload_document(
                         "amo_scenic_spots.txt",
@@ -4927,8 +3464,8 @@ class HumanCorePlugin(Star):
         try:
             world = getattr(self.state, "worldview", None) or {}
             city = str(world.get("city") or "")
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._dialect_style", _amo_exc)
         if not city:
             try:
                 city = str(
@@ -4936,8 +3473,8 @@ class HumanCorePlugin(Star):
                     or self.cfg_str("weather_city", "")
                     or ""
                 )
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._dialect_style", _amo_exc)
         return dialect_for_city(city)
 
     def _dialect_kb_name(self):
@@ -4951,11 +3488,12 @@ class HumanCorePlugin(Star):
             value = str(provider.provider_config.get("id", "") or "")
             if value:
                 return value
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._embedding_provider_id", _amo_exc)
         try:
             return str(provider.meta().id or "")
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._embedding_provider_id", _amo_exc)
             return ""
 
     async def _dialect_kb_context(self, query):
@@ -4998,7 +3536,8 @@ class HumanCorePlugin(Star):
             if callable(manager) and not hasattr(manager, "create_kb"):
                 try:
                     manager = manager()
-                except Exception:
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._ensure_dialect_kb", _amo_exc)
                     manager = None
             if manager is None or not hasattr(manager, "create_kb"):
                 logger.warning("[amo] kb_manager 不支持 create_kb，无法创建知识库")
@@ -5011,7 +3550,8 @@ class HumanCorePlugin(Star):
                 if callable(getter):
                     try:
                         providers = list(getter() or [])
-                    except Exception:
+                    except Exception as _amo_exc:
+                        _note_swallowed("main.HumanCorePlugin._ensure_dialect_kb", _amo_exc)
                         providers = []
                 if not providers:
                     pm = getattr(self.context, "provider_manager", None)
@@ -5041,7 +3581,8 @@ class HumanCorePlugin(Star):
             rows = []
             try:
                 rows = self._dialect_rows()
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._ensure_dialect_kb", _amo_exc)
                 rows = []
             lines = [
                 "%s（%s）：普通话“%s”，例：%s" % (
@@ -5075,26 +3616,6 @@ class HumanCorePlugin(Star):
             logger.warning("[amo] 方言知识库创建失败: %s" % exc, exc_info=True)
             return None
 
-    async def _sync_persona_name(self, event_or_umo):
-        umo = getattr(event_or_umo, "unified_msg_origin", event_or_umo)
-        try:
-            name = await self._persona_name_for(umo)
-        except Exception as exc:
-            logger.debug("[amo] 同步人格名失败: %s" % exc)
-            return
-        if not name:
-            return
-        changed = name != self.persona_name
-        self.persona_name = name
-        self.bot_name = name
-        if self.heartflow is not None:
-            self.heartflow.set_identity(self.bot_name, self.bot_aliases)
-        if changed and self.worldview and self.worldview.get("name") != name:
-            self.worldview["name"] = name
-            try:
-                self.db.kv_set("worldview", self.worldview)
-            except Exception:
-                pass
 
     def _migrate_legacy_config(self):
         """把旧版 amo_forever_config.json 合并到 Astrbot_Amo_forever_config.json。"""
@@ -5121,7 +3642,8 @@ class HumanCorePlugin(Star):
             try:
                 with open(os.path.join(self.plugin_dir, "_conf_schema.json"), encoding="utf-8-sig") as stream:
                     schema = json.load(stream) or {}
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._migrate_legacy_config", _amo_exc)
                 schema = {}
             merged = {}
             for key, value in old.items():
@@ -5157,7 +3679,8 @@ class HumanCorePlugin(Star):
             return
         try:
             mtime = os.path.getmtime(path)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._reload_config_if_changed", _amo_exc)
             return
         if mtime <= self._config_mtime:
             return
@@ -5197,12 +3720,12 @@ class HumanCorePlugin(Star):
                 try:
                     date.fromisoformat(start)
                     self.state.set_period_start(start)
-                except Exception:
-                    pass
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._reload_config_if_changed", _amo_exc)
             try:
                 self._sync_weather_city_config()
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._reload_config_if_changed", _amo_exc)
             logger.debug("[amo] 检测到插件配置变更，已重新加载")
         except Exception as exc:
             logger.debug("[amo] 重新加载插件配置失败: %s" % exc)
@@ -5210,13 +3733,15 @@ class HumanCorePlugin(Star):
     def _hf_config(self):
         try:
             return {key[3:]: value for key, value in self.config.items() if key.startswith("hf_")}
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._hf_config", _amo_exc)
             return {}
 
     def _seg_config(self):
         try:
             return {key[4:]: value for key, value in self.config.items() if key.startswith("seg_")}
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._seg_config", _amo_exc)
             return {}
 
     def _command_prefixes(self):
@@ -5229,8 +3754,8 @@ class HumanCorePlugin(Star):
             if isinstance(raw, str):
                 raw = [raw]
             prefixes = [str(item) for item in (raw or []) if item]
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._command_prefixes", _amo_exc)
         self._prefix_cache = prefixes
         return prefixes
 
@@ -5261,8 +3786,8 @@ class HumanCorePlugin(Star):
         except RuntimeError:
             try:
                 coro.close()
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._spawn", _amo_exc)
             return None
         self._tasks.add(task)
 
@@ -5272,7 +3797,8 @@ class HumanCorePlugin(Star):
                 return
             try:
                 exc = done.exception()
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._spawn._report", _amo_exc)
                 exc = None
             if exc is not None:
                 logger.warning("[amo] 后台任务异常: %s", exc, exc_info=exc)
@@ -5309,47 +3835,6 @@ class HumanCorePlugin(Star):
             self._loop_task = self._spawn(self._background_loop())
             self._spawn(self._warm_up())
 
-    def _migrate_schedule_defaults(self):
-        """5.1.1：位置/资产改为“人格优先、缺失随机”，清掉 5.1.0 自动写入的固定默认值。"""
-        try:
-            if self.db.kv_get("schedule_defaults_511", False):
-                return
-            auto_filled = bool(self.db.kv_get("schedule_defaults_510", False))
-            changed = False
-            cleared_city = False
-            old_defaults = {
-                "schedule_city": "贵阳",
-                "schedule_home": "观山湖区·小窝",
-                "schedule_workplace": "公司（贵阳·观山湖区）",
-                "schedule_car": "黑色奔驰C级",
-            }
-            for key, value in old_defaults.items():
-                if self.cfg_str(key, "").strip() == value:
-                    self.config[key] = ""
-                    changed = True
-                    if key == "schedule_city":
-                        cleared_city = True
-            weather_city = self.cfg_str("weather_city", "").strip()
-            if weather_city == "杭州" or ((cleared_city or auto_filled) and weather_city == "贵阳"):
-                self.config["weather_city"] = ""
-                changed = True
-            if changed and hasattr(self.config, "save_config"):
-                self.config.save_config()
-            self.db.kv_set("schedule_defaults_511", True)
-        except Exception as exc:
-            logger.debug("[amo] 日程默认配置迁移失败: %s" % exc)
-
-    def _migrate_diary_continuity(self):
-        """5.2.1：旧版动态日记是逐小时独立生成的，可能互相矛盾；升级时清一次缓存。"""
-        try:
-            if self.db.kv_get("diary_continuity_521", False):
-                return
-            self.db.conn.execute("DELETE FROM schedule_diary")
-            self.db.conn.commit()
-            self.db.kv_set("diary_continuity_521", True)
-            logger.info("[amo] 已清理旧版日程日记缓存（5.2.1 连续性修复）")
-        except Exception as exc:
-            logger.debug("[amo] 清理日记缓存失败: %s" % exc)
 
     def _migrate_scenic_kb_name(self):
         try:
@@ -5364,21 +3849,6 @@ class HumanCorePlugin(Star):
         except Exception as exc:
             logger.debug("[amo] 迁移景区知识库名称失败: %s" % exc)
 
-    def _cleanup_legacy_memory_profiles(self):
-        """4.3.2 回到原版：删除旧版本从记忆插件导入的画像，只保留本地聊天档案。"""
-        try:
-            if self.db.kv_get("legacy_memory_profiles_cleaned_432", False):
-                return
-            removed = 0
-            for row in self.db.list_profiles(limit=1000):
-                if str(row.get("platform") or "") in ("angel_memory", "memory_companion"):
-                    self.db.delete_profile(str(row.get("uid") or ""))
-                    removed += 1
-            self.db.kv_set("legacy_memory_profiles_cleaned_432", True)
-            if removed:
-                logger.info("[amo] 已移除 %d 个旧记忆插件导入画像，恢复本地画像模式" % removed)
-        except Exception as exc:
-            logger.debug("[amo] 清理旧记忆画像失败: %s" % exc)
 
     def _migrate_typing_defaults(self):
         """2.6.2 起把旧的 55ms/字默认值迁移到更真实的 400ms/字。"""
@@ -5406,22 +3876,6 @@ class HumanCorePlugin(Star):
         except Exception as exc:
             logger.debug("[amo] 迁移打字延迟失败: %s" % exc)
 
-    def _migrate_proactive_timing(self):
-        try:
-            if self.db.kv_get("proactive_timing_migrated", False):
-                return
-            changes = {}
-            if to_int(self.cfg("proactive_followup_minutes", 0), 0) == 30:
-                changes["proactive_followup_minutes"] = 5
-            if to_int(self.cfg("proactive_no_reply_minutes", 0), 0) == 120:
-                changes["proactive_no_reply_minutes"] = 30
-            for key, value in changes.items():
-                self.config[key] = value
-            if changes and hasattr(self.config, "save_config"):
-                self.config.save_config()
-            self.db.kv_set("proactive_timing_migrated", True)
-        except Exception:
-            pass
 
     def _migrate_delay_default(self):
         """2.4.7 起默认按回复字数动态延迟；旧的 fixed 配置迁移一次。"""
@@ -5440,21 +3894,6 @@ class HumanCorePlugin(Star):
         except Exception as exc:
             logger.debug("[amo] 迁移分段延迟失败: %s" % exc)
 
-    def _migrate_memory_source_default(self):
-        """旧版把 private companion 写成默认来源；2.4.4 起改成 auto，避免锁死。"""
-        try:
-            value = self.cfg_str("companion_memory_plugin_name", "").strip()
-            if value != LEGACY_MEMORY_PLUGIN:
-                return
-            if self.db.kv_get("companion_plugin_auto_migrated", False):
-                return
-            self.config["companion_memory_plugin_name"] = "auto"
-            if hasattr(self.config, "save_config"):
-                self.config.save_config()
-            self.db.kv_set("companion_plugin_auto_migrated", True)
-            logger.debug("[amo] 记忆来源已从旧默认 %s 改为 auto" % LEGACY_MEMORY_PLUGIN)
-        except Exception as exc:
-            logger.debug("[amo] 迁移记忆来源失败: %s" % exc)
 
     def _migrate_legacy_admin_default(self):
         """旧版本把 3261748099 写成了默认管理员；2.4.0 只清理一次。"""
@@ -5496,24 +3935,24 @@ class HumanCorePlugin(Star):
         if self.heartflow is not None:
             try:
                 await self.heartflow.terminate()
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin.terminate", _amo_exc)
         if self.segment_engine is not None:
             for task in list(getattr(self.segment_engine, "_tasks", set())):
                 try:
                     task.cancel()
-                except Exception:
-                    pass
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin.terminate", _amo_exc)
         for task in list(self._tasks):
             try:
                 task.cancel()
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin.terminate", _amo_exc)
         if self.state is not None:
             try:
                 self.state.save()
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin.terminate", _amo_exc)
         # 不在这里关闭数据库：AstrBot 重载插件时旧实例注册的 Web API
         # 可能仍被调用，关闭连接会导致 "Cannot operate on a closed database"。
         # 连接由进程退出时回收；AmoDB.conn 也会在需要时自动重连。
@@ -5530,7 +3969,8 @@ class HumanCorePlugin(Star):
             map_path = os.path.join(os.path.dirname(str(self.db.path)), "uid_map.json")
             stamp = os.path.getmtime(map_path) if os.path.exists(map_path) else 0
             cache_key = (text, stamp)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._uid_alias_mapping", _amo_exc)
             cache_key = None
         if getattr(self, "_uid_alias_cache_key", None) != cache_key:
             raw = {}
@@ -5574,7 +4014,8 @@ class HumanCorePlugin(Star):
         """把平台账号换算成同一个人的主 uid；关掉开关就返回原 uid。"""
         try:
             uid = str(event.get_sender_id())
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._canonical_uid", _amo_exc)
             return ""
         if not self.cfg_bool("uid_merge_enabled", True):
             return uid
@@ -5591,8 +4032,8 @@ class HumanCorePlugin(Star):
         try:
             if self.db.kv_get("uid_alias_merged_signature", "") == signature:
                 return
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._merge_alias_profiles", _amo_exc)
         try:
             report = merge_uid_alias_data(self.db.conn, mapping)
             self.db.kv_set("uid_alias_merged_signature", signature)
@@ -5607,7 +4048,8 @@ class HumanCorePlugin(Star):
             return True
         try:
             umo = str(event.unified_msg_origin or "")
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._is_admin", _amo_exc)
             umo = ""
         # 每条消息都会走这里，get_config 没必要每次读：按会话缓存 60 秒
         cache = getattr(self, "_admin_cache", None)
@@ -5624,7 +4066,8 @@ class HumanCorePlugin(Star):
             if isinstance(admins, str):
                 admins = [item.strip() for item in admins.split(",") if item.strip()]
             names = {str(item) for item in (admins or [])}
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._is_admin", _amo_exc)
             names = set()
         cache[umo] = (now, names)
         return uid in names
@@ -5726,7 +4169,8 @@ class HumanCorePlugin(Star):
         aliases = {}
         try:
             profiles = self.db.list_profiles("", 500)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._lover_aliases", _amo_exc)
             profiles = []
         for profile in profiles:
             uid = str(profile.get("uid") or "")
@@ -5742,53 +4186,6 @@ class HumanCorePlugin(Star):
                     aliases[name] = uid
         return aliases
 
-    def _detect_impersonation(self, event):
-        """群里非恋人 UID 使用/冒充恋人的名字或爱称时，5 分钟内累计降级。"""
-        group_id = str(event.get_group_id() or "")
-        if not group_id:
-            return False
-        uid = self._canonical_uid(event)
-        lovers = self._lover_aliases()
-        if not lovers or uid in set(lovers.values()) or self._is_registered_lover(uid):
-            return False
-        sender_name = str(event.get_sender_name() or "").strip()
-        text = str(event.message_str or "").strip()
-        hit = ""
-        if sender_name in lovers:
-            hit = sender_name
-        elif text in lovers:
-            hit = text
-        else:
-            for alias in lovers:
-                if re.search(r"(?:我才是|我是|叫我|叫我做|以后叫我|我才是那个)\s*" + re.escape(alias), text):
-                    hit = alias
-                    break
-        if not hit:
-            return False
-        setattr(event, "amo_impersonation", True)
-        key = "impersonate_%s_%s" % (group_id, uid)
-        now = now_ts()
-        stamps = self.db.kv_get(key, [])
-        if not isinstance(stamps, list):
-            stamps = []
-        stamps = [to_float(item, 0) for item in stamps if now - to_float(item, 0) <= 300]
-        stamps.append(now)
-        self.db.kv_set(key, stamps)
-        count = len(stamps)
-        profile = self.db.get_profile(uid) or {}
-        current = str(profile.get("relation") or "普通")
-        relation = current
-        if count >= 3 and current != "仇恨":
-            relation = "仇恨"
-        elif count == 1 and current != "仇恨":
-            relation = "抵触"
-        if relation != current:
-            self.db.update_profile(uid, relation=relation)
-            logger.info(
-                "[amo] 识别到冒充恋人称呼: %s -> %s（%s，5分钟内第%d次）"
-                % (uid, relation, hit, count)
-            )
-        return True
 
     def _learn_alias(self, event, text, uid, profile):
         """从“以后叫我XX / 叫他XX”里学习称呼，并在后续沿用。"""
@@ -5813,7 +4210,8 @@ class HumanCorePlugin(Star):
 
         try:
             messages = event.message_obj.message
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._learn_alias", _amo_exc)
             messages = []
         at_targets = [
             str(getattr(comp, "qq", ""))
@@ -5877,13 +4275,13 @@ class HumanCorePlugin(Star):
         if hub is not None:
             try:
                 hub.buffer.add(umo, uid, name, role, text)
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._ctx_remember", _amo_exc)
         try:
             if hub is not None and str(role) != "bot":
                 hub.next_turn()
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._ctx_remember", _amo_exc)
         buf = getattr(self, "_ctx_buffer", None)
         if buf is None:
             buf = {}
@@ -5911,18 +4309,21 @@ class HumanCorePlugin(Star):
         if hub is not None:
             try:
                 rows = hub.buffer.recent(umo, size)
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._recent", _amo_exc)
                 rows = []
         if not rows:
             try:
                 rows = list((getattr(self, "_ctx_buffer", {}) or {}).get(str(umo), []))
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._recent", _amo_exc)
                 rows = []
         if len(rows) >= size:
             return rows[-size:]
         try:
             local = self.db.recent_messages(umo, size)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._recent", _amo_exc)
             local = []
         if not rows:
             return local
@@ -5944,14 +4345,16 @@ class HumanCorePlugin(Star):
                 rows = await lister(self._data_bot_id(), str(umo), size) or []
             except TypeError:
                 rows = []
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._recent_by_uid", _amo_exc)
                 rows = []
             if rows:
                 return sorted(rows, key=lambda item: to_float(item.get("created_at"), 0))[-size:]
         if callable(lister):
             try:
                 rows = await lister(self._data_bot_id(), "", size, uid=uid) or []
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._recent_by_uid", _amo_exc)
                 rows = []
             if rows:
                 return sorted(rows, key=lambda item: to_float(item.get("created_at"), 0))[-size:]
@@ -5960,7 +4363,8 @@ class HumanCorePlugin(Star):
         if hub is not None:
             try:
                 merged = hub.buffer.by_uid(uid, size)
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._recent_by_uid", _amo_exc)
                 merged = []
         if not merged:
             for rows in list((getattr(self, "_ctx_buffer", {}) or {}).values()):
@@ -5969,7 +4373,8 @@ class HumanCorePlugin(Star):
             return sorted(merged, key=lambda item: to_float(item.get("created_at"), 0))[-size:]
         try:
             return self.db.messages_by_uid(uid, size)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._recent_by_uid", _amo_exc)
             return []
 
     async def _hydrate_recent(self, umo, limit=30):
@@ -5999,7 +4404,8 @@ class HumanCorePlugin(Star):
         if not rows:
             try:
                 rows = self.db.recent_messages(umo, max(1, int(limit)))
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._hydrate_recent", _amo_exc)
                 rows = []
         if not rows:
             return
@@ -6027,7 +4433,8 @@ class HumanCorePlugin(Star):
         try:
             if event.is_private_chat():
                 return True
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._is_talking_to_me", _amo_exc)
             return True
         target = str(getattr(event, "heartflow_target", "") or "")
         if target == "bot":
@@ -6037,13 +4444,13 @@ class HumanCorePlugin(Star):
         try:
             if getattr(event, "is_at_or_wake_command", False):
                 return True
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._is_talking_to_me", _amo_exc)
         try:
             if self.heartflow is not None and self.heartflow._addresses_bot(event.message_str or ""):
                 return True
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._is_talking_to_me", _amo_exc)
         return False
 
     def _group_roster(self, umo, current_uid="", limit=8):
@@ -6055,7 +4462,8 @@ class HumanCorePlugin(Star):
         seen = set()
         try:
             rows = self._recent(umo, 40)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._group_roster", _amo_exc)
             return roster
         for row in rows:
             if str(row.get("role") or "") != "user":
@@ -6067,7 +4475,8 @@ class HumanCorePlugin(Star):
             profile = {}
             try:
                 profile = self.db.get_profile(uid) or {}
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._group_roster", _amo_exc)
                 profile = {}
             name = (
                 str(profile.get("alias") or "").strip()
@@ -6110,24 +4519,13 @@ class HumanCorePlugin(Star):
             )
         return "\n".join(lines)
 
-    def _group_reply_guide(self, relation, name):
-        """按关系给一句“该怎么回”的指引。"""
-        relation = str(relation or "普通")
-        if relation == "相恋":
-            return "对" + name + "可以亲近、撒娇、用昵称，但别在群里太露骨。"
-        if relation == "熟识":
-            return "对" + name + "像老朋友一样随便聊，可以开玩笑，但不用恋人语气。"
-        if relation == "抵触":
-            return "对" + name + "有点距离感，句子短，不主动热络。"
-        if relation == "仇恨":
-            return "对" + name + "很冷淡，不接他的茬，也不解释。"
-        return "对" + name + "客气一点、像普通群友，不要叫老公/宝贝，也别装得很熟。"
 
     def _group_speaker_count(self, umo, limit=20, window=600):
         """最近一段时间内群聊里的不同发言人数。"""
         try:
             rows = self._recent(umo, limit)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._group_speaker_count", _amo_exc)
             return 0
         cutoff = now_ts() - window
         speakers = {
@@ -6148,7 +4546,8 @@ class HumanCorePlugin(Star):
         """
         try:
             threshold = self.cfg_int("quote_group_speaker_threshold", 3)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._should_quote_group", _amo_exc)
             threshold = 3
         if threshold <= 0:
             return False
@@ -6161,7 +4560,8 @@ class HumanCorePlugin(Star):
             if prob >= 1:
                 return True
             return random.random() < prob
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._should_quote_group", _amo_exc)
             return False
 
     def _quote_allowed(self, umo, group=None):
@@ -6180,7 +4580,8 @@ class HumanCorePlugin(Star):
             return False
         try:
             return bool(self._should_quote_group(umo))
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._quote_allowed", _amo_exc)
             return False
 
     def _install_qq_quote_guard(self):
@@ -6194,7 +4595,8 @@ class HumanCorePlugin(Star):
             from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
                 AiocqhttpMessageEvent,
             )
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._install_qq_quote_guard", _amo_exc)
             return
         original = getattr(AiocqhttpMessageEvent, "_amo_original_send", None)
         if original is None:
@@ -6207,8 +4609,8 @@ class HumanCorePlugin(Star):
                     message.chain = [
                         comp for comp in message.chain if not isinstance(comp, Comp.Reply)
                     ]
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._install_qq_quote_guard.send", _amo_exc)
             await original(ev, message)
 
         AiocqhttpMessageEvent.send = send
@@ -6223,25 +4625,28 @@ class HumanCorePlugin(Star):
         """
         try:
             from astrbot.core.platform.sources.lark.lark_event import LarkMessageEvent
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._install_lark_quote_guard", _amo_exc)
             return
         async def send(ev, message):
             try:
                 is_private = bool(ev.is_private_chat())
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._install_lark_quote_guard.send", _amo_exc)
                 is_private = False
             # 只认消息链里已经有的 Reply（插件按人数+概率加的那一条）；
             # 这里不能重新掷一次概率，否则「插件决定不引用」会被守卫再翻成引用。
             try:
                 has_reply = any(isinstance(comp, Comp.Reply) for comp in message.chain)
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._install_lark_quote_guard.send", _amo_exc)
                 has_reply = False
             quote = bool(has_reply and not is_private)
             if not quote:
                 try:
                     message.chain = [comp for comp in message.chain if not isinstance(comp, Comp.Reply)]
-                except Exception:
-                    pass
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._install_lark_quote_guard.send", _amo_exc)
             kwargs = lark_quote_kwargs(
                 is_private,
                 getattr(ev.message_obj, "message_id", ""),
@@ -6271,9 +4676,6 @@ class HumanCorePlugin(Star):
         LarkMessageEvent.send = send
         LarkMessageEvent._amo_quote_guard = True
         logger.info("[amo] 飞书引用守卫已安装：私聊不引用，群聊按概率")
-    @staticmethod
-    def _is_memory_companion(plugin):
-        return plugin is not None and getattr(plugin, "memory_companion", None) is not None
 
     @staticmethod
     def _memcomp_db_path(plugin):
@@ -6302,7 +4704,8 @@ class HumanCorePlugin(Star):
                     uri=True,
                     timeout=2.0,
                 )
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._memcomp_rows", _amo_exc)
                 conn = sqlite3.connect(path, timeout=2.0)
             conn.row_factory = sqlite3.Row
             return [dict(row) for row in conn.execute(sql, params).fetchall()]
@@ -6313,8 +4716,8 @@ class HumanCorePlugin(Star):
             if conn is not None:
                 try:
                     conn.close()
-                except Exception:
-                    pass
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._memcomp_rows", _amo_exc)
 
     def _memcomp_name_maps(self, plugin=None):
         """从 identities/profile/证据里建立 person_id -> 名字 的自动映射。"""
@@ -6334,7 +4737,8 @@ class HumanCorePlugin(Star):
                     by_uid[uid] = name
                 try:
                     profile = json.loads(row.get("profile") or "{}")
-                except Exception:
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._memcomp_name_maps", _amo_exc)
                     profile = {}
                 if not isinstance(profile, dict):
                     continue
@@ -6463,8 +4867,8 @@ class HumanCorePlugin(Star):
                     parsed = json.loads(row.get("profile") or "{}")
                     if isinstance(parsed, dict):
                         name = str(parsed.get("name") or parsed.get("nickname") or "").strip()
-                except Exception:
-                    pass
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._memcomp_profile_rows", _amo_exc)
             items.append({"uid": uid, "name": name, "count": 0, "source": "identities"})
         return items
 
@@ -6567,16 +4971,16 @@ class HumanCorePlugin(Star):
                 star = self._star_instance(self.context.get_registered_star(name))
                 if star is not None:
                     return star
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._data_plugin", _amo_exc)
         try:
             for meta in self.context.get_all_stars():
                 marker = (getattr(meta, "name", "") or "") + " " + (getattr(meta, "module_path", "") or "")
                 star = self._star_instance(meta)
                 if star is not None and "amo_data" in marker.lower():
                     return star
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._data_plugin", _amo_exc)
         return None
 
     def _data_mem(self):
@@ -6584,59 +4988,15 @@ class HumanCorePlugin(Star):
         return getattr(plugin, "mem", None) if plugin is not None else None
 
     # ---------- 记忆能力层（memory_hooks）：陪伴只判定，数据交给挂载插件 ----------
-    def _memory_hub(self):
-        hub = getattr(self, "_mem_hub", None)
-        if hub is not None:
-            return hub
-        if MemoryHub is None:
-            return None
-        try:
-            hub = MemoryHub(
-                self._memory_runtime(),
-                buffer_size=max(8, self.cfg_int("ctx_window", 48)),
-            )
-        except Exception as exc:
-            logger.warning("[amo] 记忆能力层初始化失败: %s" % exc)
-            return None
-        self._mem_hub = hub
-        return hub
 
-    def _memory_runtime(self):
-        star = self
-
-        class _Runtime:
-            logger = logger
-
-            @staticmethod
-            def cfg(key, default=None):
-                try:
-                    data = star.config
-                    if isinstance(data, dict):
-                        return data.get(key, default)
-                except Exception:
-                    pass
-                return default
-
-            @staticmethod
-            def bot_id():
-                return star._data_bot_id()
-
-            @staticmethod
-            def get_plugin(names):
-                return star._plugin_by_names(names)
-
-            @staticmethod
-            def normalize_memories(rows):
-                return star._normalize_memories(rows)
-
-        return _Runtime()
 
     def _plugin_by_names(self, names):
         """按插件名找实例；不缓存，reload 之后拿到的是新实例。"""
         for name in names:
             try:
                 meta = self.context.get_registered_star(name)
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._plugin_by_names", _amo_exc)
                 meta = None
             star = self._star_instance(meta)
             if star is not None:
@@ -6650,8 +5010,8 @@ class HumanCorePlugin(Star):
                     star = self._star_instance(meta)
                     if star is not None:
                         return star
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._plugin_by_names", _amo_exc)
         return None
 
     def _normalize_memories(self, rows):
@@ -6737,12 +5097,14 @@ class HumanCorePlugin(Star):
         name = ""
         try:
             name = str(event.get_platform_name() or "")
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._platform_of", _amo_exc)
             name = ""
         if not name:
             try:
                 name = str(event.unified_msg_origin or "").split(":", 1)[0]
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._platform_of", _amo_exc)
                 name = ""
         name = name.strip().lower()
         if name:
@@ -6766,7 +5128,8 @@ class HumanCorePlugin(Star):
             for attr in ("message_id", "msg_id", "id"):
                 try:
                     value = getattr(holder, attr, None)
-                except Exception:
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._event_message_id", _amo_exc)
                     value = None
                 if value not in (None, "", 0):
                     return str(value)[:128]
@@ -6835,9 +5198,11 @@ class HumanCorePlugin(Star):
                 try:
                     result = await save(self._data_bot_id(), str(uid), **fields)
                 except Exception as exc:
+                    _note_swallowed("main.HumanCorePlugin._push_profile_to_data", exc)
                     self._log_push_failure(uid, exc)
                     result = None
             except Exception as exc:
+                _note_swallowed("main.HumanCorePlugin._push_profile_to_data", exc)
                 self._log_push_failure(uid, exc)
                 result = None
         if isinstance(result, dict) and result.get("uid"):
@@ -6854,6 +5219,7 @@ class HumanCorePlugin(Star):
                 lambda: saver(self._data_bot_id(), str(uid), **fields)
             )
         except Exception as exc:
+            _note_swallowed("main.HumanCorePlugin._push_profile_to_data", exc)
             self._log_push_failure(uid, exc)
             return False
         return bool(raw and (not isinstance(raw, dict) or raw.get("uid")))
@@ -6871,7 +5237,8 @@ class HumanCorePlugin(Star):
         """把记忆终端里的关系网拉回本地（面板改过的也能生效，不用重启）。"""
         try:
             rows = await self._data_call("list_relations", self._data_bot_id())
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._sync_relations_from_data", _amo_exc)
             return 0
         if rows is None:
             # 终端不可用时不要动本地，避免把关系网清空
@@ -6890,14 +5257,16 @@ class HumanCorePlugin(Star):
             try:
                 self.db.upsert_relation(a_uid, b_uid, edge.get("relation") or "朋友", edge.get("note") or "")
                 count += 1
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._sync_relations_from_data", _amo_exc)
                 continue
         # 面板上删掉的关系，本地也同步删掉（终端为准）；
         # 终端返回空、或远端的边比本地还少时都不删——那多半是换库/重装/恢复残缺备份，
         # 照删一次就能把本地关系网清空（之后还得靠聊天慢慢沉淀）。
         try:
             local_rows = self.db.list_relations()
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._sync_relations_from_data", _amo_exc)
             local_rows = []
         # bot/self 边推不到远端，比较前先排掉：不然远端永远"比本地少"，
         # 这条 warning 会每轮都响，而且下面"终端删了本地也删"永远不会执行。
@@ -6918,8 +5287,8 @@ class HumanCorePlugin(Star):
                 pair = tuple(sorted([str(item.get("a_uid") or ""), str(item.get("b_uid") or "")]))
                 if pair not in remote:
                     self.db.delete_relation(pair[0], pair[1])
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._sync_relations_from_data", _amo_exc)
         return count
 
     async def _sync_profiles_to_data(self):
@@ -6940,7 +5309,8 @@ class HumanCorePlugin(Star):
             return 0
         try:
             remote_rows = await self._data_call("list_profiles", bot_id, "", 500) or []
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._sync_profiles_to_data", _amo_exc)
             remote_rows = []
         if not remote_rows:
             # mem 门面不可用的旧版：直接读 DataStore
@@ -6948,7 +5318,8 @@ class HumanCorePlugin(Star):
             if callable(lister):
                 try:
                     remote_rows = await asyncio.to_thread(lambda: lister(bot_id, "", 500)) or []
-                except Exception:
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._sync_profiles_to_data", _amo_exc)
                     remote_rows = []
         self._push_fail_count = 0
         remote = {}
@@ -7002,14 +5373,16 @@ class HumanCorePlugin(Star):
         after = []
         try:
             after = await self._data_call("list_profiles", bot_id, "", 500) or []
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._sync_profiles_to_data", _amo_exc)
             after = []
         if not after:
             lister = getattr(self._data_store(), "list_profiles", None)
             if callable(lister):
                 try:
                     after = await asyncio.to_thread(lambda: lister(bot_id, "", 500)) or []
-                except Exception:
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._sync_profiles_to_data", _amo_exc)
                     after = []
         total = max(len(after), len(remote))
         message = (
@@ -7066,7 +5439,8 @@ class HumanCorePlugin(Star):
             # 群聊：**仍然要按 uid**，否则会把群里其他人的话也拉进【按时间回看】。
             try:
                 private = bool(event.is_private_chat())
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._time_recall_context", _amo_exc)
                 private = True
             if private:
                 # 跨平台：同一个人在 QQ / 飞书两边说过的话都要算进「昨天聊了什么」，
@@ -7118,7 +5492,8 @@ class HumanCorePlugin(Star):
         try:
             # 两个平台共用一个近聊池：只要 6 条的话，他在这头连聊几句就把另一头挤没了。
             detail = await self._data_call("person_context", self._data_bot_id(), platform, str(uid), 24)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._cross_platform_context", _amo_exc)
             return ""
         if not detail:
             return ""
@@ -7201,92 +5576,6 @@ class HumanCorePlugin(Star):
     async def _push_cache_to_data(self, key, value):
         await self._data_call("cache_set", self._data_bot_id(), str(key), value)
 
-    async def _data_memory_recall(self, uid, text, limit=6, event=None):
-        """从「记忆终端」（Astr_Amo_data）取回这个人的记忆。
-
-        陪伴自己不存记忆：装了就只问它要，没装才退回外挂记忆插件。
-        """
-        mem = self._data_mem()
-        if mem is None or not uid:
-            return []
-        recall = getattr(mem, "recall", None)
-        if not callable(recall):
-            return []
-        scope = "private"
-        group_id = ""
-        try:
-            if event is not None and not event.is_private_chat():
-                scope = "group"
-                group_id = str(event.get_group_id() or "")
-        except Exception:
-            pass
-        try:
-            rows = await recall(
-                self._data_bot_id(), str(uid), str(text or ""),
-                max(1, to_int(limit, 6)), scope, group_id,
-            )
-        except TypeError:
-            # 旧版没有 scope / group_id 参数
-            try:
-                rows = await recall(
-                    self._data_bot_id(), str(uid), str(text or ""), max(1, to_int(limit, 6))
-                )
-            except Exception as exc:
-                logger.debug("[amo] 记忆终端召回失败: %s" % exc)
-                return []
-        except Exception as exc:
-            logger.debug("[amo] 记忆终端召回失败: %s" % exc)
-            return []
-        items = []
-        for row in rows or []:
-            if not isinstance(row, dict):
-                continue
-            content = re.sub(r"\s+", " ", str(row.get("content") or "")).strip()
-            if len(content) < 2:
-                continue
-            importance = to_float(row.get("importance"), 0.5)
-            items.append({
-                "content": content[:500],
-                "tier": 2 if importance >= 0.72 else (1 if importance >= 0.42 else 0),
-                "kind": str(row.get("kind") or "fact"),
-                "source": "amo_data",
-                "memory_type": str(row.get("kind") or ""),
-                "created_at": row.get("created_at", 0),
-                "hits": 0,
-                "expires_at": None,
-            })
-        return items
-
-    async def _data_memory_write(self, uid, content, kind="fact", tier=1):
-        """把一条记忆交给「记忆终端」写入；它只负责存，陪伴不落本地库。"""
-        mem = self._data_mem()
-        if mem is None or not uid:
-            return False
-        content = re.sub(r"\s+", " ", str(content or "")).strip()
-        if not content:
-            return False
-        remember = getattr(mem, "remember", None)
-        if not callable(remember):
-            return False
-        level = to_int(tier, 1)
-        importance = 0.75 if level >= 2 else (0.55 if level == 1 else 0.35)
-        try:
-            result = await remember(
-                self._data_bot_id(), str(uid), content,
-                kind=str(kind or "fact"), importance=importance,
-            )
-        except TypeError:
-            try:
-                result = await remember(self._data_bot_id(), str(uid), content)
-            except Exception as exc:
-                logger.debug("[amo] 记忆终端写入失败: %s" % exc)
-                return False
-        except Exception as exc:
-            logger.debug("[amo] 记忆终端写入失败: %s" % exc)
-            return False
-        if isinstance(result, dict):
-            return bool(result.get("ok", True))
-        return bool(result)
 
     async def _sync_with_data_plugin(self):
         """启动时双向同步：首次把本地画像/关系/日程缓存推过去，之后以插件为准补齐本地。
@@ -7331,8 +5620,8 @@ class HumanCorePlugin(Star):
                     if value:
                         await self._push_cache_to_data(key, value)
                         pushed["cache"] += 1
-                except Exception:
-                    pass
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._sync_with_data_plugin_once", _amo_exc)
             self.db.kv_set(marker, True)
             logger.info("[amo] 已把关系网/日程缓存迁移到「我想永远记住你」：%s" % pushed)
         # 画像每次都对齐（不看一次性标记）：缺的补、改过的重推
@@ -7349,7 +5638,8 @@ class HumanCorePlugin(Star):
                         edge.get("a_uid"), edge.get("b_uid"),
                         edge.get("relation") or "朋友", edge.get("note") or "",
                     )
-                except Exception:
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._sync_with_data_plugin_once", _amo_exc)
                     continue
         except Exception as exc:
             logger.debug("[amo] 拉取关系网失败: %s" % exc)
@@ -7368,7 +5658,8 @@ class HumanCorePlugin(Star):
                 try:
                     remote_at = to_float(row.get("updated_at"), 0)
                     local_at = to_float(local.get("profile_updated_at"), 0)
-                except Exception:
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._sync_with_data_plugin_once", _amo_exc)
                     remote_at = local_at = 0
                 if remote_at and remote_at <= local_at:
                     continue
@@ -7387,185 +5678,22 @@ class HumanCorePlugin(Star):
                     self.db.kv_set(key, value)
                     if self.state is not None:
                         setattr(self.state, attr, value)
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._sync_with_data_plugin_once", _amo_exc)
                 continue
         # 到这里才算这次启动真的同步完了：以后不再探测、不再重复推
         self._data_synced = True
         self._data_missing_logged = False
 
-    def _memory_plugin_target(self):
-        """能提供检索的对象：优先插件的 service，其次插件本身。"""
-        plugin = self._companion_plugin()
-        if plugin is None:
-            return None
-        service = getattr(plugin, "service", None)
-        return service if service is not None else plugin
 
     WRITE_METHODS = (
         "add_memory", "remember", "save_memory", "store_memory",
         "add_fact", "ingest_memory", "write_memory",
     )
 
-    async def _write_memory_checked(self, uid, content, kind="fact", tier=1):
-        """写一条记忆并返回是否真的成功；失败打 warning，调用方据此决定要不要标记。"""
-        hub = self._memory_hub()
-        level = to_int(tier, 1)
-        importance = 0.75 if level >= 2 else (0.55 if level == 1 else 0.35)
-        if hub is not None and hub.writable():
-            try:
-                result = await hub.remember(str(uid), content, str(kind or "fact"), importance)
-            except Exception as exc:
-                logger.warning("[amo] 记忆写入异常: %s" % exc)
-                result = {"ok": False}
-            if isinstance(result, dict) and result.get("ok"):
-                return True
-            logger.warning(
-                "[amo] 记忆没写进去（%s）: %s" % ((result or {}).get("reason", "?"), str(content)[:40])
-            )
-            return False
-        if self._data_mem() is not None:
-            try:
-                result = await self._data_memory_write(uid, content, kind, tier)
-            except Exception:
-                result = False
-            if result:
-                return True
-        return False
 
-    def _external_memory_write(self, uid, content, kind="fact", tier=1):
-        """把一条记忆交给「记忆终端」：装了 Astr_Amo_data 就写它，没装才写外挂记忆插件。
 
-        陪伴自己不存记忆，只负责把要记的东西丢过去。
-        """
-        content = re.sub(r"\s+", " ", str(content or "")).strip()
-        if not content:
-            return False
-        hub = self._memory_hub()
-        if hub is not None and hub.writable():
-            level = to_int(tier, 1)
-            importance = 0.75 if level >= 2 else (0.55 if level == 1 else 0.35)
-            try:
-                self._spawn(hub.remember(uid, content, str(kind or "fact"), importance))
-                logger.debug("[amo] 记忆已交给能力层: %s" % content[:40])
-                return True
-            except Exception as exc:
-                logger.debug("[amo] 能力层写入失败，退回旧路径: %s" % exc)
-        if self._data_mem() is not None and callable(getattr(self._data_mem(), "remember", None)):
-            coro = None
-            try:
-                coro = self._data_memory_write(uid, content, kind, tier)
-                if self._spawn(coro) is not None:
-                    logger.debug("[amo] 记忆已交给记忆终端: %s" % content[:40])
-                    return True
-            except Exception as exc:
-                if coro is not None:
-                    coro.close()
-                logger.debug("[amo] 记忆终端写入失败，退回外挂插件: %s" % exc)
-        target = self._memory_plugin_target()
-        if target is None:
-            return False
-        for name in self.WRITE_METHODS:
-            method = getattr(target, name, None)
-            if not callable(method):
-                continue
-            for args in (
-                (str(uid), content),
-                (content,),
-                (str(uid), content, kind, int(tier)),
-            ):
-                try:
-                    result = method(*args)
-                    if asyncio.iscoroutine(result):
-                        # 异步写入接口：丢到事件循环里跑，不阻塞当前回合
-                        try:
-                            asyncio.get_running_loop().create_task(result)
-                        except RuntimeError:
-                            result.close()
-                        logger.debug("[amo] 记忆已交给外挂插件异步写入(%s): %s" % (name, content[:40]))
-                        return True
-                    logger.debug("[amo] 记忆已写入外挂插件(%s): %s" % (name, content[:40]))
-                    return True
-                except TypeError:
-                    continue
-                except Exception as exc:
-                    logger.debug("[amo] 记忆写入 %s 失败: %s" % (name, exc))
-                    break
-        return False
 
-    @staticmethod
-    def _memory_hit_item(hit):
-        """把插件返回的一条命中转成 amo 的记忆条目；不认识的结构返回 None。"""
-        memory = getattr(hit, "memory", None)
-        if memory is not None:
-            content = str(getattr(memory, "content", "") or "")
-            importance = to_float(getattr(memory, "importance", 0.0), 0.0)
-            memory_type = str(getattr(memory, "memory_type", "") or "")
-        elif isinstance(hit, dict):
-            content = str(hit.get("content") or "")
-            importance = to_float(hit.get("importance"), 0.0)
-            memory_type = str(hit.get("memory_type") or "")
-        else:
-            return None
-        content = re.sub(r"\s+", " ", content).strip()
-        if len(content) < 2:
-            return None
-        return {
-            "content": content[:500],
-            "tier": 2 if importance >= 0.72 else (1 if importance >= 0.42 else 0),
-            "kind": "memory_companion",
-            "source": "memory_companion",
-            "memory_type": memory_type,
-        }
-
-    async def _external_memory_recall(self, event, query, limit=6):
-        """用记忆插件自己的检索（BM25/向量/可见性）；不可用或超时就返回空，交给兜底。"""
-        if event is None:
-            return []
-        target = self._memory_plugin_target()
-        run = None
-        for name in self.MEMORY_RECALL_METHODS:
-            candidate = getattr(target, name, None) if target is not None else None
-            if callable(candidate):
-                run = candidate
-                break
-        if run is None:
-            return []
-        budget = max(0.5, self.cfg_float("memory_bridge_timeout_seconds", 3.0))
-        try:
-            hits = await asyncio.wait_for(
-                run(event, str(query or ""), top_k=max(1, int(limit or 6))),
-                timeout=budget,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("[amo] 记忆插件检索超时（%.1fs），本轮退回兜底", budget)
-            return []
-        except Exception as exc:
-            logger.warning("[amo] 记忆插件检索失败: %s", exc)
-            return []
-        items = []
-        for hit in hits or []:
-            item = self._memory_hit_item(hit)
-            if item is not None:
-                items.append(item)
-        return items
-
-    def _external_memory_fallback(self, uid, text, limit):
-        """插件没提供检索接口时的兜底：直接读它的库（旧的 LIKE / 重要性路径）。"""
-        try:
-            inject_lm = self.cfg_bool("memory_inject_livingmemory", False)
-            picked = (
-                self._external_all_memories(uid, text, limit)
-                if inject_lm
-                else self._external_all_memories_legacy(uid, text, limit)
-            )
-        except Exception as exc:
-            logger.debug("[amo] 外部记忆兜底读取失败: %s", exc)
-            return []
-        items = []
-        for item in picked:
-            item["source"] = item.get("source") or "external"
-            items.append(item)
-        return items
 
     def _memcomp_all_memories(self, uid, keyword="", limit=50):
         """完整记忆：不限制 memory_type，用于“查看记忆”和召回。"""
@@ -7601,84 +5729,9 @@ class HumanCorePlugin(Star):
             })
         return items
 
-    def _sync_memory_companion_profiles(self, only_uid=""):
-        plugin = self._companion_plugin()
-        if not self._is_memory_companion(plugin):
-            return 0
-        rows = self._memcomp_profile_rows(plugin)
-        if not rows:
-            return 0
-        identities = {}
-        try:
-            identity_rows = self._memcomp_rows(
-                "SELECT entity_id, display_name, profile FROM identities "
-                "WHERE entity_kind='user' AND entity_id!=''"
-            )
-            identities = {str(row.get("entity_id") or ""): row for row in identity_rows}
-        except Exception:
-            identities = {}
-        if not only_uid:
-            self._cleanup_auto_profiles("memory_companion", [row["uid"] for row in rows])
-        synced = 0
-        for row in rows:
-            uid = str(row.get("uid") or "")
-            if not uid or (only_uid and uid != str(only_uid)):
-                continue
-            profile = self.db.get_profile(uid) or {}
-            name = str(row.get("name") or "").strip()
-            if not name:
-                ident = identities.get(uid) or {}
-                name = str(ident.get("display_name") or "").strip()
-            count = to_int(row.get("count"), 0)
-            if not profile:
-                self.db.touch_profile(uid, name or uid, "memory_companion", "", "", False)
-                profile = self.db.get_profile(uid) or {}
-            fields = {}
-            current_name = str(profile.get("name") or "").strip()
-            if name and (
-                not current_name or current_name == uid
-                or current_name.startswith("画像 ")
-                or current_name.startswith("person_")
-            ):
-                fields["name"] = name[:60]
-            if not profile.get("notes") and count:
-                fields["notes"] = ("画像 %d 条（Memory Companion）" % count)[:100]
-            if fields:
-                self.db.update_profile(uid, **fields)
-            synced += 1
-        return synced
-
-    def _sync_memory_companion_profile(self, uid, force=False):
-        plugin = self._companion_plugin()
-        if not self._is_memory_companion(plugin):
-            return
-        uid = str(uid)
-        if not force:
-            key = "memcomp_profile_sync_" + uid
-            if now_ts() - to_float(self.db.kv_get(key, 0)) < 600:
-                return
-            self.db.kv_set(key, now_ts())
-        self._sync_memory_companion_profiles(only_uid=uid)
 
     ANGEL_ATTRIBUTE_TAGS = {"用户别名", "事实属性", "技能树", "关系图谱", "活跃项目"}
 
-    @staticmethod
-    def _is_angel_memory(plugin):
-        if plugin is None:
-            return False
-        marker = (
-            str(type(plugin).__module__ or "") + " "
-            + str(getattr(plugin, "name", "") or "")
-        ).lower()
-        if "angel_memory" in marker:
-            return True
-        return (
-            getattr(plugin, "plugin_context", None) is not None
-            and (
-                getattr(plugin, "memory_store", None) is not None
-                or getattr(plugin, "deepmind", None) is not None
-            )
-        )
 
     @staticmethod
     def _angel_component(plugin, name):
@@ -7688,8 +5741,8 @@ class HumanCorePlugin(Star):
                 value = ctx.get_component(name)
                 if value is not None:
                     return value
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._angel_component", _amo_exc)
         if name == "memory_store":
             return getattr(plugin, "memory_store", None)
         if name == "memory_sql_manager":
@@ -7944,8 +5997,8 @@ class HumanCorePlugin(Star):
             from astrbot.core.utils.astrbot_path import get_astrbot_data_path
             candidates.append(os.path.join(str(get_astrbot_data_path()), "plugin_data",
                                            "astrbot_plugin_livingmemory", "livingmemory.db"))
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._livingmem_db_path", _amo_exc)
         own = getattr(self, "plugin_dir", "") or ""
         if own:
             candidates.append(os.path.join(os.path.dirname(os.path.dirname(own)),
@@ -7965,8 +6018,8 @@ class HumanCorePlugin(Star):
             meta = self.context.get_registered_star("astrbot_plugin_livingmemory")
             if meta is not None and not bool(getattr(meta, "activated", True)):
                 return False
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._livingmem_active", _amo_exc)
         return bool(self._livingmem_db_path())
 
     def _livingmem_stats(self):
@@ -7983,7 +6036,8 @@ class HumanCorePlugin(Star):
                 meta = json.loads(row.get("metadata") or "{}")
                 for item in meta.get("participant_uids") or []:
                     owners.add(str(item))
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._livingmem_stats", _amo_exc)
             owners = set()
         return True, max(len(owners), 1)
 
@@ -8004,8 +6058,8 @@ class HumanCorePlugin(Star):
             try:
                 if conn is not None:
                     conn.close()
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._livingmem_rows", _amo_exc)
 
     def _livingmem_owner_ids(self, uid=""):
         """认哪些 ID 算同一个人：当前 uid + 配置里的别名（跨平台用）。"""
@@ -8028,7 +6082,8 @@ class HumanCorePlugin(Star):
         ids = self._livingmem_owner_ids(uid)
         try:
             meta = json.loads(metadata or "{}")
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._livingmem_owned", _amo_exc)
             meta = {}
         owners = {str(x) for x in (meta.get("participant_uids") or [])}
         for item in meta.get("participant_identities") or []:
@@ -8204,8 +6259,8 @@ class HumanCorePlugin(Star):
                             if any(item and item in " ".join(str(v or "") for v in values) for item in names):
                                 try:
                                     items.extend(self._companion_memories(str(other_uid), ""))
-                                except Exception:
-                                    pass
+                                except Exception as _amo_exc:
+                                    _note_swallowed("main.HumanCorePlugin._external_profile_memories", _amo_exc)
         except Exception as exc:
             logger.debug("[amo] 外部画像记忆读取失败: %s" % exc)
         unique = []
@@ -8225,8 +6280,8 @@ class HumanCorePlugin(Star):
                 meta = self.context.get_registered_star(name)
                 if meta and getattr(meta, "star_cls", None) is not None:
                     return meta
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._companion_plugin_meta", _amo_exc)
         candidates = []
         try:
             for meta in self.context.get_all_stars():
@@ -8266,8 +6321,8 @@ class HumanCorePlugin(Star):
                     score += 1
                 if score:
                     candidates.append((score, meta))
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._companion_plugin_meta", _amo_exc)
         candidates.sort(key=lambda pair: -pair[0])
         return candidates[0][1] if candidates else None
 
@@ -8320,35 +6375,11 @@ class HumanCorePlugin(Star):
                     "activated": bool(getattr(meta, "activated", False)),
                     "reserved": bool(getattr(meta, "reserved", False)),
                 })
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._companion_candidates", _amo_exc)
         items.sort(key=lambda item: (not item["ready"], -item["users"], item["name"]))
         return items
 
-    @staticmethod
-    def _looks_like_memory_plugin(plugin, users=None):
-        """通用识别：不写死插件名，只要有记忆检索接口或记忆数据结构就算。"""
-        if plugin is None:
-            return False
-        for name in ("search_for_event", "recall_for_event", "search_memory",
-                     "recall_memory", "query_memory", "retrieve_memory"):
-            if callable(getattr(plugin, name, None)):
-                return True
-        service = getattr(plugin, "service", None)
-        if service is not None:
-            for name in ("search_for_event", "recall_for_event", "search_memory", "retrieve"):
-                if callable(getattr(service, name, None)):
-                    return True
-        if isinstance(users, dict) and users:
-            sample = next((item for item in users.values() if isinstance(item, dict)), {})
-            if not isinstance(sample, dict):
-                return False
-            for key in ("companion_memory", "important_memories", "memories",
-                        "long_term_memory", "memory"):
-                value = sample.get(key)
-                if isinstance(value, (dict, list)) and value:
-                    return True
-        return False
 
     @staticmethod
     def _companion_pick_profile(mapping, uid):
@@ -8527,8 +6558,8 @@ class HumanCorePlugin(Star):
             try:
                 if not event.is_private_chat():
                     limit = min(limit, 4)
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._recall", _amo_exc)
         memories = []
         hub = self._memory_hub()
         if hub is not None:
@@ -8536,7 +6567,8 @@ class HumanCorePlugin(Star):
                 private = True
                 try:
                     private = bool(event.is_private_chat()) if event is not None else True
-                except Exception:
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._recall", _amo_exc)
                     private = True
                 if not private and len(str(text or "").strip()) <= 3:
                     limit = min(limit, 2)   # 群聊短消息只补 2 条，避免一句“猫”塞满提示词
@@ -8547,7 +6579,8 @@ class HumanCorePlugin(Star):
                         scope = "group"
                         try:
                             group_id = str(event.get_group_id() or "")
-                        except Exception:
+                        except Exception as _amo_exc:
+                            _note_swallowed("main.HumanCorePlugin._recall", _amo_exc)
                             group_id = ""
                     memories = await hub.recall(uid, text, limit, scope, group_id)
             except Exception as exc:
@@ -8597,8 +6630,8 @@ class HumanCorePlugin(Star):
                     day = _clock_from_ts(created)
                     if day.strftime("%Y-%m-%d") != _now().strftime("%Y-%m-%d"):
                         body = "（记于 %s）%s" % (day.strftime("%m-%d"), body)
-                except Exception:
-                    pass
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._recall", _amo_exc)
             # 记忆都是“关于他”的：没名字的统一补「他：」，避免模型把「脸疼」当成自己的感受
             if not prefix and not body.startswith(("他", "她", "用户")):
                 prefix = "他："
@@ -8631,7 +6664,8 @@ class HumanCorePlugin(Star):
             return
         try:
             pairs = parse_relations(text)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._learn_relations", _amo_exc)
             return
         if not pairs:
             return
@@ -8646,14 +6680,16 @@ class HumanCorePlugin(Star):
                         name = piece.strip()
                         if len(name) >= 2:
                             name_map.setdefault(name, set()).add(str(item.get("uid") or ""))
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._learn_relations", _amo_exc)
             return
         try:
             existing = {}
             for edge in self.db.list_relations():
                 pair = tuple(sorted([str(edge.get("a_uid") or ""), str(edge.get("b_uid") or "")]))
                 existing[pair] = str(edge.get("note") or "")
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._learn_relations", _amo_exc)
             existing = {}
         for who, relation, evidence in pairs:
             targets = [item for item in name_map.get(who, set()) if item and item != str(uid)]
@@ -8682,7 +6718,8 @@ class HumanCorePlugin(Star):
         try:
             edges = [edge for edge in self.db.list_relations()
                      if str(edge.get("relation") or "") != "陌生人"]
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._relation_network_text", _amo_exc)
             return ""
         uid = str(uid or "")
         if not edges:
@@ -8691,8 +6728,8 @@ class HumanCorePlugin(Star):
         try:
             for item in self.db.list_profiles(limit=500):
                 names[str(item.get("uid"))] = item.get("alias") or item.get("name") or str(item.get("uid"))
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._relation_network_text", _amo_exc)
         names["bot"] = str(getattr(self, "bot_name", "") or "你")
         picked = []
         if _rank_edges is not None:
@@ -8700,7 +6737,8 @@ class HumanCorePlugin(Star):
                 # 图小的时候放宽到三跳，图大了只走两跳，避免噪声和 token 膨胀
                 hops = 3 if len(edges) <= 40 else 2
                 picked = _rank_edges(edges, uid, 12, hops)
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._relation_network_text", _amo_exc)
                 picked = []
         if not picked:
             direct = []
@@ -8768,7 +6806,8 @@ class HumanCorePlugin(Star):
         """最近窗口内，同一个人连续发消息数 / 群里叫机器人的消息数。"""
         try:
             rows = self._recent(umo, 24)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._disturb_pressure", _amo_exc)
             return 0
         window = max(1, self.cfg_int("disturb_window_minutes", 10)) * 60
         cutoff = max(
@@ -8824,8 +6863,8 @@ class HumanCorePlugin(Star):
         await self._sync_persona_name(event)
         try:
             self.state.apply_schedule_events()
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._handle_message", _amo_exc)
         uid = self._canonical_uid(event)
         if not uid or uid == str(event.get_self_id()):
             return
@@ -8959,54 +6998,15 @@ class HumanCorePlugin(Star):
             logger.info("[amo] 私聊合并 %d 条: %s" % (len(buffer["texts"]), merged[:200]))
             try:
                 event.set_extra("amo_debounce_count", len(buffer["texts"]))
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._debounce_private", _amo_exc)
         event.message_str = merged or (event.message_str or "")
         try:
             event.continue_event()
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._debounce_private", _amo_exc)
         return True
 
-    def _schedule_delayed_reply(self, event, profile):
-        umo = event.unified_msg_origin
-        delay = random.randint(
-            self.cfg_int("delay_min_minutes", 4),
-            self.cfg_int("delay_max_minutes", 18),
-        ) * 60
-        text = event.message_str or ""
-        started = now_ts()
-
-        async def runner():
-            try:
-                await asyncio.sleep(delay)
-                if not self._running or not self._ready:
-                    return
-                # 这 4-18 分钟里他已经又说话了、或者她已经回过 → 这条补话已经过期，
-                # 再用当初那句 event 走一遍会答非所问（真机上出现过重复回答旧问题）。
-                if to_float(self._last_reply_at.get(umo, 0), 0) > started:
-                    logger.debug("[amo] 延迟回复已过期（期间已回复）: %s" % umo)
-                    return
-                try:
-                    latest = self._recent(umo, 1) or []
-                    if latest and to_float(latest[-1].get("created_at"), 0) > started:
-                        logger.debug("[amo] 延迟回复已过期（期间有新消息）: %s" % umo)
-                        return
-                except Exception:
-                    pass
-                snap = self.state.snapshot()
-                note = "你刚刚忙完，主动补一句；不要提等待时间，语气自然。"
-                reply = await self._compose_reply(
-                    event, text, snap, profile, [], "", False, note=note
-                )
-                if reply:
-                    await self._send_to_umo(umo, reply)
-            except asyncio.CancelledError:
-                return
-            except Exception as exc:
-                logger.debug("[amo] 延迟回复失败: %s" % exc)
-
-        self._spawn(runner())
 
     def _strip_place_marks(self, text):
         """兜底：把「东莞·商场·餐厅」这类内部地点串缩成口语的「餐厅」。"""
@@ -9016,12 +7016,12 @@ class HumanCorePlugin(Star):
             city = str((self.state.worldview or {}).get("city") or "").strip()
             if city:
                 marks.add(city)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._strip_place_marks", _amo_exc)
         try:
             marks.add(str((self.state.current_activity() or {}).get("place") or ""))
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._strip_place_marks", _amo_exc)
         for mark in marks:
             parts = [item.strip() for item in mark.split("·") if item.strip()]
             if len(parts) < 2:
@@ -9030,202 +7030,6 @@ class HumanCorePlugin(Star):
                 value = value.replace("·".join(parts[:index]) + "·", "")
         return value
 
-    def _trim_reply(self, text):
-        value = self._strip_place_marks(str(text or "").strip())
-        limit = max(1, self.cfg_int("reply_max_sentences", 3))
-        parts = [item for item in re.split(r"(?<=[。！？!?~～])", value) if item.strip()]
-        if len(parts) <= limit:
-            return value
-        return "".join(parts[:limit]).strip()
-
-    async def _compose_reply(self, event, text, snap, profile, memories, memory_text, group, note=""):
-        umo = event.unified_msg_origin
-        uid = self._canonical_uid(event)
-        name = profile.get("alias") or profile.get("name") or event.get_sender_name() or "对方"
-        relation = profile.get("relation", "普通")
-        persona = await self.llm.persona(umo)
-        world = self.state.worldview_text()
-        asked_activity = bool(re.search(
-            r"(你在干嘛|在干嘛|干嘛呢|干什么呢|你在哪|在哪呢|吃了吗|吃没吃|吃了没|忙吗|忙不忙"
-            r"|在忙什么|上班吗|在上班|下班了吗|今天干嘛|做什么呢|干啥呢)",
-            text or "",
-        ))
-        state_text = self.state.prompt_text(snap, with_activity=asked_activity)
-        tone = self._tone_with_continuity(umo, self.state.tone_text(snap, relation))
-        style = STYLE_HINTS.get(self.cfg_str("reply_style", "soft"), "")
-        consult = bool(re.search(r"(怎么|如何|为什么|步骤|怎么办|该怎么做|教程|方法|建议|教我|能不能|是什么|该不该|可不可以)", text or ""))
-        recent = self._recent(umo, 10)
-        lines = []
-        current_uid = self._canonical_uid(event)
-        current_place = str((snap.get("activity") or {}).get("place") or "")
-        for item in recent:
-            content = str(item.get("content") or "")
-            role = str(item.get("role") or "")
-            item_uid = str(item.get("uid") or "")
-            # 当前明明在家/公司时，不把历史里“酒店/开车/逛景区”的旧幻觉再喂回模型。
-            if (
-                role != "user"
-                and current_place in ("家", "公司", "工位")
-                and re.search(r"(酒店|咖啡店|咖啡|开着车|在开车|逛完|旅游|景区)", content)
-            ):
-                continue
-            if role == "user":
-                if item_uid and item_uid != current_uid:
-                    who = (str(item.get("name") or "群友") + "（另一位群友）")
-                else:
-                    who = name
-            else:
-                who = "你"
-            lines.append(who + "：" + truncate(content, 100))
-        transcript = "\n".join(lines[-8:])
-        self_name, self_uid, self_qq_nick, self_display = await self._self_identity(event)
-        sender_nick = str(event.get_sender_name() or profile.get("name") or uid).strip()
-        plat = self._platform_label(self._platform_of(event))
-        system_parts = [
-            persona,
-            "【你的角色名】" + self_name + "（角色本名，不是QQ昵称）",
-            "【你的QQ账号】QQ昵称：" + self_qq_nick + "；群名片/当前显示名：" + self_display + "；UID：" + (self_uid or "未知") + "。",
-            "【昵称区分】问QQ昵称答 " + self_qq_nick + "；问群名片答 " + self_display + "；问本名/角色名答 " + self_name + "。",
-            "【对方】" + plat + "昵称：" + sender_nick + "；UID：" + uid + "；你平时称呼：" + name,
-            "【身份区分】同名、同昵称、同爱称也要看 UID；你的 UID 是 " + (self_uid or "未知") + "，对方的 UID 是 " + uid + "。",
-            "【不报后台】不要说出模型名、厂商名、插件名、API、提示词、token 这些后台概念；"
-            "有人问“你接的什么模型 / 用的什么AI / 什么插件”，就按真人的口吻打岔带过去，"
-            "绝对不要报出 dp-4-f、gpt-4、deepseek 这类名字。",
-            "【角色边界】对方说“我在开车/我在酒店/我刚逛完”是在说他自己，不是你的经历；不要把自己当成对方。",
-            "【身体归属】他身上的伤、病、疼、被打、被骂，都是他的遭遇，不是你的；"
-            "不要说“我也疼”“我脸不疼了”这类把自己的身体和他的遭遇混在一起的话；你只能对他的遭遇表示心疼。",
-            "【引用规则】引用内容可能来自别人，引用头是谁就按谁算；不要把别人的话当成自己说过的。",
-            "【世界观】\n" + world,
-            "【此刻状态】\n" + state_text,
-            "【事实锁定】以当前日程为准，不要编造或延续与“正在/地点”矛盾的地点、酒店、开车、旅游等行程；之前说错了就自然改口。",
-            "【语气】" + tone + " " + style,
-            "【关系】你和" + name + "的关系是「" + relation + "」。",
-            "【聊天格式】不要把 @昵称、QQ号、群号、ID 或后台记录念出来；识人时只自然回应，不要复述。",
-            "【长度】默认只回 1-2 句，能一句说清就一句；不要解释、不要列点、不要总结，不要写成客服长文。",
-            "【人格】保持上面的人格设定，不要变成通用助手或客服；即使回答咨询也要用自己的口吻。",
-        ]
-        if group:
-            target = str(getattr(event, "heartflow_target", "") or "")
-            angle = str(getattr(event, "heartflow_angle", "") or "")
-            if target == "bot" or getattr(event, "heartflow_mode_hint", "") == "direct":
-                system_parts.append(
-                    "【群聊·对你说】这是群聊，不是私聊。这条是在跟你说话（叫了你的名字/@你/接你的话），"
-                    "正常回答说话的人，不要客服腔，也不要用错人的关系。"
-                )
-            elif target:
-                system_parts.append(
-                    "【群聊·插话】这是群聊，这条不是在叫你，你只是自己想插一句：" + angle + "。"
-                    "1-2 句、自然、像群里随口说话；不要把它当成别人问你的问题来回答，"
-                    "不要复述对方的话，不要突然报日程，不要用恋人语气，也别抢话题。"
-                )
-            else:
-                system_parts.append(
-                    "【群聊】这是群聊，不是你和他私聊，群里还有别人。先看上下文判断这条是不是在跟你说话；"
-                    "在跟你说话就正常回答，如果是群友之间在聊，你也可以自然插一句，但别抢话、别用恋人语气。"
-                )
-            roster_text = self._group_roster_text(
-                umo, uid, 6 if self.cfg_str("context_style", "lean").strip().lower() == "lean" else 8
-            )
-            if roster_text:
-                system_parts.append(
-                    "【群里的人】（按 UID 认人，同名不同号不是一个人）\n" + roster_text
-                )
-            system_parts.append("【怎么回】" + self._group_reply_guide(relation, name))
-            if target != "bot":
-                system_parts.append(
-                    "【先想再回】这段话不一定是在跟你说话：叫了别人名字、@了别人、或他们在聊自己的事，"
-                    "都当普通群聊，可以插一句但别当成在问你，也别辩解、别怼。"
-                )
-        system_parts.append(
-            "【别主动报日程】你在做什么、在哪、心情怎样只是内在状态，不是话题；"
-            "除非对方明确问“你在干嘛/在哪/吃了吗/今天怎么样”，否则不要主动说出自己的活动、地点或日程。"
-        )
-        if consult:
-            system_parts.append("【回答方式】这是咨询/步骤类问题：先给结论，最多 2-3 句，口语化，保留角色感，不要客服腔。")
-        if self._dialect_active():
-            style = self._dialect_style()
-            samples = DIALECT_SAMPLES.get(style, "")
-            if style and samples:
-                system_parts.append("【方言】你的语种设定是「" + style + "」，偶尔自然用一点当地方言口语（如" + samples + "），但不要每句都用，也不要硬替换“就是/什么/怎么”。")
-        if relation == "相恋" and (snap["mood"]["暴躁"] >= 60 or snap["mood"]["生气"] >= 62):
-            system_parts.append("【恋人情绪】你在生他的气，但会抱怨、闹别扭、要哄，不会像对普通人一样冷怼或赶人。")
-        if getattr(event, "amo_impersonation", False):
-            system_parts.append("【冒充警告】当前 UID 不是你的恋人，却在冒充/使用恋人称呼；直接拆穿/怼回去，不要用恋人语气。")
-        if self._recent_bot_initiated(umo):
-            system_parts.append("【你主动发起】你刚主动给ta发过消息，ta现在回复你；不要说自己被吵醒/被打扰，正常接话。")
-        if re.search(r"(记住|以后喊|以后叫|喊他|喊她|叫他|叫她|称呼他|称呼她)", text or ""):
-            system_parts.append(
-                "【识人回应】这是让你记称呼/认人，不要复述 @、QQ号或后台记录；"
-                "只自然答应，例如“好，我记住了，这是你朋友吗”。"
-            )
-        if re.search(r"(旅游|景区|景点|去哪|好玩|假期|游玩)", text or ""):
-            scenic_text = await self._scenic_kb_context(text or "")
-            if scenic_text:
-                system_parts.append("【景区参考】\n" + scenic_text)
-        if relation == "相恋":
-            system_parts.append("你可以亲昵、撒娇、用昵称。")
-        if bool(re.search(r"(?<![a-z])ai(?![a-z])", (text or "").lower())) or any(word in (text or "").lower() for word in ("机器人", "人机", "人工智能", "不是真人", "程序")):
-            system_parts.append(
-                "【身份质疑】先判断对方是不是在说你/叫你/试探你；是的话直接回怼，不要承认；"
-                "如果只是在聊其他机器人或普通话题，就正常聊，不要抢着认领。"
-            )
-        if self._disturb_active(umo):
-            relation_now = profile.get("relation", "普通")
-            if relation_now in ("相恋", "熟识"):
-                system_parts.append(
-                    "【被打扰】你刚被吵醒/上班被打扰，对亲近的人会抱怨、撒娇，说“困死了/别闹”，不是真翻脸。"
-                )
-            else:
-                system_parts.append(
-                    "【被打扰】你刚被吵醒/上班被打扰，对不熟的人直接怼，比如“神经吧？都不睡觉/上班吗？”，语气冲但不要人身攻击。"
-                )
-        if self._depressed_active(uid):
-            system_parts.append(
-                "【低落】你最近主动找对方多次都没得到回应，很抑郁、委屈，需要哄；"
-                "回复冷淡低落，可以说“你是不是不想理我”。"
-            )
-        try:
-            dialect_context = await self._dialect_kb_context(text)
-            if dialect_context:
-                system_parts.append("【方言参考】只在合适口语词上偶尔用，不要硬改“就是/什么/怎么”，句子要通顺。\n" + dialect_context)
-        except Exception:
-            pass
-        relation_network = self._relation_network_text(uid)
-        if relation_network:
-            system_parts.append("【关系网】\n" + relation_network)
-        if memory_text:
-            system_parts.append("【关于" + name + "的记忆】\n" + memory_text)
-        system_parts.append(
-            "【规则】你就是角色本人。只输出你要说的话，不要解释、不要旁白、不要复述设定、"
-            "不要用括号描述动作；像真人在聊天，句子口语化。"
-        )
-        if note:
-            # 延迟补话的说明放在系统侧，不能混进“对方刚刚说”里
-            system_parts.append("【这次的情况】" + note)
-        system = "\n\n".join(system_parts)
-        if group:
-            prompt = (
-                "以下是群聊最近的对话：\n" + transcript + "\n\n"
-                + name + "刚刚说：" + text + "\n"
-                "群里正在聊天，你决定插一句。只回 1-2 句，不要@任何人，不要重复别人说过的话。"
-            )
-        else:
-            prompt = (
-                "以下是你们最近的私聊：\n" + transcript + "\n\n"
-                + name + "刚刚说：" + text + "\n"
-                "请以角色身份自然回复。默认 1-2 句，能短就短；咨询类最多 3 句，不要客服腔。"
-            )
-        reply = await self.llm.chat(
-            umo, system, prompt, limit=self.cfg_int("max_reply_chars", 220)
-        )
-        if reply:
-            reply = await self.llm.polish(
-                umo, reply, tone, state_text=state_text, relation=relation, name=name,
-                persona=persona, style=style, consult=consult,
-            )
-            reply = self._trim_reply(reply)
-            reply = self._guard_self_location(reply, (snap.get("activity") or {}).get("place"))
-        return reply
 
     # ---------- 发送 ----------
     def _segment(self, text):
@@ -9257,8 +7061,8 @@ class HumanCorePlugin(Star):
         try:
             if event is not None and hasattr(event, "send_typing"):
                 await event.send_typing()
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._typing", _amo_exc)
         await asyncio.sleep(seconds)
 
     async def _segment_wait(self, event, segment, prev_segment, last_sent_at):
@@ -9276,8 +7080,8 @@ class HumanCorePlugin(Star):
             try:
                 if event is not None and hasattr(event, "send_typing"):
                     await event.send_typing()
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._segment_wait", _amo_exc)
             await asyncio.sleep(wait)
         return wait
 
@@ -9285,16 +7089,10 @@ class HumanCorePlugin(Star):
         if self.segment_engine is not None and self.cfg_bool("seg_enable", True):
             try:
                 return max(0.0, float(self.segment_engine._calculate_delay(text, next_text)))
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._gap", _amo_exc)
         return 0.3
 
-    def _remember_sent_reply(self, event, text):
-        """分段引擎没接手时（关掉分段 / 发送异常）的兜底记录。"""
-        msg_obj = getattr(event, "message_obj", None)
-        if msg_obj is not None and not getattr(msg_obj, "message_id", None):
-            return  # 别的插件伪造的主动消息事件，不是这一轮的正常回复
-        self._remember_bot_message(event.unified_msg_origin, text)
 
     def _platform_for_umo(self, umo):
         """umo 对应的平台名。QQ 的 umo 前缀是机器人名字，不能直接拿第一段当平台。"""
@@ -9333,7 +7131,8 @@ class HumanCorePlugin(Star):
                     if str(row.get("role") or "") == "user":
                         last_user = str(row.get("content") or "").strip()
                         break
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._remember_bot_message", _amo_exc)
                 last_user = ""
             # 同一句在 3 分钟内又发一次很常见（「嗯嗯」「好呀」）；只有「对应的
             # 他最后那句话也没变」才算重复。以前只看文字，第二次「好呀」会被丢掉，
@@ -9378,8 +7177,8 @@ class HumanCorePlugin(Star):
                             logger.warning("[amo] 自己的回复异步落库失败: %s" % exc)
 
                     task.add_done_callback(_log_failed_task)
-                except Exception:
-                    pass
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._remember_bot_message", _amo_exc)
             self._last_bot_saved[umo] = (text, time.time(), last_user)
         except Exception as exc:
             logger.debug("[amo] 记录自己的回复失败: %s" % exc)
@@ -9392,8 +7191,8 @@ class HumanCorePlugin(Star):
         if quote_id is not None:
             try:
                 chain.append(Comp.Reply(id=quote_id))
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._send_now", _amo_exc)
         chain.append(Comp.Plain(text))
         try:
             await event.send(MessageChain(chain))
@@ -9403,8 +7202,8 @@ class HumanCorePlugin(Star):
         self._remember_sent_reply(event, text)
         try:
             self._last_reply_at[event.unified_msg_origin] = now_ts()
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._send_now", _amo_exc)
         logger.info("[amo] 直接发送 -> %s: %s" % (event.unified_msg_origin, text[:300]))
         return True
 
@@ -9430,8 +7229,8 @@ class HumanCorePlugin(Star):
             ):
                 try:
                     chain.append(Comp.Reply(id=quote_id))
-                except Exception:
-                    pass
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._send_to_umo", _amo_exc)
             chain.append(Comp.Plain(segment))
             try:
                 await self.context.send_message(umo, MessageChain(chain))
@@ -9481,8 +7280,8 @@ class HumanCorePlugin(Star):
         uid = ""
         try:
             uid = str(event.get_self_id() or "")
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._self_identity", _amo_exc)
         role_name = str(self.persona_name or self.bot_name or "陪伴")
         display_name = ""
         for attr in ("get_self_name", "get_bot_name"):
@@ -9493,7 +7292,8 @@ class HumanCorePlugin(Star):
                 if value:
                     display_name = str(value)
                     break
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._self_identity", _amo_exc)
                 continue
         qq_nick = ""
         if uid and getattr(self, "_self_nickname_uid", "") == uid:
@@ -9582,8 +7382,8 @@ class HumanCorePlugin(Star):
         umo = event.unified_msg_origin
         try:
             await self._hydrate_recent(umo, 30)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._dynamic_context", _amo_exc)
         uid = self._canonical_uid(event)
         profile = self.db.get_profile(uid)
         relation = profile.get("relation", "普通")
@@ -9617,7 +7417,8 @@ class HumanCorePlugin(Star):
             logger.debug("[amo] 按时间回看失败: %s" % exc)
         try:
             is_group = not event.is_private_chat()
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._dynamic_context", _amo_exc)
             is_group = False
         addressed = False
         if is_group:
@@ -9630,7 +7431,8 @@ class HumanCorePlugin(Star):
                     triggered_by_hf and hf_hint == "interject"
                 ):
                     addressed = True
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._dynamic_context", _amo_exc)
                 addressed = False
             if not addressed:
                 try:
@@ -9638,12 +7440,13 @@ class HumanCorePlugin(Star):
                         if isinstance(component, Comp.At) and str(getattr(component, "qq", "")) == str(event.get_self_id()):
                             addressed = True
                             break
-                except Exception:
-                    pass
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._dynamic_context", _amo_exc)
             if not addressed and self.heartflow is not None:
                 try:
                     addressed = bool(self.heartflow._addresses_bot(event.message_str or ""))
-                except Exception:
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._dynamic_context", _amo_exc)
                     addressed = False
         parts = [
             "【你的角色名】" + self_name + "（这是角色本名，不是平台昵称）",
@@ -9683,7 +7486,8 @@ class HumanCorePlugin(Star):
         ]
         try:
             city_block = _city_block(self.db.kv_get("his_city", "") or "")
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._dynamic_context", _amo_exc)
             city_block = ""
         if city_block:
             parts.append(city_block)
@@ -9697,15 +7501,16 @@ class HumanCorePlugin(Star):
                 travel_city = str(travel_row["city"])
                 try:
                     travel_spots = _city_pick_spots(self.scenic_spots(), travel_city, today_str())
-                except Exception:
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._dynamic_context", _amo_exc)
                     travel_spots = []
                 travel_text = _city_travel_block(
                     travel_city, weekday=_now().date().weekday() < 5, spots=travel_spots,
                 )
                 if travel_text:
                     parts.append(travel_text)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._dynamic_context", _amo_exc)
         try:
             he_city = str(self.db.kv_get("he_city", "") or "").strip()
             my_city = str(self.db.kv_get("his_city", "") or "").strip()
@@ -9719,8 +7524,8 @@ class HumanCorePlugin(Star):
                     "【他在】他现在在 " + he_city + "，你还在 " + (my_city or "东莞")
                     + "上班；你有点想他，但没过去。"
                 )
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._dynamic_context", _amo_exc)
         if follow_text:
             parts.append(follow_text)
         if wander_text:
@@ -9766,7 +7571,8 @@ class HumanCorePlugin(Star):
                 )
             try:
                 speakers = self._group_speaker_count(umo)
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._dynamic_context", _amo_exc)
                 speakers = 0
             quote_at = self.cfg_int("quote_group_speaker_threshold", 3)
             if speakers:
@@ -9799,8 +7605,8 @@ class HumanCorePlugin(Star):
                     + "、".join("「" + item + "」" for item in _show_hints) + "；"
                     "最多念一句给他，不要整篇念出来。"
                 )
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._dynamic_context", _amo_exc)
         if re.search(r"(怎么|如何|为什么|步骤|怎么办|该怎么做|教程|方法|建议|教我|能不能|是什么|该不该|可不可以)", event.message_str or ""):
             parts.append("【回答方式】这是咨询/步骤类问题：先给结论，最多 2-3 句，口语化，保留角色感，不要客服腔。")
         if self._dialect_active():
@@ -9858,8 +7664,8 @@ class HumanCorePlugin(Star):
             dialect_context = await self._dialect_kb_context(event.message_str or "")
             if dialect_context:
                 parts.append("【方言参考】只在合适口语词上偶尔用，不要硬改“就是/什么/怎么”，句子要通顺。\n" + dialect_context)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._dynamic_context", _amo_exc)
         relation_network = self._relation_network_text(uid)
         if relation_network:
             parts.append("【关系网】\n" + relation_network)
@@ -9881,7 +7687,8 @@ class HumanCorePlugin(Star):
                 ]
                 keep = 4 if is_group else 8
                 recent_text = render_recent_block(rows_now[-keep:], "你", keep)
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._dynamic_context", _amo_exc)
                 recent_text = ""
             if recent_text:
                 parts.append(
@@ -9896,7 +7703,8 @@ class HumanCorePlugin(Star):
             )
         try:
             _is_private_event = bool(event.is_private_chat())
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._dynamic_context", _amo_exc)
             _is_private_event = False
         try:
             if (
@@ -9907,12 +7715,13 @@ class HumanCorePlugin(Star):
                     "【天气提醒之后】你今晚已经提醒过他天气了，他说“知道了/好/嗯/收到”就自然应一句，"
                     "不要再提天气、带伞、加衣服，也不要追问；只有他主动再问天气才回答。"
                 )
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._dynamic_context", _amo_exc)
 
         try:
             merged_count = int(event.get_extra("amo_debounce_count") or 0)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._dynamic_context", _amo_exc)
             merged_count = 0
         if merged_count > 1:
             parts.append(
@@ -9922,11 +7731,13 @@ class HumanCorePlugin(Star):
             )
         try:
             last_at = to_float(self._last_reply_at.get(event.unified_msg_origin), 0)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._dynamic_context", _amo_exc)
             last_at = 0.0
         try:
             is_private = bool(event.is_private_chat())
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._dynamic_context", _amo_exc)
             is_private = False
         if is_private and last_at and now_ts() - last_at <= 120:
             parts.append(
@@ -9954,8 +7765,8 @@ class HumanCorePlugin(Star):
                     )
                 elif now_ts() - to_float(getattr(self, "_attribution_alert", {}).get(umo, 0), 0) < 600:
                     parts.append("【归属】上一轮你把他的经历说成了自己的；这次分清：他说的是他，你说的是你。")
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._dynamic_context", _amo_exc)
         parts.append(
             "以上是你的内在状态，只影响语气和句子长短，不影响你要不要接话。"
             "他来找你，哪怕你在上班、在忙，也先接住；"
@@ -9963,50 +7774,13 @@ class HumanCorePlugin(Star):
         )
         return "\n".join(parts)
 
-    @filter.on_llm_request()
-    async def on_llm_request(self, event: AstrMessageEvent, req):
-        try:
-            await self._ensure_ready()
-            if not self._ready or self.state is None:
-                return
-            if self._looks_like_command(event.message_str or ""):
-                return
-            context_text = await self._dynamic_context(event)
-            # 只走官方推荐的 extra_user_content_parts（临时 part）注入。
-            # 绝不能改 req.system_prompt：那里放每轮都变的内容会打散系统提示词前缀，
-            # 破坏模型侧缓存（成本涨 7-20 倍），上架审核也会因此被拒。
-            body = "<amo_state>\n" + context_text + "\n</amo_state>"
-            parts = getattr(req, "extra_user_content_parts", None)
-            if parts is None:
-                return
-            part = None
-            if TextPart is not None:
-                try:
-                    part = TextPart(text=body).mark_as_temp()
-                except Exception:
-                    part = None
-            if part is None:
-                # 老版本 AstrBot 拿不到 TextPart：用 dict 形式，同样只在本轮生效
-                part = {"type": "text", "text": body, "_no_save": True}
-            parts.append(part)
-        except Exception as exc:
-            logger.debug("[amo] 注入状态失败: %s" % exc)
-
-    @filter.on_llm_response()
-    async def on_llm_response(self, event: AstrMessageEvent, resp):
-        if self.heartflow is None:
-            return
-        try:
-            await self.heartflow.on_llm_response(event, resp)
-        except Exception as exc:
-            logger.debug("[amo] 心流回复记录失败: %s" % exc)
 
     @filter.after_message_sent()
     async def on_after_message_sent(self, event: AstrMessageEvent):
         try:
             self._last_reply_at[event.unified_msg_origin] = now_ts()
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin.on_after_message_sent", _amo_exc)
         if self.heartflow is None:
             return
         try:
@@ -10024,15 +7798,15 @@ class HumanCorePlugin(Star):
             try:
                 if not result.is_llm_result():
                     return
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin.on_decorating_result", _amo_exc)
             text = strip_chat_format("".join(
                 comp.text for comp in result.chain if isinstance(comp, Comp.Plain)
             ))
             try:
                 text = self._guard_self_location(text, self.state.current_activity().get("place"))
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin.on_decorating_result", _amo_exc)
             try:
                 if attribution_leak is not None and first_person_experience is not None:
                     body_now = event.message_str or ""
@@ -10047,8 +7821,8 @@ class HumanCorePlugin(Star):
                             alerts = {}
                             self._attribution_alert = alerts
                         alerts[str(event.unified_msg_origin)] = now_ts()
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin.on_decorating_result", _amo_exc)
             if self.gift is not None:
                 try:
                     self.gift.observe_reply(event, text)
@@ -10120,8 +7894,8 @@ class HumanCorePlugin(Star):
                     text, brush = strip_brushoff(text, event.message_str or "")
                     if brush:
                         logger.debug("[amo] 去掉赶人的话: %s" % brush)
-                except Exception:
-                    pass
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin.on_decorating_result", _amo_exc)
             text = self._trim_reply(text)
             result.chain = [Comp.Plain(text)]
 
@@ -10209,7 +7983,8 @@ class HumanCorePlugin(Star):
         try:
             for item in self.db.list_profiles(limit=500):
                 names[str(item.get("uid"))] = str(item.get("alias") or item.get("name") or "")
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._sediment_relations", _amo_exc)
             names = {}
 
         existing = {}
@@ -10293,8 +8068,8 @@ class HumanCorePlugin(Star):
         if umo:
             try:
                 await self._hydrate_recent(umo, 30)
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._tick", _amo_exc)
         if (
             not self.state.schedule.get(today_str())
             or self.db.kv_get("schedule_version", "") != SCHEDULE_VERSION
@@ -10303,8 +8078,8 @@ class HumanCorePlugin(Star):
             await self.state.ensure_schedule(umo)
         try:
             self.state.apply_schedule_events()
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._tick", _amo_exc)
 
         now = now_ts()
         if now - self._last_relation_decay > 3600:
@@ -10353,197 +8128,10 @@ class HumanCorePlugin(Star):
         if now - self._last_ritual >= 60:
             await self._maybe_rituals()
 
-    def _diary_data_root(self):
-        """插件数据目录 data/plugin_data/<plugin_name>（上架规范要求写在这里）。"""
-        try:
-            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
-            return os.path.join(str(get_astrbot_data_path()), "plugin_data", PLUGIN_NAME)
-        except Exception:
-            return os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
-    def _diary_dir(self):
-        """日记目录：默认 <插件数据目录>/diary，配置只能落在数据目录内。"""
-        setting = str(self.cfg_str("diary_dir", "") or "").strip()
-        root = self._diary_data_root()
-        if callable(_diary_resolve_dir):
-            return _diary_resolve_dir(setting, root)
-        return os.path.join(root, "diary") if root else (_DIARY_DEFAULT_DIR or "")
 
-    def _diary_clock(self):
-        """diary_time 默认 10:00。"""
-        raw = str(self.cfg_str("diary_time", "10:00") or "10:00").strip()
-        try:
-            hour, _, minute = raw.partition(":")
-            return max(0, min(23, int(hour))), max(0, min(59, int(minute or 0)))
-        except (TypeError, ValueError):
-            return 10, 0
 
-    async def _maybe_daily_diary(self):
-        """每天 diary_time（默认 10:00）给「昨天」写一篇日记。"""
-        if not self.cfg_bool("diary_enabled", True) or not callable(_diary_write):
-            return
-        now = _now()
-        hh, mm = self._diary_clock()
-        if (now.hour, now.minute) < (hh, mm):
-            return
-        if getattr(self, "_diary_writing", False):
-            return
-        end_day = (now - timedelta(days=1)).date()
-        try:
-            last_written = str(self.db.kv_get("diary_last_day", "") or "")
-            start_day = (date.fromisoformat(last_written) + timedelta(days=1)) if last_written else end_day
-        except Exception:
-            start_day = end_day
-        if start_day > end_day:
-            return
-        if (end_day - start_day).days > 6:
-            start_day = end_day - timedelta(days=6)
-        days = []
-        cursor = start_day
-        while cursor <= end_day:
-            days.append(cursor)
-            cursor += timedelta(days=1)
-        self._diary_writing = True
-        try:
-            for day in days:
-                guard = "diary_written:" + day.isoformat()
-                attempt_key = "diary_attempt:" + day.isoformat()
-                try:
-                    if self.db.kv_get(guard, ""):
-                        continue
-                    last = to_float(self.db.kv_get(attempt_key, 0), 0)
-                    if last and now_ts() - last < 1800:
-                        continue
-                except Exception:
-                    pass
-                try:
-                    text = await self._generate_daily_diary(day)
-                    if not text:
-                        try:
-                            self.db.kv_set(attempt_key, now_ts())
-                        except Exception:
-                            pass
-                        continue
-                    path = _diary_write(self._diary_dir(), day, text)
-                    try:
-                        self.db.kv_set(guard, path)
-                        self.db.kv_set("diary_last_day", day.isoformat())
-                    except Exception:
-                        pass
-                    logger.info("[amo] 日记已写: %s" % path)
-                except Exception as exc:
-                    logger.warning("[amo] 写日记失败: %s" % exc)
-                    try:
-                        self.db.kv_set(attempt_key, now_ts())
-                    except Exception:
-                        pass
-        finally:
-            self._diary_writing = False
 
-    async def _diary_chat_lines(self, day):
-        """当天聊天 → 「谁：内容」行；取不到就返回空列表。"""
-        day_start = int(datetime.combine(day, datetime.min.time()).timestamp())
-        mem = self._data_mem()
-        if mem is None or not callable(getattr(mem, "messages_between", None)):
-            return []
-        try:
-            rows = await self._data_call(
-                "messages_between", self._data_bot_id(), day_start, day_start + 86400, "", 500,
-            ) or []
-        except Exception as exc:
-            logger.debug("[amo] 日记取聊天失败: %s" % exc)
-            return []
-        lines = []
-        for row in rows:
-            text = str(row.get("content") or "").strip().replace("\n", " ")
-            if not text or str(row.get("role") or "") == "system":
-                continue
-            who = "我" if str(row.get("role") or "") == "bot" else (str(row.get("name") or "") or "他")
-            lines.append(who + "：" + text[:200])
-        return lines
-
-    def _diary_hourly_lines(self, day):
-        """当天每小时小日记 → 「HH:MM 内容」行。"""
-        try:
-            cursor = self.db.conn.execute(
-                "SELECT hour, text FROM schedule_diary WHERE day=? ORDER BY hour ASC",
-                (day.isoformat(),),
-            )
-            rows = cursor.fetchall()
-        except Exception:
-            return []
-        lines = []
-        for hour, text in rows:
-            text = str(text or "").strip()
-            if text:
-                lines.append(str(hour)[:5] + " " + text[:160])
-        try:
-            log = self.db.kv_get("travel_log", []) or []
-            for entry in log[-10:]:
-                if not isinstance(entry, dict):
-                    continue
-                if str(entry.get("day") or "") != day.isoformat():
-                    continue
-                city = str(entry.get("city") or "").strip()
-                hour = str(entry.get("hour") or "").strip()
-                if city and hour:
-                    if entry.get("journey"):
-                        lines.append(hour + " 她坐车去" + city + "陪他，路上约 2 小时")
-                    elif entry.get("solo"):
-                        if entry.get("back"):
-                            lines.append(hour + " 她自己从" + city + "旅游回来了")
-                        else:
-                            lines.append(hour + " 她自己出门去" + city + "旅游，晚上住酒店")
-                    elif entry.get("back"):
-                        lines.append(hour + " 跟他从" + city + "回来了")
-                    else:
-                        lines.append(hour + " 跟他出门到了" + city + "，晚上住酒店")
-        except Exception:
-            pass
-        try:
-            rejects = self.db.kv_get("follow_reject_log", []) or []
-            for entry in rejects[-5:]:
-                if not isinstance(entry, dict):
-                    continue
-                if str(entry.get("day") or "") != day.isoformat():
-                    continue
-                city = str(entry.get("city") or "").strip()
-                hour = str(entry.get("hour") or "").strip()
-                if city:
-                    lines.append(hour + " 她说想陪他去" + city + "，他说让她好好上班，她闷闷不乐")
-        except Exception:
-            pass
-        return lines
-
-    async def _generate_daily_diary(self, day):
-        """用当天的聊天 + 每小时日程小日记，写一篇大肥鱼口吻的日记。"""
-        if not callable(_diary_write):
-            return ""
-        chat_lines = await self._diary_chat_lines(day)
-        hourly_lines = self._diary_hourly_lines(day)
-        if not chat_lines and not hourly_lines:
-            return ""
-        umo = self._last_umo or self._first_private_umo()
-        try:
-            persona = await self.llm.persona(umo)
-        except Exception:
-            persona = ""
-        system = (
-            (persona or "你是一个生活在中国城市的普通女孩，说话自然口语化。") +
-            "\n\n你现在要保持这个人格，用自己的口吻写日记：第一人称、像真人写给自己的，"
-            "不是助手汇报，也不要提 AI、模型、插件、日程表这些词。"
-        )
-        prompt = _diary_build_prompt(day, chat_lines, hourly_lines)
-        try:
-            text = await self.llm.chat_raw(umo, system, prompt)
-        except Exception as exc:
-            logger.warning("[amo] 日记生成失败: %s" % exc)
-            return ""
-        text = str(text or "").strip()
-        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
-        text = re.sub(r"\s*```$", "", text).strip()
-        text = re.sub(r"^我的日记[^\n]*\n+", "", text)
-        return text if len(text) >= 10 else ""
 
     async def _maybe_milestone_archive(self):
         """每 N 轮私聊压成一条「里程碑」记忆；原始聊天不删，只多一条归纳。"""
@@ -10566,7 +8154,8 @@ class HumanCorePlugin(Star):
         min_messages = max(4, self.cfg_int("milestone_min_messages", 12))
         try:
             profiles = self.db.list_profiles(limit=20) or []
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._milestone_archive_once", _amo_exc)
             profiles = []
         for profile in profiles:
             uid = str(profile.get("uid") or "")
@@ -10578,7 +8167,8 @@ class HumanCorePlugin(Star):
             key = "milestone_ts:" + uid
             try:
                 since = to_int(self.db.kv_get(key, 0))
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._milestone_archive_once", _amo_exc)
                 since = 0
             # 按这个人的会话取（umo），会话里双方的话都在；不能按 uid（她的行是 uid='bot'），
             # 也不能不带范围（会把所有人的聊天拉进来）。
@@ -10602,8 +8192,8 @@ class HumanCorePlugin(Star):
                 # 注意不能用 rows[-1]（那是本批 400 条里最旧的一条），否则会从历史开始滚。
                 try:
                     self.db.kv_set(key, now_ts())
-                except Exception:
-                    pass
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._milestone_archive_once", _amo_exc)
                 logger.info("[amo] 里程碑起点已设置（从现在开始）: uid=%s" % uid)
                 continue
             if not _ms_should_archive(rows, every, min_messages):
@@ -10627,8 +8217,8 @@ class HumanCorePlugin(Star):
                 try:
                     last_ts = int(rows[-1].get("created_at") or now_ts())
                     self.db.kv_set(key, max(last_ts + 1, since))
-                except Exception:
-                    pass
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._milestone_archive_once", _amo_exc)
 
     async def _maybe_daily_digest(self):
         """每天上午把"昨天"的聊天压成一条长期记忆（阶段记忆）。"""
@@ -10642,14 +8232,15 @@ class HumanCorePlugin(Star):
         try:
             if self.db.kv_get(guard, ""):
                 return
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._maybe_daily_digest", _amo_exc)
         mem = self._data_mem()
         if mem is None or not callable(getattr(mem, "recall_messages", None)):
             return
         try:
             profiles = self.db.list_profiles(limit=20) or []
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._maybe_daily_digest", _amo_exc)
             profiles = []
         digest_written = 0
         digest_failed = 0
@@ -10738,8 +8329,8 @@ class HumanCorePlugin(Star):
         if digest_written or (digest_failed == 0 and digest_attempted == 0):
             try:
                 self.db.kv_set(guard, today)
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._maybe_daily_digest", _amo_exc)
         elif digest_failed:
             try:
                 tries = to_int(self.db.kv_get("daily_digest_tries:" + today, 0), 0) + 1
@@ -10747,23 +8338,24 @@ class HumanCorePlugin(Star):
                 if tries >= 3:
                     self.db.kv_set(guard, today)
                     logger.warning("[amo] 每日总结连续失败 %d 次，今天不再重试" % tries)
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._maybe_daily_digest", _amo_exc)
 
     def _first_private_umo(self):
         try:
             for profile in self.db.list_profiles(limit=50):
                 if profile.get("private_umo"):
                     return profile["private_umo"]
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._first_private_umo", _amo_exc)
         return ""
 
     async def _auto_learn(self):
         """定时提炼长期事实，写进外挂记忆插件；本插件不再存记忆。"""
         try:
             users = self.db.active_users(now_ts() - 3600, limit=2)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._auto_learn", _amo_exc)
             return
         for user in users:
             uid = str(user.get("uid", ""))
@@ -10809,25 +8401,10 @@ class HumanCorePlugin(Star):
             except Exception as exc:
                 logger.debug("[amo] 自动学习失败: %s" % exc)
 
-    def _is_proactive_friend(self, profile):
-        return str(profile.get("relation") or "普通") in ("熟识", "相恋")
 
     def _pending_key(self, uid):
         return "proactive_pending_" + str(uid)
 
-    def _set_proactive_pending(self, uid, kind, text, umo=""):
-        self.db.kv_set(self._pending_key(uid), {
-            "sent_at": now_ts(), "kind": kind, "text": str(text or ""),
-            # 记下真正发出去的会话：追问要回同一个平台，否则会「飞书问完、QQ 追」。
-            "umo": str(umo or ""),
-            "followup": False, "mood": False,
-        })
-
-    def _clear_proactive_pending(self, uid):
-        pending = self.db.kv_get(self._pending_key(uid), None)
-        if pending:
-            self.db.kv_set(self._pending_key(uid), {})
-            self.db.kv_set("proactive_ignored_" + str(uid), 0)
 
     def _depressed_active(self, uid):
         return to_float(self.db.kv_get("proactive_depressed_until_" + str(uid), 0), 0) > now_ts()
@@ -10836,15 +8413,6 @@ class HumanCorePlugin(Star):
         hours = max(1, self.cfg_int("proactive_depressed_hours", 24))
         self.db.kv_set("proactive_depressed_until_" + str(uid), now_ts() + hours * 3600)
 
-    def _try_soothe(self, uid, text):
-        if not self._depressed_active(uid):
-            return
-        words = ("抱抱", "亲亲", "哄", "对不起", "别难过", "喜欢你", "爱你", "怎么啦", "我在", "在呢", "乖")
-        if any(word in str(text or "") for word in words):
-            self.db.kv_set("proactive_depressed_until_" + str(uid), 0)
-            self.db.kv_set("proactive_ignored_" + str(uid), 0)
-            self.state.nudge(委屈=-8, 郁闷=-8, 开心=5, 依恋=3)
-            logger.debug("[amo] 抑郁状态被哄好: %s" % uid)
 
     # 每天的固定问候：kind、开关、时段、默认时段
     RITUAL_SPECS = (
@@ -10889,323 +8457,17 @@ class HumanCorePlugin(Star):
         ],
     }
 
-    @staticmethod
-    def _followup_topics(text):
-        """追问别再问同一件事：按话题打标，避开上一句已经问过的内容。"""
-        text = str(text or "")
-        groups = (
-            ("food", ("吃", "饭", "饿", "外卖", "餐")),
-            ("comfort", ("疼", "难受", "舒服", "药", "撑着")),
-            ("work", ("下班", "加班", "上班", "项目")),
-        )
-        return {name for name, words in groups if any(word in text for word in words)}
 
-    def _followup_text(self, uid, kind, previous_text=""):
-        """追问换着说法：同一句不连着出现，也别把刚问的问题再问一遍。"""
-        templates = [t for t in (self.FOLLOWUP_TEMPLATES.get(str(kind)) or self.FOLLOWUP_TEMPLATES["greet"]) if t]
-        if not templates:
-            return "？怎么不理我了？"
-        key = "proactive_followup_last_%s" % uid
-        try:
-            last = str(self.db.kv_get(key, "") or "")
-        except Exception:
-            last = ""
-        pool = [t for t in templates if t != last]
-        topics = self._followup_topics(previous_text)
-        if topics:
-            fresh = [t for t in pool if not (self._followup_topics(t) & topics)]
-            pool = fresh
-        if not pool:
-            # 同一类话题的问句都问过了，就换成「怎么不理我」的催回，别再问一遍。
-            pool = [t for t in self.FOLLOWUP_TEMPLATES["greet"] if t != last] or list(self.FOLLOWUP_TEMPLATES["greet"])
-        text = random.choice(pool)
-        try:
-            self.db.kv_set(key, text)
-        except Exception:
-            pass
-        return text
 
-    async def _check_proactive_pending(self):
-        try:
-            profiles = self.db.proactive_profiles(limit=100)
-        except Exception:
-            return
-        now = now_ts()
-        for profile in profiles:
-            uid = str(profile.get("uid") or "")
-            if not uid:
-                continue
-            pending = self.db.kv_get(self._pending_key(uid), None)
-            if not isinstance(pending, dict) or not pending.get("sent_at"):
-                continue
-            # 追问要回真正发出这条主动消息的平台（飞书发的就在飞书追）；
-            # 老数据没有 umo 时退回主页会话。
-            umo = str(pending.get("umo") or "") or str(profile.get("private_umo") or "")
-            if not umo:
-                continue
-            age = now - to_float(pending.get("sent_at"), 0)
-            if age > 6 * 3600:
-                self.db.kv_set(self._pending_key(uid), {})
-                continue
-            followup_minutes = self.cfg_int("proactive_followup_minutes", 30)
-            # 0 / 负数 = 关掉追问，只保留「心情变差」这一档
-            followup_after = 10 ** 9 if followup_minutes <= 0 else max(5, followup_minutes) * 60
-            # 0 / 负数 = 关掉「没回复就心情变差」；默认跟 schema 一致（30 分钟）
-            mood_minutes = max(0, self.cfg_int("proactive_no_reply_minutes", 30))
-            mood_after = mood_minutes * 60 if mood_minutes else 10 ** 9
-            if not pending.get("followup") and age >= followup_after:
-                if not quiet_now(self.cfg_str("quiet_hours", "23:30-07:30")):
-                    kind = str(pending.get("kind") or "greet")
-                    followup = self._followup_text(uid, kind, pending.get("text"))
-                    if await self._send_to_umo(umo, followup):
-                        pending["followup"] = True
-                        pending["followup_at"] = now
-                        self.db.kv_set(self._pending_key(uid), pending)
-                        # 追问本身也是一句她说过的话，不记下来会引出下一轮「你怎么不理我」
-                        self._remember_bot_message(umo, followup)
-                        self._mark_bot_initiated(umo)
-                        logger.debug("[amo] 主动私聊未回复，已追问: %s" % uid)
-            if not pending.get("mood") and age >= mood_after:
-                pending["mood"] = True
-                self.db.kv_set(self._pending_key(uid), pending)
-                ignored = to_int(self.db.kv_get("proactive_ignored_" + uid, 0), 0) + 1
-                self.db.kv_set("proactive_ignored_" + uid, ignored)
-                self.state.nudge(委屈=5, 郁闷=5, 生气=2, 依恋=2)
-                if ignored >= max(1, self.cfg_int("proactive_depressed_count", 3)):
-                    self._set_depressed(uid)
-                logger.debug("[amo] 主动私聊仍无回复，心情变差: %s (%d)" % (uid, ignored))
 
-    def _ritual_in_window(self, spec):
-        try:
-            start, end = str(spec).split("-", 1)
-            return in_minute_range(minutes_now(), parse_hhmm(start), parse_hhmm(end))
-        except Exception:
-            return False
 
-    def _ritual_umos(self, profile):
-        """她能给你发问候的会话：QQ、飞书…按最近说过话排序。"""
-        uid = str(profile.get("uid") or "")
-        items = []
-        try:
-            data = self.db.kv_get("channels:%s" % uid, {}) or {}
-        except Exception:
-            data = {}
-        if isinstance(data, dict):
-            entries = [value for value in data.values() if isinstance(value, dict) and value.get("umo")]
-            entries.sort(key=lambda value: -to_float(value.get("ts"), 0))
-            for value in entries:
-                umo = str(value.get("umo") or "")
-                if umo and umo not in items:
-                    items.append(umo)
-        private_umo = str(profile.get("private_umo") or "")
-        if private_umo and private_umo not in items:
-            items.append(private_umo)
-        return items
 
-    def _recent_greeting(self, uid, minutes):
-        """最近一次每日问候发在哪个平台、隔了多久（QQ/飞书算同一个人）。"""
-        if not uid:
-            return False
-        try:
-            data = self.db.kv_get("greeting_last:%s" % uid, {}) or {}
-        except Exception:
-            data = {}
-        if not isinstance(data, dict):
-            return False
-        return _within_minutes(data.get("ts"), now_ts(), minutes)
 
-    def _mark_greeting(self, uid, kind, umo):
-        try:
-            self.db.kv_set("greeting_last:%s" % str(uid), {
-                "kind": str(kind),
-                "umo": str(umo or ""),
-                "ts": now_ts(),
-            })
-        except Exception:
-            pass
 
-    def _ritual_pending(self, profile):
-        """现在是否正处在「还没发」的问候时段。
-
-        主动消息要让路：早晨 8 点主动搭话和早安问候撞在一起，就是
-        「两个地方各响一次」的来源。非恋人的好友、刚问候过的、没有会话可发的，
-        都不算待发，否则会白让路一整个时段。
-        """
-        if not self.cfg_bool("ritual_enabled", True):
-            return False
-        if str(profile.get("relation") or "") != "相恋":
-            return False
-        uid = str(profile.get("uid") or "")
-        umos = self._ritual_umos(profile)
-        if not uid or not umos:
-            return False
-        if self._recent_greeting(uid, self.cfg_int("ritual_min_gap_minutes", 30)):
-            return False
-        for kind, enabled_key, window_key, default_window in self.RITUAL_SPECS:
-            if not self.cfg_bool(enabled_key, True):
-                continue
-            if not self._ritual_in_window(self.cfg_str(window_key, default_window)):
-                continue
-            if self.db.kv_get("ritual_" + kind + "_" + uid + "_" + today_str(), False):
-                continue
-            if not self._ritual_should_send(umos, kind):
-                continue
-            return True
-        return False
-
-    def _ritual_should_send(self, umos, kind):
-        """今天这个问候还该不该发；QQ/飞书的近聊一起算，避免两边各问候一遍。"""
-        umos = list(umos) if isinstance(umos, (list, tuple, set)) else [umos]
-        rows = []
-        for item in umos:
-            try:
-                rows.extend(self._recent(item, 10))
-            except Exception:
-                pass
-        rows.sort(key=lambda row: to_float(row.get("created_at"), 0))
-        now = now_ts()
-        recent_gap = max(5, self.cfg_int("ritual_skip_recent_minutes", 45)) * 60
-        if rows:
-            last_at = to_float(rows[-1].get("created_at"), 0)
-            if last_at and now - last_at < recent_gap:
-                return False
-        if not self.cfg_bool("ritual_skip_if_greeted", True):
-            return True
-        # 只认「他」问候过：她自己那句「吃了没 / 晚安」多半是主动消息或追问，
-        # 算进来会把当天的问候整段吃掉（午饭问候时有时无就是这么来的）。
-        texts = [str(row.get("content") or "") for row in rows if str(row.get("role") or "") == "user"]
-        joined = "\n".join(texts[-10:])
-        if kind == "morning":
-            return not bool(re.search(r"(?:^|\s)早(?:\s|$|[!！。~～])|早安|早上好|早上好呀|我醒了|起床了|还没起来吗|醒了没", joined))
-        if kind == "goodnight":
-            return not bool(re.search(r"晚安|睡了|睡觉|先睡|去睡|早点休息", joined))
-        if kind == "lunch":
-            return not bool(re.search(r"午饭|中午吃|吃啥|吃什么|吃饭|吃了没|吃了吗", joined))
-        return True
-
-    async def _maybe_rituals(self):
-        if not self.cfg_bool("ritual_enabled", True):
-            return
-        now = now_ts()
-        if now - to_float(getattr(self, "_last_ritual", 0), 0) < 60:
-            return
-        self._last_ritual = now
-        try:
-            profiles = self.db.proactive_profiles(limit=100)
-        except Exception:
-            return
-        snap = self.state.snapshot()
-        for profile in profiles:
-            if str(profile.get("relation") or "") != "相恋":
-                continue
-            uid = str(profile.get("uid") or "")
-            umos = self._ritual_umos(profile)
-            if not umos or not uid:
-                continue
-            home_umo = str(profile.get("private_umo") or "")
-            name = str(profile.get("alias") or profile.get("name") or "宝").strip() or "宝"
-            for kind, enabled_key, window_key, default_window in self.RITUAL_SPECS:
-                if not self.cfg_bool(enabled_key, True):
-                    continue
-                if not self._ritual_in_window(self.cfg_str(window_key, default_window)):
-                    continue
-                # 晚安跨零点：00:00-02:00 仍算前一晚，否则 22:00 发过、0 点后 key 变了再发一次
-                ritual_day = today_str()
-                if kind == "goodnight" and minutes_now() < 120:
-                    ritual_day = (_now() - timedelta(days=1)).date().isoformat()
-                daily_key = "ritual_" + kind + "_" + uid + "_" + ritual_day
-                if self.db.kv_get(daily_key, False):
-                    continue
-                if kind == "morning" and (snap.get("activity") or {}).get("category") == "sleep":
-                    continue
-                if self._recent_greeting(uid, self.cfg_int("ritual_min_gap_minutes", 30)):
-                    continue
-                if not self._ritual_should_send(umos, kind):
-                    continue
-                targets = _greeting_targets(
-                    umos,
-                    home_umo,
-                    randomize=self.cfg_bool("ritual_random_platform", True),
-                )
-                if not targets:
-                    continue
-                text = ""
-                try:
-                    text = await self.llm.gen_proactive(targets[0], profile, snap, kind)
-                except Exception as exc:
-                    logger.debug("[amo] 仪式生成失败: %s" % exc)
-                if not text:
-                    # 兜底文案也要跟着方言开关：关掉方言/普通话时不能冒出「吃啥子哦」
-                    lunch_text = name + "，今天中午吃什么呢？"
-                    try:
-                        if self._dialect_active() and "贵州" in self._dialect_style():
-                            lunch_text = name + "，今天中午吃啥子哦？"
-                    except Exception:
-                        pass
-                    text = {
-                        "goodnight": name + "，太晚了，我先去睡觉啦，你也早点睡。",
-                        "morning": name + "，早上好呀，还没起来吗？",
-                        "lunch": lunch_text,
-                    }.get(kind, "")
-                if not text:
-                    continue
-                sent_umo = ""
-                for candidate in targets:
-                    if await self._send_to_umo(candidate, text):
-                        sent_umo = candidate
-                        break
-                if not sent_umo:
-                    continue
-                # 只标记真正收到的那一处；另一头靠 greeting_last 跨平台去重，
-                # 不能把「她刚跟我说过话」的副作用（火气/打扰冷却）打到没收到消息的平台
-                self._mark_bot_initiated(sent_umo)
-                self._mark_greeting(uid, kind, sent_umo)
-                self.db.kv_set(daily_key, True)
-                self.db.log_proactive(uid, kind, text)
-                logger.info(
-                    "[amo] 每日问候(%s) -> %s [%s]: %s"
-                    % (kind, name, str(sent_umo).split(":", 1)[0], text[:200])
-                )
-                break
-
-    def _choose_proactive_kind(self, profile, snap, category=""):
-        relation = profile.get("relation", "普通")
-        mood = snap["mood"]
-        painful = (
-            snap["health"]["sick"]
-            or snap["period"]["pain"] >= 6
-            or mood["委屈"] >= 60
-            or mood["郁闷"] >= 65
-        )
-        if relation == "相恋" and painful and self.cfg_bool("proactive_comfort", True):
-            return "comfort"
-        activity = str((snap.get("activity") or {}).get("activity") or "")
-        if category == "play" and ("游戏" in activity or "打游戏" in activity):
-            return "game"
-        if category == "meal":
-            return "meal"
-        if category in ("rest", "play"):
-            return "slack"
-        if category == "commute":
-            return "offwork" if _now().hour >= 16 else "commute"
-        if relation in ("熟识", "相恋") and random.random() < self.cfg_float("proactive_share_prob", 0.35):
-            return "share"
-        return "greet"
 
 
     # ---- 主动消息节流 ----
-    def _proactive_user_just_talked(self, profile, now):
-        """对方刚说过话就别主动插话。0 表示关闭这项检查。"""
-        minutes = max(0, self.cfg_int("proactive_user_idle_minutes", 10))
-        if not minutes:
-            return False
-        last_user_at = to_float(profile.get("last_seen"), 0)
-        return bool(last_user_at) and (now - last_user_at) < minutes * 60
 
-    def _proactive_forced_allowed(self, profile, now):
-        """「日常关心」也要跟上次主动拉开间隔，避免重启后立刻又发。"""
-        gap = max(1, self.cfg_int("proactive_forced_gap_minutes", 30)) * 60
-        return (now - to_float(profile.get("last_proactive", 0))) >= gap
 
     def _forced_hour_key(self, uid):
         return "proactive_forced_hour_" + str(uid or "")
@@ -11215,7 +8477,8 @@ class HumanCorePlugin(Star):
         mark = today_str() + ":" + str(_now().hour)
         try:
             return str(self.db.kv_get(self._forced_hour_key(uid), "")) == mark
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._forced_sent_this_hour", _amo_exc)
             return self._last_proactive_activity.get(str(uid)) == mark
 
     def _mark_forced_hour(self, uid):
@@ -11223,8 +8486,8 @@ class HumanCorePlugin(Star):
         self._last_proactive_activity[str(uid)] = mark
         try:
             self.db.kv_set(self._forced_hour_key(uid), mark)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._mark_forced_hour", _amo_exc)
 
     # ---- 主动消息多平台轮换 ----
     def _record_channel(self, uid, umo, platform):
@@ -11241,359 +8504,12 @@ class HumanCorePlugin(Star):
         except Exception as exc:
             logger.debug("[amo] 记录通道失败: %s" % exc)
 
-    def _proactive_candidates(self, profile, primary):
-        """主动消息的候选平台：选中的优先，其次是其它通道，最后 private_umo。
-
-        最近刚被主动联系过的平台会被跳过，避免兜底时连着骚扰同一处。
-        """
-        items = []
-
-        def push(umo, force=False):
-            umo = str(umo or "")
-            if not umo or umo in items:
-                return
-            if not force and self._recent_bot_initiated(umo, 3600):
-                return
-            items.append(umo)
-
-        push(primary, force=True)
-        if self.cfg_bool("proactive_rotate_enabled", True):
-            try:
-                data = self.db.kv_get("channels:%s" % (profile.get("uid") or ""), {}) or {}
-            except Exception:
-                data = {}
-            if isinstance(data, dict):
-                entries = [v for v in data.values() if isinstance(v, dict) and v.get("umo")]
-                entries.sort(key=lambda v: -float(v.get("ts") or 0))
-                for value in entries:
-                    push(value.get("umo"))
-        push(profile.get("private_umo"))
-        return items
-
-    def _pick_proactive_umo(self, profile):
-        """选这轮主动消息先发哪个平台；关掉开关就用 private_umo。"""
-        fallback = str(profile.get("private_umo") or "")
-        if not self.cfg_bool("proactive_rotate_enabled", True):
-            return fallback
-        uid = str(profile.get("uid") or "")
-        try:
-            data = self.db.kv_get("channels:%s" % uid, {}) or {}
-        except Exception:
-            return fallback
-        if not isinstance(data, dict):
-            return fallback
-        items = []
-        for value in data.values():
-            if isinstance(value, dict) and value.get("umo"):
-                items.append((float(value.get("ts") or 0), str(value.get("umo"))))
-        if not items:
-            return fallback
-        items.sort(key=lambda pair: -pair[0])
-        if len(items) == 1:
-            return items[0][1]
-        window = max(1, self.cfg_int("proactive_recent_minutes", 30)) * 60
-        if now_ts() - items[0][0] <= window:
-            return items[0][1]
-        last = str(self.db.kv_get("last_channel:%s" % uid, "") or "")
-        for _, umo in items:
-            if umo != last:
-                return umo
-        return items[0][1]
 
 
-    def _weather_alert_umos(self):
-        """天气提醒的候选会话，按最近活跃排序。
 
-        只用她**真的收到过消息**的会话（channels:<uid> + private_umo），
-        没配飞书的人候选里就只有 QQ，不会随机到一个不存在的平台。
-        """
-        pairs = []
-        try:
-            for profile in self.db.proactive_profiles(limit=20):
-                uid = str(profile.get("uid") or "")
-                data = self.db.kv_get("channels:%s" % uid, {}) or {}
-                if isinstance(data, dict):
-                    for value in data.values():
-                        if isinstance(value, dict) and value.get("umo"):
-                            pairs.append((float(value.get("ts") or 0), str(value["umo"])))
-                item = str(profile.get("private_umo") or "")
-                if item:
-                    pairs.append((0.0, item))
-        except Exception as exc:
-            logger.debug("[amo] 天气提醒选平台失败: %s" % exc)
-        pairs.sort(key=lambda pair: -pair[0])
-        seen = []
-        for _, umo in pairs:
-            if umo and umo not in seen:
-                seen.append(umo)
-        if not seen:
-            fallback = self._last_umo or self._first_private_umo()
-            if fallback:
-                seen.append(fallback)
-        return seen
 
-    def _pick_weather_alert_umo(self):
-        """兼容旧调用：返回最该优先尝试的那个会话。"""
-        items = self._weather_alert_umos()
-        return items[0] if items else ""
 
-    @staticmethod
-    def _clean_weather_alert(text):
-        """把模型偶尔蹦出的客服腔/播报腔挡掉，宁可退回模板。"""
-        value = str(text or "").strip().strip('"').strip("“”").strip()
-        value = re.sub(r"^(?:天气提醒|提醒你|温馨提示)[：:，,\s]*", "", value)
-        for bad in ("请注意", "建议您", "提醒您", "天气预报", "温馨提示", "作为AI", "作为 AI", "助手"):
-            if bad in value:
-                return ""
-        if len(value) > 80:
-            return ""
-        return value
 
-    async def _weather_alert_text(self, umo, tomorrow, fallback):
-        """用她自己的语气说这句提醒；模型失败就退回模板。"""
-        facts = []
-        day_text = (str(tomorrow.get("textDay") or "") + " " + str(tomorrow.get("textNight") or "")).strip()
-        if day_text:
-            facts.append("明天天气：" + day_text)
-        if tomorrow.get("tempMax"):
-            facts.append("明天最高 " + str(tomorrow.get("tempMax")) + "℃")
-        recent_lines = []
-        try:
-            for row in self._recent(umo, 8):
-                content = str(row.get("content") or "").strip()
-                if not content:
-                    continue
-                who = "他" if str(row.get("role") or "") == "user" else "你"
-                recent_lines.append(who + "：" + content[:80])
-        except Exception:
-            recent_lines = []
-        try:
-            state_text = self.state.prompt_text(self.state.snapshot())
-        except Exception:
-            state_text = ""
-        system = (
-            await self.llm.persona(umo) + "\n\n"
-            "规则：你就是角色本人，只输出要发出去的消息，不要解释、不要旁白、不要复述数据。"
-        )
-        prompt = (
-            (state_text + "\n" if state_text else "")
-            + "事实：\n" + "\n".join(facts) + "\n"
-            + ("最近聊天：\n" + "\n".join(recent_lines) + "\n" if recent_lines else "")
-            + "参考说法（不要照抄）：" + fallback + "\n"
-            + "请用你平时跟他说话的语气，主动提一句明天的天气。\n"
-            "要求：只发一句，20-30 字以内；像真人随口说的，不要像天气播报、客服或助手；\n"
-            "不要用“提醒您/请注意/建议您/记得带伞哦/注意保暖”这种模板，不要罗列温度风力；\n"
-            "可以带一点情绪（关心、吐槽、嫌麻烦都行），但别煽情；不要问“要不要带伞”，不要重复你刚说过的话。"
-        )
-        try:
-            text = await self.llm.chat(umo, system, prompt, limit=60)
-        except Exception as exc:
-            logger.debug("[amo] 天气提醒文案生成失败: %s" % exc)
-            text = ""
-        text = self._clean_weather_alert(text)
-        return text or fallback
-
-    async def _weather_query_context(self, text=""):
-        """他问天气时，用缓存里的「现在天气 + 今天 + 明天」拼一段给他看。
-
-        只有缓存过期才会真的请求和风（现在天气 30 分钟一份、预报 3 小时一份），
-        所以连着问十遍通常一次都不多请。
-        """
-        key = self.cfg_str("hefeng_key", "")
-        city = (
-            self.cfg_str("weather_city", "").strip()
-            or str((getattr(self.state, "schedule_profile", {}) or {}).get("city") or "").strip()
-            or "贵阳"
-        )
-        now_data = {}
-        try:
-            now_data = await self.state.refresh_weather()
-        except Exception as exc:
-            logger.debug("[amo] 天气查询取现在天气失败: %s" % exc)
-        if not now_data:
-            now_data = getattr(self.state, "weather", {}) or {}
-        items = []
-        if key:
-            try:
-                items = await self.state._fetch_qweather_daily(key, city, 3)
-            except Exception as exc:
-                logger.debug("[amo] 天气查询取预报失败: %s" % exc)
-        today = items[0] if items else {}
-        tomorrow = items[1] if len(items) > 1 else {}
-        brief = forecast_brief(now_data, today, tomorrow)
-        if not brief:
-            logger.info("[amo] 天气查询：没有可用数据")
-            return "【天气查询】这会儿取不到天气数据，别编温度，直接说看不太准。"
-        logger.info("[amo] 天气查询: %s" % brief)
-        return "【天气查询】" + brief
-
-    async def _maybe_weather_alert(self):
-        """明天天气变坏时，到点提醒一次（每天最多一条）。
-
-        判断一天只做两次：
-        - 早上 `weather_alert_morning_time`（默认 08:00）：只判断、不发送；
-        - 晚上 `weather_alert_time`（默认 20:00）：到点才真的发预报，
-          且**跳过预报缓存**拿最新一份，保证当天晚上这条的准确性。
-
-        以前每 30 秒的后台循环都会重算一遍，日志刷屏、还每次都要请一次和风接口。
-        用 `weather_alert_checked`（形如 `2026-11-08|evening`）记住今天哪个槽位
-        已经判断过，没到点 / 判断过的直接返回。
-        """
-        if not self.cfg_bool("weather_alert_enabled", False):
-            return
-        key = self.cfg_str("hefeng_key", "")
-        if not key:
-            return
-        target = self.cfg_str("weather_alert_time", "20:00")
-        evening_min = parse_clock(target, 20, 0)
-        morning_raw = str(self.cfg_str("weather_alert_morning_time", "08:00") or "").strip()
-        morning_min = parse_clock(morning_raw, 8, 0) if morning_raw else None
-        now = _now()
-        today = today_str()
-        if str(self.db.kv_get("weather_alert_sent", "") or "") == today:
-            return
-        checked = str(self.db.kv_get("weather_alert_checked", "") or "")
-        slot = next_check_slot(
-            now.hour * 60 + now.minute, morning_min, evening_min, checked, today
-        )
-        if not slot:
-            return
-        label = "早上" if slot == "morning" else "晚上"
-        city = (
-            self.cfg_str("weather_city", "").strip()
-            or str((getattr(self.state, "schedule_profile", {}) or {}).get("city") or "").strip()
-            or "贵阳"
-        )
-        # 晚上要发预警，必须用最新预报：跳过 3 小时缓存。
-        items = await self.state._fetch_qweather_daily(
-            key, city, 3, fresh=(slot == "evening")
-        )
-        if len(items) < 2:
-            # 拿不到预报就别每 30 秒重试，今天不提醒。
-            self.db.kv_set("weather_alert_checked", slot_key(today, slot))
-            return
-        text = evaluate_weather_alert(
-            items[0], items[1], self.cfg_int("weather_alert_temp_drop", 8)
-        )
-        self.db.kv_set("weather_alert_checked", slot_key(today, slot))
-        if not text:
-            logger.info("[amo] 天气提醒（%s）：明天天气正常，不提醒" % label)
-            return
-        if slot == "morning":
-            # 早上只判断，真正的预报晚上再发，一天一条不追发。
-            logger.info("[amo] 天气提醒（早上）：明天要变天，晚上 %s 再发给他" % target)
-            return
-        umos = self._weather_alert_umos()
-        if not umos:
-            logger.info("[amo] 天气提醒：没有可发送的会话")
-            return
-        text = await self._weather_alert_text(umos[0], items[1], text)
-        if self.cfg_bool("weather_alert_dry_run", False):
-            logger.info("[amo] 天气提醒（试跑，不发送）: %s -> %s" % (text, umos[0]))
-            self.db.kv_set("weather_alert_sent", today)
-            return
-        # 一个一个平台试：某个平台的会话失效时换下一个，而不是整天发不出去
-        sent_umo = ""
-        for umo in umos:
-            if await self._send_to_umo(umo, text):
-                sent_umo = umo
-                break
-            logger.warning("[amo] 天气提醒这个平台发送失败，换下一个: %s" % umo)
-        if sent_umo:
-            self.db.kv_set("weather_alert_sent", today)
-            self.db.kv_set("weather_alert_open", today)
-            logger.info("[amo] 天气提醒已发送: %s -> %s" % (text, sent_umo))
-        else:
-            # 所有平台都失败：清掉 checked 让下一轮重试（原来也是每轮重试）。
-            self.db.kv_set("weather_alert_checked", "")
-            logger.warning("[amo] 天气提醒所有平台都失败: %s" % umos)
-
-    async def _maybe_proactive(self):
-        quiet = quiet_now(self.cfg_str("quiet_hours", "23:30-07:30"))
-        try:
-            profiles = self.db.proactive_profiles(limit=100)
-        except Exception:
-            return
-        if self.cfg_bool("proactive_require_friend", True):
-            profiles = [profile for profile in profiles if self._is_proactive_friend(profile)]
-        if not profiles:
-            return
-        random.shuffle(profiles)
-        now = now_ts()
-        interval = max(10, self.cfg_int("proactive_interval_min", 90)) * 60
-        daily_max = max(0, self.cfg_int("proactive_daily_max", 3))
-        for profile in profiles:
-            uid = str(profile.get("uid") or "")
-            if self._ritual_pending(profile):
-                continue
-            if self._recent_greeting(uid, self.cfg_int("proactive_after_greeting_minutes", 60)):
-                continue
-            target_umo = self._pick_proactive_umo(profile)
-            if not target_umo:
-                continue
-            if self._recent_bot_initiated(target_umo, 3600):
-                continue
-            if self._proactive_user_just_talked(profile, now):
-                continue
-            count = to_int(profile.get("proactive_count"))
-            if profile.get("proactive_day") != today_str():
-                count = 0
-            if count >= daily_max:
-                continue
-            relation = str(profile.get("relation") or "普通")
-            guaranteed = (
-                relation == "相恋"
-                and count == 0
-                and self.cfg_bool("proactive_daily_guarantee", True)
-                and _now().hour >= 8
-                and _now().hour < 23
-                and not quiet
-            )
-            if quiet and not guaranteed:
-                continue
-            pending = self.db.kv_get(self._pending_key(profile.get("uid")), None)
-            if isinstance(pending, dict) and pending.get("sent_at"):
-                if now - to_float(pending.get("sent_at"), 0) < 6 * 3600:
-                    continue
-                self.db.kv_set(self._pending_key(profile.get("uid")), {})
-            snap = self.state.snapshot()
-            category = (snap.get("activity") or {}).get("category", "")
-            if category in ("sleep", "work", "study") and not guaranteed:
-                continue
-            forced = (
-                relation == "相恋"
-                and category in ("meal", "rest", "play", "commute")
-                and self._proactive_forced_allowed(profile, now)
-                and not self._forced_sent_this_hour(profile.get("uid"))
-            )
-            if not guaranteed and not forced and now - to_float(profile.get("last_proactive", 0)) < interval:
-                continue
-            if not guaranteed and not forced and random.random() > self.cfg_float("proactive_prob", 0.25):
-                continue
-            if not guaranteed and self.cfg_bool("proactive_schedule_only", True) and category not in ("meal", "rest", "play", "commute"):
-                continue
-            kind = self._choose_proactive_kind(profile, snap, category)
-            text = await self.llm.gen_proactive(
-                target_umo, profile, snap, kind
-            )
-            if not text:
-                continue
-            sent_umo = ""
-            for candidate in self._proactive_candidates(profile, target_umo):
-                if await self._send_to_umo(candidate, text):
-                    sent_umo = candidate
-                    break
-            ok = bool(sent_umo)
-            if ok:
-                target_umo = sent_umo
-                self._mark_bot_initiated(target_umo)
-                self.db.kv_set("last_channel:%s" % profile.get("uid"), target_umo)
-                self.db.bump_proactive(profile["uid"])
-                self.db.log_proactive(profile["uid"], kind, text)
-                self._set_proactive_pending(profile["uid"], kind, text, umo=target_umo)
-                self._mark_forced_hour(profile.get("uid"))
-
-                logger.debug("[amo] 主动私聊 -> %s (%s)" % (profile.get("name", ""), kind))
 
     # ---------- 指令 ----------
     def _args(self, event):
@@ -11651,12 +8567,14 @@ class HumanCorePlugin(Star):
             except Exception as exc:
                 logger.debug("[amo] 心流阈值读取失败: %s" % exc)
         counts = self.db.counts()
+        counts["swallowed"] = _swallowed_snapshot(10)
         # 记忆条数改成外挂插件的：本插件不再存记忆，面板显示外部模块里的条数
         primary_uid = ""
         try:
             primary = self.db.list_profiles(limit=1)
             primary_uid = str(primary[0].get("uid") or "") if primary else ""
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._status_data", _amo_exc)
             primary_uid = ""
         try:
             # 状态页会被轮询，外部记忆条数缓存 30 秒，别每次都去读别人的库
@@ -11671,7 +8589,8 @@ class HumanCorePlugin(Star):
                 self.db.kv_set("ext_mem_count_" + primary_uid, counted)
             else:
                 counts["memories"] = 0
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._status_data", _amo_exc)
             counts["memories"] = 0
         return {
             "time": snap["datetime_text"],
@@ -12120,167 +9039,8 @@ class HumanCorePlugin(Star):
         yield event.plain_result(self.gift.manual_gift(event, item))
 
     # ---------- Web 面板 ----------
-    def _register_web_apis(self):
-        prefixes = uniq([
-            getattr(self, "name", None),
-            PLUGIN_NAME,
-            os.path.basename(self.plugin_dir),
-            "astrbot_plugin_Astrbot_Amo_forever",
-            "astrbot_plugin_amo_forever",
-        ])
-        # 清除上一实例/旧版本残留的 Web API 路由。
-        # AstrBot 重载插件时不会自动清理 registered_web_apis，旧路由会继续
-        # 指向已经 terminate 的旧实例，表现为 "Cannot operate on a closed database"。
-        try:
-            own_prefixes = tuple(
-                "/" + str(prefix).strip("/") + "/"
-                for prefix in prefixes
-                if str(prefix).strip("/")
-            )
-            holders = (type(self.context), self.context)
-            seen_holders = set()
-            for holder in holders:
-                if id(holder) in seen_holders:
-                    continue
-                seen_holders.add(id(holder))
-                registry = getattr(holder, "registered_web_apis", None)
-                if not isinstance(registry, list):
-                    continue
-                registry[:] = [
-                    item
-                    for item in registry
-                    if not (
-                        isinstance(item, tuple)
-                        and item
-                        and (
-                            str(item[0]).startswith(own_prefixes)
-                            or str(item[0]) in ("get_status", "get_profile", "refresh_status")
-                        )
-                    )
-                ]
-        except Exception as exc:
-            logger.warning("[amo] 清理旧 Web API 路由失败（插件重载后如遇 closed database，请完整重启）: %s" % exc)
-        routes = [
-            ("/status", self.api_status, ["GET"]),
-            ("/get_status", self.api_get_status, ["GET"]),
-            ("/diary/tree", self.api_diary_tree, ["GET", "POST"]),
-            ("/diary/read", self.api_diary_read, ["GET", "POST"]),
-            ("/diary/write", self.api_diary_write, ["POST"]),
-            ("/diary/open", self.api_diary_open, ["GET", "POST"]),
-            ("/diary/import", self.api_diary_import, ["POST"]),
-            ("/profiles", self.api_profiles, ["GET", "POST"]),
-            ("/get_profile", self.api_get_profile, ["GET", "POST"]),
-            ("/profiles/sync", self.api_profiles_sync, ["GET", "POST"]),
-            ("/relations", self.api_relations, ["GET", "POST"]),
-            ("/relation/save", self.api_relation_save, ["GET", "POST"]),
-            ("/relation_save", self.api_relation_save, ["GET", "POST"]),
-            ("/relation/delete", self.api_relation_delete, ["GET", "POST"]),
-            ("/relation_delete", self.api_relation_delete, ["GET", "POST"]),
-            ("/memory/candidates", self.api_memory_candidates, ["GET"]),
-            ("/memory_candidates", self.api_memory_candidates, ["GET"]),
-            ("/profiles_sync", self.api_profiles_sync, ["GET", "POST"]),
-            ("/config", self.api_config, ["GET"]),
-            ("/weather/brief", self.api_weather_brief, ["GET", "POST"]),
-            ("/city/search", self.api_city_search, ["GET", "POST"]),
-            ("/city/set", self.api_city_set, ["GET", "POST"]),
-            ("/usage", self.api_usage, ["GET"]),
-            ("/providers", self.api_providers, ["GET"]),
-            ("/providers_list", self.api_providers, ["GET"]),
-            ("/balance", self.api_balance, ["GET"]),
-            ("/config/save", self.api_config_save, ["GET", "POST"]),
-            ("/config_save", self.api_config_save, ["GET", "POST"]),
-            ("/profile/save", self.api_profile_save, ["GET", "POST"]),
-            ("/profile/links", self.api_profile_links, ["GET", "POST"]),
-            ("/profile_save", self.api_profile_save, ["GET", "POST"]),
-            ("/profile/delete", self.api_profile_delete, ["GET", "POST"]),
-            ("/profile_delete", self.api_profile_delete, ["GET", "POST"]),
-            ("/memories", self.api_memories, ["GET", "POST"]),
-            ("/chat/history", self.api_chat_history, ["GET", "POST"]),
-            ("/chat_history", self.api_chat_history, ["GET", "POST"]),
-            ("/memory/add", self.api_memory_add, ["GET", "POST"]),
-            ("/memory_add", self.api_memory_add, ["GET", "POST"]),
-            ("/memory/delete", self.api_memory_delete, ["GET", "POST"]),
-            ("/memory_delete", self.api_memory_delete, ["GET", "POST"]),
-            ("/schedule", self.api_schedule, ["GET", "POST"]),
-            ("/schedule/detail", self.api_schedule_detail, ["GET", "POST"]),
-            ("/schedule_detail", self.api_schedule_detail, ["GET", "POST"]),
-            ("/mood/update", self.api_mood_update, ["GET", "POST"]),
-            ("/mood_update", self.api_mood_update, ["GET", "POST"]),
-            ("/schedule/regen", self.api_schedule_regen, ["GET", "POST"]),
-            ("/kb/regen", self.api_kb_regen, ["GET", "POST"]),
-            ("/scenic_kb/regen", self.api_scenic_kb_regen, ["GET", "POST"]),
-            ("/scenic_kb_regen", self.api_scenic_kb_regen, ["GET", "POST"]),
-            ("/kb_regen", self.api_kb_regen, ["GET", "POST"]),
-            ("/schedule_regen", self.api_schedule_regen, ["GET", "POST"]),
-            ("/weather", self.api_weather, ["GET"]),
-            ("/gift", self.api_gift, ["GET"]),
-            ("/gift/list", self.api_gift, ["GET"]),
-            ("/worldview", self.api_worldview, ["GET"]),
-            ("/worldview/regen", self.api_worldview_regen, ["GET", "POST"]),
-            ("/worldview_regen", self.api_worldview_regen, ["GET", "POST"]),
-            ("/say", self.api_say, ["GET", "POST"]),
-            ("/refresh_status", self.api_refresh_status, ["GET"]),
-        ]
-        for prefix in prefixes:
-            clean = str(prefix).strip("/")
-            if not clean:
-                continue
-            for path, handler, methods in routes:
-                self._safe_register("/" + clean + path, handler, methods, path)
         # 不注册无前缀的旧路由，避免和其他插件或 AstrBot 自带路由冲突。
 
-    def _web_guard(self, handler, is_write=False):
-        """写操作的前置检查：只收 POST + 拒绝跨站来源。
-
-        这不是完整鉴权（AstrBot 侧有它自己的登录态），而是挡住
-        <img src>/聊天预览/外链/跨站表单这类最容易触发的 CSRF 面。
-
-        - 写路由在 `_safe_register` 里已经只注册 POST，这里再兜一层（防止别的注册路径漏掉）；
-        - `Sec-Fetch-Site: cross-site` 直接 403（浏览器自己标的跨站，最可靠）；
-        - Origin/Referer 与 Host 不一致：带 `same-origin/same-site` 的放行（反向代理/内网穿透下
-          Host 常被改写），没有 Sec-Fetch-Site 的按跨站处理。
-        """
-        async def wrapper(*args, **kwargs):
-            try:
-                method = ""
-                origin = ""
-                host = ""
-                site = ""
-                headers = None
-                if web_request is not None:
-                    method = str(getattr(web_request, "method", "") or "").upper()
-                    headers = getattr(web_request, "headers", None)
-                    if headers is not None:
-                        origin = str(headers.get("origin") or headers.get("referer") or "")
-                        host = str(headers.get("host") or "")
-                        site = str(headers.get("sec-fetch-site") or "").strip().lower()
-                if is_write and method and method != "POST":
-                    logger.warning("[amo] 拒绝非 POST 的 Web 写操作（%s）" % method)
-                    return {"code": 403, "msg": "写操作只接受 POST（面板请刷新到最新版）"}
-                if is_write and site == "cross-site":
-                    logger.warning("[amo] 拒绝跨站 Web 写操作（origin=%s）" % origin)
-                    return {"code": 403, "msg": "拒绝跨站请求"}
-                if is_write and origin and host:
-                    from urllib.parse import urlparse
-                    origin_host = (urlparse(origin).hostname or "").lower()
-                    allowed_hosts = {(host.split(":")[0] or "").strip().lower()}
-                    if headers is not None:
-                        for key in ("x-forwarded-host", "x-real-host"):
-                            value = str(headers.get(key) or "").split(",")[0].strip()
-                            if value:
-                                allowed_hosts.add(value.split(":")[0].strip().lower())
-                    allowed_hosts.discard("")
-                    if origin_host and allowed_hosts and origin_host not in allowed_hosts:
-                        if site in ("same-origin", "same-site"):
-                            logger.debug("[amo] Web 写操作 Host 与 Origin 不一致（同源请求，放行）: %s -> %s"
-                                         % (origin, host))
-                        else:
-                            logger.warning("[amo] 拒绝来源不一致的 Web 写操作: %s -> %s" % (origin, host))
-                            return {"code": 403, "msg": "拒绝来源不一致的请求"}
-            except Exception as exc:
-                logger.debug("[amo] Web 守卫检查失败（放行）: %s" % exc)
-            return await handler(*args, **kwargs)
-        return wrapper
 
     def _safe_register(self, route, handler, methods, desc):
         # 写接口只收 POST：面板的 WRITE_ACTIONS 已经强制带 body 走 POST，
@@ -12312,8 +9072,8 @@ class HumanCorePlugin(Star):
         try:
             if web_request is not None:
                 return web_request.query.get(key, default)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._q", _amo_exc)
         return default
 
     def _q_int(self, key, default=0):
@@ -12324,14 +9084,14 @@ class HumanCorePlugin(Star):
             if web_request is not None and hasattr(web_request, "json"):
                 data = await web_request.json(default={})
                 return data if isinstance(data, dict) else {}
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._body", _amo_exc)
         try:
             if web_request is not None:
                 data = await web_request.get_json(silent=True)
                 return data or {}
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._body", _amo_exc)
         return {}
 
     @staticmethod
@@ -12435,19 +9195,19 @@ class HumanCorePlugin(Star):
                 try:
                     date.fromisoformat(start)
                     self.state.set_period_start(start)
-                except Exception:
-                    pass
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._apply_runtime_config", _amo_exc)
             try:
                 await self.state.refresh_weather(force=True)
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._apply_runtime_config", _amo_exc)
         if HeartflowEngine is not None:
             old = self.heartflow
             if old is not None:
                 try:
                     await old.terminate()
-                except Exception:
-                    pass
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._apply_runtime_config", _amo_exc)
             try:
                 hf_config = self._hf_config()
                 hf_config.setdefault("enable_heartflow", True)
@@ -12463,8 +9223,8 @@ class HumanCorePlugin(Star):
                 for task in list(getattr(old, "_tasks", set())):
                     try:
                         task.cancel()
-                    except Exception:
-                        pass
+                    except Exception as _amo_exc:
+                        _note_swallowed("main.HumanCorePlugin._apply_runtime_config", _amo_exc)
             try:
                 seg_config = self._seg_config()
                 seg_config.setdefault("protect_paired_symbols", True)
@@ -12478,7 +9238,8 @@ class HumanCorePlugin(Star):
         try:
             try:
                 from . import amo_city_index
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._city_module", _amo_exc)
                 import amo_city_index
             return amo_city_index
         except Exception as exc:
@@ -12503,7 +9264,8 @@ class HumanCorePlugin(Star):
         try:
             if not event.is_private_chat():
                 return ""
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._maybe_follow_city", _amo_exc)
             return ""
         if str(profile.get("relation") or "") != "相恋":
             return ""
@@ -12577,7 +9339,8 @@ class HumanCorePlugin(Star):
         spots = []
         try:
             spots = _city_pick_spots(self.scenic_spots(), city, start.isoformat())
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._start_follow_trip", _amo_exc)
             spots = []
         trip = {
             "city": city,
@@ -12604,8 +9367,8 @@ class HumanCorePlugin(Star):
             log.append({"day": start.isoformat(), "hour": "%02d:00" % start_hour,
                         "city": city, "journey": True})
             self.db.kv_set("travel_log", log[-10:])
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._start_follow_trip", _amo_exc)
         if not tomorrow:
             self.db.kv_set("his_city", city)
             hit = self._city_lookup(city)
@@ -12634,8 +9397,8 @@ class HumanCorePlugin(Star):
         self.db.kv_set("follow_declined", {"city": city, "day": today_str()})
         try:
             self.state.nudge(委屈=10, 郁闷=8, 开心=-6)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._reject_follow_trip", _amo_exc)
         try:
             content = "她说想去%s陪他，他让她好好上班，她闷闷不乐" % city
             if not await self._write_memory_checked(uid, content, "event", 1):
@@ -12648,8 +9411,8 @@ class HumanCorePlugin(Star):
                 log = []
             log.append({"day": today_str(), "hour": "%02d:00" % _now().hour, "city": city})
             self.db.kv_set("follow_reject_log", log[-10:])
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._reject_follow_trip", _amo_exc)
         return _follow_block(False, city)
 
     async def _end_follow_trip(self, uid):
@@ -12664,17 +9427,17 @@ class HumanCorePlugin(Star):
         if hit:
             try:
                 await self._switch_weather_city(hit)
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._end_follow_trip", _amo_exc)
         try:
             self.state.apply_travel_overlay(home)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._end_follow_trip", _amo_exc)
         try:
             content = "她 %s 从 %s 回来了" % (today_str(), city)
             await self._write_memory_checked(uid, content, "event", 1)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._end_follow_trip", _amo_exc)
         try:
             log = self.db.kv_get("travel_log", []) or []
             if isinstance(log, list):
@@ -12683,31 +9446,9 @@ class HumanCorePlugin(Star):
                     "city": city, "back": True,
                 })
                 self.db.kv_set("travel_log", log[-10:])
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._end_follow_trip", _amo_exc)
 
-    async def _switch_weather_city(self, hit):
-        """按城市跟随的结果改 weather_city / 显示名，并立刻刷一次天气。"""
-        city_id = str(hit.get("id") or "").strip()
-        name = str(hit.get("name") or "").strip()
-        if not city_id or not name:
-            return
-        changed = False
-        if str(self.config.get("weather_city") or "") != city_id:
-            self.config["weather_city"] = city_id
-            changed = True
-        if self.cfg_str("weather_city_name", "").strip() != name:
-            self.config["weather_city_name"] = name
-            changed = True
-        if not changed:
-            return
-        try:
-            save = getattr(self.config, "save_config", None)
-            if callable(save):
-                save()
-        except Exception as exc:
-            logger.warning("[amo] 城市跟随：保存天气城市失败: %s" % exc)
-        await self.state.refresh_weather(force=True)
 
     async def _maybe_wander(self, event, uid, profile):
         """她自己出去玩：问意愿 → 同意 → 定行程；旅行中让他叫回来。"""
@@ -12716,7 +9457,8 @@ class HumanCorePlugin(Star):
         try:
             if not event.is_private_chat():
                 return ""
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._maybe_wander", _amo_exc)
             return ""
         if str(profile.get("relation") or "") != "相恋":
             return ""
@@ -12784,8 +9526,8 @@ class HumanCorePlugin(Star):
             self.db.kv_set("wander_offer", {})
             try:
                 self.state.nudge(委屈=5, 郁闷=4)
-            except Exception:
-                pass
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._maybe_wander", _amo_exc)
             return (
                 "【不出去了】他说这次不让你去：你有点失落，但别闹，用自己的口吻说一句："
                 + _wander_solo_refuse_text(random)
@@ -12796,7 +9538,8 @@ class HumanCorePlugin(Star):
             if start and start <= today_str() <= ret:
                 try:
                     day_no = (_now().date() - date.fromisoformat(start)).days + 1
-                except Exception:
+                except Exception as _amo_exc:
+                    _note_swallowed("main.HumanCorePlugin._maybe_wander", _amo_exc)
                     day_no = 1
                 return _wander_solo_block(str(trip["city"]), trip.get("spots") or [], day_no=day_no)
         return ""
@@ -12843,8 +9586,8 @@ class HumanCorePlugin(Star):
                 "city": city, "solo": True,
             })
             self.db.kv_set("travel_log", log[-10:])
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._start_solo_trip", _amo_exc)
         if not tomorrow:
             if hit:
                 try:
@@ -12902,7 +9645,8 @@ class HumanCorePlugin(Star):
         try:
             rows = self.db.list_profiles(limit=1) or []
             uid = str((rows[0] or {}).get("uid") or "") if rows else ""
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._maybe_solo_return", _amo_exc)
             uid = ""
         try:
             if umo:
@@ -12933,8 +9677,8 @@ class HumanCorePlugin(Star):
                     "city": city, "solo": True, "back": True,
                 })
                 self.db.kv_set("travel_log", log[-10:])
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._maybe_solo_return", _amo_exc)
         trip["announced"] = True
         self.db.kv_set("wander_trip", trip)
         logger.info("[amo] 旅游回来：%s" % city)
@@ -12961,8 +9705,8 @@ class HumanCorePlugin(Star):
                 "city": city, "solo": True, "back": True,
             })
             self.db.kv_set("travel_log", log[-10:])
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._end_solo_trip", _amo_exc)
         his = str(self.db.kv_get("his_city", "") or "").strip() or _CITY_DEFAULT
         hit = self._city_lookup(his)
         if hit:
@@ -12975,152 +9719,22 @@ class HumanCorePlugin(Star):
         except Exception as exc:
             logger.warning("[amo] 回来日程失败: %s" % exc)
 
-    def _sync_weather_city_config(self):
-        """配置里填了中文城市名时，自动换算并回填 LocationID（幂等）。"""
-        raw = self.cfg_str("weather_city", "").strip()
-        if not raw or raw.isdigit() or "," in raw:
-            return False
-        hit = self._city_lookup(raw)
-        if not hit:
-            # 同一个错城市名每小时只提醒一次，避免后台 30 秒一轮刷日志
-            cache = getattr(self, "_city_warn_cache", None)
-            if not isinstance(cache, dict):
-                cache = {}
-                self._city_warn_cache = cache
-            now = time.time()
-            if now - to_float(cache.get(raw), 0) > 3600:
-                cache[raw] = now
-                logger.warning(
-                    "[amo] 城市名「%s」不在离线城市表里，天气会退回模拟数据；"
-                    "可以写「省+市」或直接填 LocationID" % raw
-                )
-            return False
-        if hit.get("ambiguous"):
-            cache = getattr(self, "_city_warn_cache", None)
-            if not isinstance(cache, dict):
-                cache = {}
-                self._city_warn_cache = cache
-            now = time.time()
-            key = "amb:" + raw
-            if now - to_float(cache.get(key), 0) > 3600:
-                cache[key] = now
-                logger.warning(
-                    "[amo] 天气城市%s" % (hit.get("note") or "有多个同名城市，已默认选一个")
-                )
-        changed = False
-        if str(hit["id"]) != raw:
-            self.config["weather_city"] = str(hit["id"])
-            changed = True
-        if not self.cfg_str("weather_city_name", "").strip():
-            self.config["weather_city_name"] = hit["name"]
-            changed = True
-        if changed:
-            try:
-                if hasattr(self.config, "save_config"):
-                    self.config.save_config()
-                logger.info("[amo] 城市「%s」→ LocationID %s（已回填）" % (raw, hit["id"]))
-            except Exception as exc:
-                logger.error("[amo] 回填城市配置失败: %s" % exc)
-        return changed
 
-    async def api_weather_brief(self):
-        """面板用：当前天气一行摘要 + 配置里的城市（只读缓存）。"""
-        await self._ensure_ready()
-        if not self.state.weather:
-            try:
-                await self.state.refresh_weather()
-            except Exception as exc:
-                logger.debug("[amo] 面板取天气失败: %s" % exc)
-        return {
-            "code": 0,
-            "data": {
-                "weather": self.state.weather_brief(),
-                "city": self.cfg_str("weather_city", ""),
-                "city_name": self.cfg_str("weather_city_name", ""),
-            },
-        }
 
-    async def api_city_search(self):
-        """面板用：中文城市名候选。"""
-        await self._ensure_ready()
-        query = str(self._q("q", "") or "").strip()
-        if not query:
-            data = await self._body()
-            if isinstance(data, dict):
-                query = str(data.get("q") or "").strip()
-        if not query:
-            return {"code": 0, "data": {"items": [], "query": ""}}
-        module = self._city_module()
-        if module is None:
-            return {"code": 1, "msg": "城市表缺失：amo_city_index.py 没装好"}
-        try:
-            items = module.search_city(query, 20)
-        except Exception as exc:
-            return {"code": 1, "msg": "城市表读取失败：%s" % exc}
-        return {"code": 0, "data": {"items": items, "query": query}}
 
-    async def api_city_set(self):
-        """面板用：中文城市名 → 写入 weather_city(LocationID) + 城市显示名。"""
-        await self._ensure_ready()
-        data = await self._body()
-        data = data if isinstance(data, dict) else {}
-        text = str(data.get("city") or data.get("q") or "").strip()
-        if not text:
-            return {"code": 1, "msg": "请填写城市名"}
-        hit = self._city_lookup(text)
-        if not hit:
-            return {
-                "code": 1,
-                "msg": "没找到「%s」；重名或冷门地方请写「省+市」，例如「广东东莞」「北京朝阳」" % text,
-            }
-        save = False
-        if str(self.config.get("weather_city") or "") != str(hit["id"]):
-            self.config["weather_city"] = str(hit["id"])
-            save = True
-        if not data.get("keep_name"):
-            if self.cfg_str("weather_city_name", "").strip() != hit["name"]:
-                self.config["weather_city_name"] = hit["name"]
-                save = True
-        if save:
-            try:
-                if hasattr(self.config, "save_config"):
-                    self.config.save_config()
-            except Exception as exc:
-                return {"code": 1, "msg": "保存配置失败：%s" % exc}
-        weather = None
-        if not save and self.state.weather:
-            # 城市没变，别为一次「设置」白打接口
-            weather = self.state.weather
-        else:
-            try:
-                weather = await self.state.refresh_weather(force=bool(save))
-            except Exception as exc:
-                logger.debug("[amo] 切换城市后刷新天气失败: %s" % exc)
-        return {
-            "code": 0,
-            "data": {
-                "id": hit["id"], "name": hit["name"],
-                "label": hit["label"], "weather": weather or {},
-                "ambiguous": hit.get("ambiguous", 0),
-                "candidates": hit.get("candidates", []),
-                "note": hit.get("note", ""),
-            },
-        }
-
-    async def api_config(self):
-        await self._ensure_ready()
-        return {"code": 0, "data": {"items": self._config_schema_items()}}
 
     # ---- 用量 / 余额 ----
     def _usage_db_path(self):
         try:
             from astrbot.core.utils.astrbot_path import get_astrbot_data_path
             return os.path.join(str(get_astrbot_data_path()), "data_v4.db")
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._usage_db_path", _amo_exc)
             try:
                 data_dir = os.path.dirname(os.path.dirname(os.path.dirname(str(self.db.path))))
                 return os.path.join(data_dir, "data_v4.db")
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._usage_db_path", _amo_exc)
                 return ""
 
     def _deepseek_api_key(self):
@@ -13150,7 +9764,8 @@ class HumanCorePlugin(Star):
         items = []
         try:
             providers = self.context.get_all_providers() or []
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._provider_inventory", _amo_exc)
             providers = []
         for provider in providers:
             config = getattr(provider, "provider_config", None) or {}
@@ -13160,7 +9775,8 @@ class HumanCorePlugin(Star):
             model = ""
             try:
                 model = str(provider.get_model() or "")
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._provider_inventory", _amo_exc)
                 model = str(config.get("model") or "")
             api_base = str(config.get("api_base") or config.get("url") or "").strip()
             key = config.get("key") or ""
@@ -13182,27 +9798,18 @@ class HumanCorePlugin(Star):
         try:
             if self.heartflow is not None:
                 return str(self.heartflow.judge_provider_info().get("id") or "")
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._judge_provider_id", _amo_exc)
         return ""
 
     def _using_provider_id(self):
         try:
             provider = self.context.get_using_provider()
             return str((getattr(provider, "provider_config", None) or {}).get("id") or "")
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._using_provider_id", _amo_exc)
             return ""
 
-    async def api_providers(self):
-        """面板下拉用：列出已配置的模型供应商（脱敏），并标注心流判定/主对话模型。"""
-        await self._ensure_ready()
-        judge_id = self._judge_provider_id()
-        using_id = self._using_provider_id()
-        items = self._provider_inventory()
-        for item in items:
-            item["judge"] = bool(judge_id) and item["id"] == judge_id
-            item["using"] = bool(using_id) and item["id"] == using_id
-        return {"code": 0, "data": {"items": items}}
 
     @staticmethod
     def _balance_probe_kind(api_base):
@@ -13263,7 +9870,8 @@ class HumanCorePlugin(Star):
                 if str(candidate.get("id") or "") == str(item.get("id") or ""):
                     config = candidate
                     break
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._provider_api_key", _amo_exc)
             config = {}
         key = config.get("key") or ""
         if isinstance(key, list):
@@ -13281,233 +9889,11 @@ class HumanCorePlugin(Star):
         self._balance_cache = {"at": now, "data": data}
         return data
 
-    async def api_usage(self):
-        await self._ensure_ready()
-        if not self.cfg_bool("usage_stats_enabled", True):
-            return {"code": 0, "data": {"enabled": False}}
-        db_path = self._usage_db_path()
-        prices = self._usage_prices()
-        day_start = self._usage_start_of_today()
 
-        def build():
-            result = {"enabled": True, "currency": "元", "prices": prices}
-            for label, start in (("today", day_start), ("week", day_start - 6 * 86400), ("total", None)):
-                usage = summarize_token_usage(db_path, start)
-                usage["cost"] = usage_cost(usage, prices)
-                result[label] = usage
-            return result
 
-        data = await asyncio.to_thread(build)
-        if self.cfg_bool("deepseek_balance_enabled", True):
-            data["balance"] = await self._balance_cached()
-        else:
-            data["balance"] = {"ok": False, "error": "余额查询已关闭"}
-        # 多模型用量：已配置供应商 + 逐个余额探测 + 按模型匹配今日 token
-        providers = self._provider_inventory()
-        judge_id = self._judge_provider_id()
-        using_id = self._using_provider_id()
-        today_by_model = {}
-        for entry in (data.get("today", {}) or {}).get("by_model", []) or []:
-            today_by_model[str(entry.get("model") or "")] = entry
-        for item in providers:
-            item["judge"] = bool(judge_id) and item["id"] == judge_id
-            item["using"] = bool(using_id) and item["id"] == using_id
-            stats = today_by_model.get(item["model"]) or today_by_model.get(item["id"]) or {}
-            tokens = int(stats.get("input_miss") or 0) + int(stats.get("input_cached") or 0) + int(stats.get("output") or 0)
-            item["today_tokens"] = tokens
-            item["today_calls"] = int(stats.get("calls") or 0)
-            item["today_cost"] = float(stats.get("cost") or 0) if isinstance(stats.get("cost"), (int, float)) else 0.0
-        if self.cfg_bool("usage_balance_enabled", True) and self.cfg_bool("deepseek_balance_enabled", True):
-            balances = await self._provider_balances_cached(providers)
-            by_id = {str(item.get("id") or ""): item for item in balances}
-            for item in providers:
-                item["balance"] = by_id.get(item["id"]) or {"ok": False, "error": "未配置密钥或地址"}
-        else:
-            for item in providers:
-                item["balance"] = {"ok": False, "error": "余额查询已关闭"}
-        data["providers"] = providers
-        return {"code": 0, "data": data}
 
-    async def api_balance(self):
-        await self._ensure_ready()
-        data = await self._balance_cached()
-        return {"code": 0, "data": data}
 
-    async def api_config_save(self):
-        await self._ensure_ready()
-        data = await self._body()
-        changes = data.get("changes") if isinstance(data.get("changes"), dict) else data
-        schema = self._schema_map()
-        saved = {}
-        for key, value in (changes or {}).items():
-            meta = schema.get(key)
-            if not isinstance(meta, dict):
-                # 操作页的「语种」下拉不在 schema 里，单独放行（普通话/各地方言）
-                if key == "dialect_style":
-                    meta = {"type": "string", "default": ""}
-                else:
-                    continue
-            try:
-                coerced = self._coerce_config_value(meta.get("type", "string"), value)
-            except Exception as exc:
-                logger.warning("[amo] 配置 %s 值无效: %s" % (key, exc))
-                continue
-            if key in self.SENSITIVE_KEYS:
-                current = str(self.cfg(key, "") or "")
-                incoming = str(coerced or "")
-                # 面板回传的是打码串、或者干脆留空 → 当作"不修改"，别把真 key 覆盖掉
-                if not incoming or incoming == self._mask_secret(current):
-                    continue
-            self.config[key] = coerced
-            saved[key] = coerced
-        if saved:
-            try:
-                if hasattr(self.config, "save_config"):
-                    self.config.save_config()
-            except Exception as exc:
-                logger.error("[amo] 保存插件配置失败: %s" % exc)
-                return {"code": 1, "msg": "保存配置失败：" + str(exc)}
-            try:
-                await self._apply_runtime_config()
-            except Exception as exc:
-                logger.error("[amo] 应用配置失败: %s" % exc)
-        return {"code": 0, "data": {"saved": saved}}
 
-    async def api_profiles_sync(self):
-        # 4.3.2 起用户画像只来自本插件聊天/手动建档；
-        # 不再把记忆插件的用户导入画像，记忆由 LLM hook 读取。
-        return {
-            "code": 0,
-            "data": {"synced": 0, "profiles": self.db.list_profiles(limit=500)},
-            "msg": "原版模式：画像只从聊天建立，不再从记忆插件同步用户",
-        }
-
-    async def api_memory_candidates(self):
-        await self._ensure_ready()
-        selected = self.cfg_str("companion_memory_plugin_name", "").strip()
-        meta = self._companion_plugin_meta()
-        return {
-            "code": 0,
-            "data": {
-                "items": self._companion_candidates(),
-                "selected": selected,
-                "detected": str(getattr(meta, "name", "") or "") if meta is not None else "",
-            },
-        }
-
-    async def api_relations(self):
-        await self._ensure_ready()
-        profiles = self.db.list_profiles(limit=500)
-        names = {str(item.get("uid")): (item.get("alias") or item.get("name") or item.get("uid")) for item in profiles}
-        names["bot"] = str(getattr(self, "bot_name", "") or "你")
-        edges = []
-        for edge in self.db.list_relations():
-            row = dict(edge)
-            row["a_name"] = names.get(str(row.get("a_uid")), row.get("a_uid"))
-            row["b_name"] = names.get(str(row.get("b_uid")), row.get("b_uid"))
-            edges.append(row)
-        return {"code": 0, "data": {"edges": edges, "profiles": profiles, "relations": list(NETWORK_RELATIONS)}}
-
-    async def api_profile_links(self):
-        """面板用：这个 UID 关联了哪些平台身份（QQ / 飞书等）。"""
-        data = await self._body()
-        uid = str(data.get("uid") or "").strip()
-        platform = str(data.get("platform") or "").strip() or "aiocqhttp"
-        if not uid:
-            return {"code": 0, "data": {"links": []}}
-        mem = self._data_mem()
-        if mem is None or not callable(getattr(mem, "person_context", None)):
-            return {"code": 0, "data": {"links": []}}
-        try:
-            detail = await self._data_call("person_context", self._data_bot_id(), platform, uid, 1)
-        except Exception as exc:
-            logger.debug("[amo] 读取关联身份失败: %s" % exc)
-            detail = {}
-        links = []
-        for item in (detail or {}).get("links") or []:
-            links.append({
-                "platform": str(item.get("platform") or ""),
-                "label": str(item.get("label") or item.get("platform") or ""),
-                "uid": str(item.get("uid") or ""),
-                "name": str(item.get("name") or ""),
-            })
-        return {"code": 0, "data": {"links": links}}
-
-    async def api_profile_delete(self):
-        """面板用：删掉一个人的档案，并把本插件跟他有关的引用清干净。
-
-        清掉：profiles / messages / proactive_log / relation_network、
-              他专属的 kv（channels:、last_channel:、节流、主动消息、纪念日…）、
-              礼物心愿与礼物墙、内存里的临时缓存。
-        不清（属于别处）：AstrBot 核心会话库、牢记/livingmemory 等记忆插件的库。
-        """
-        await self._ensure_ready()
-        data = await self._body()
-        data = data if isinstance(data, dict) else {}
-        uid = str(data.get("uid") or "").strip()
-        confirm = str(data.get("confirm") or "").strip().lower()
-        if not uid:
-            return {"code": 1, "msg": "缺少 uid"}
-        if confirm not in ("1", "true", "yes", "on"):
-            return {"code": 1, "msg": "删除档案需要确认：再带一次 confirm=1"}
-        profile = {}
-        try:
-            profile = self.db.get_profile(uid) or {}
-        except Exception:
-            profile = {}
-        umos = set()
-        for value in (profile.get("private_umo"), profile.get("last_group")):
-            if value:
-                umos.add(str(value))
-        try:
-            channels = self.db.kv_get("channels:%s" % uid, {}) or {}
-            if isinstance(channels, dict):
-                for entry in channels.values():
-                    if isinstance(entry, dict) and entry.get("umo"):
-                        umos.add(str(entry["umo"]))
-        except Exception:
-            pass
-        counts = {}
-        try:
-            for table in ("profiles", "messages", "proactive_log"):
-                try:
-                    cur = self.db.conn.execute("DELETE FROM %s WHERE uid=?" % table, (uid,))
-                    counts[table] = max(0, cur.rowcount or 0)
-                except Exception as exc:
-                    logger.debug("[amo] 删除档案时清理 %s 失败: %s" % (table, exc))
-            try:
-                cur = self.db.conn.execute(
-                    "DELETE FROM relation_network WHERE a_uid=? OR b_uid=?", (uid, uid)
-                )
-                counts["relation_network"] = max(0, cur.rowcount or 0)
-            except Exception as exc:
-                logger.debug("[amo] 删除档案时清理关系网失败: %s" % exc)
-            counts["kv"] = self._purge_profile_kv(uid)
-            try:
-                self.db.conn.commit()
-            except Exception:
-                pass
-        except Exception as exc:
-            return {"code": 1, "msg": "删除失败：%s" % exc}
-        gift = getattr(self, "gift", None)
-        if gift is not None:
-            try:
-                removed = gift.purge_user(uid, umos)
-                if removed:
-                    counts["gifts"] = removed
-            except Exception as exc:
-                logger.debug("[amo] 删除档案时清理礼物失败: %s" % exc)
-        try:
-            if str(getattr(self, "_last_umo", "") or "") in umos:
-                self._last_umo = ""
-            cache = getattr(self, "_last_reply_at", None)
-            if isinstance(cache, dict):
-                for umo in umos:
-                    cache.pop(umo, None)
-        except Exception:
-            pass
-        logger.info("[amo] 已删除档案 %s（清理 %s）" % (uid, counts))
-        return {"code": 0, "msg": "已删除", "data": {"uid": uid, "counts": counts}}
 
     def _purge_profile_kv(self, uid):
         """删掉这个 uid 专属的 kv（渠道/节流/主动消息/纪念日…），返回删除条数。"""
@@ -13520,13 +9906,15 @@ class HumanCorePlugin(Star):
         )
         try:
             rows = self.db.conn.execute("SELECT key FROM kv").fetchall()
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("main.HumanCorePlugin._purge_profile_kv", _amo_exc)
             return 0
         keys = []
         for row in rows:
             try:
                 key = str(row["key"] if hasattr(row, "keys") else row[0])
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("main.HumanCorePlugin._purge_profile_kv", _amo_exc)
                 continue
             if any(key == prefix + uid for prefix in prefixes):
                 keys.append(key)
@@ -13543,440 +9931,24 @@ class HumanCorePlugin(Star):
             return 0
         return len(keys)
 
-    async def api_relation_save(self):
-        await self._ensure_ready()
-        data = await self._body()
-        a_uid = str(data.get("a_uid") or "").strip()
-        b_uid = str(data.get("b_uid") or "").strip()
-        relation = str(data.get("relation") or "朋友").strip()
-        note = str(data.get("note") or "").strip()
-        if not a_uid or not b_uid or a_uid == b_uid:
-            return {"code": 1, "msg": "请选择两个不同的用户"}
-        if relation not in NETWORK_RELATIONS:
-            return {"code": 1, "msg": "关系类型无效"}
-        self.db.upsert_relation(a_uid, b_uid, relation, note)
-        try:
-            await self._push_relation_to_data(a_uid, b_uid, relation, note)
-        except Exception as exc:
-            logger.debug("[amo] 关系同步失败: %s" % exc)
-        logger.debug("[amo] 关系网更新: %s <-> %s = %s" % (a_uid, b_uid, relation))
-        return await self.api_relations()
 
-    async def api_relation_delete(self):
-        await self._ensure_ready()
-        data = await self._body()
-        a_uid = str(data.get("a_uid") or "").strip()
-        b_uid = str(data.get("b_uid") or "").strip()
-        if not a_uid or not b_uid:
-            return {"code": 1, "msg": "缺少用户"}
-        self.db.delete_relation(a_uid, b_uid)
-        await self._data_call("delete_relation", self._data_bot_id(), a_uid, b_uid)
-        return await self.api_relations()
 
-    async def api_diary_import(self):
-        await self._ensure_ready()
-        payload = await self._body()
-        path = str((payload or {}).get("path") or "").strip()
-        if not path:
-            return {"code": 1, "msg": "缺少文件夹路径"}
-        if len(path.rstrip("\\/")) <= 2:
-            return {"code": 1, "msg": "别整盘导入，请选具体文件夹"}
-        if not callable(_diary_import_folder):
-            return {"code": 1, "msg": "日记模块未加载"}
-        # 递归遍历 + 复制是同步阻塞的，放线程里，别把 AstrBot 事件循环卡住
-        result = await asyncio.to_thread(_diary_import_folder, path, self._diary_dir())
-        if not result.get("ok"):
-            return {"code": 1, "msg": result.get("error") or "导入失败"}
-        return {"code": 0, "data": result}
 
-    async def api_diary_tree(self):
-        await self._ensure_ready()
-        if not callable(_diary_tree):
-            return {"code": 1, "msg": "日记模块未加载"}
-        return {"code": 0, "data": await asyncio.to_thread(_diary_tree, self._diary_dir())}
 
-    async def api_diary_read(self):
-        await self._ensure_ready()
-        payload = await self._body()
-        day = _diary_parse_day((payload or {}).get("date"))
-        if not day:
-            return {"code": 1, "msg": "日期格式应为 YYYY-MM-DD"}
-        text = _diary_read(self._diary_dir(), day) if callable(_diary_read) else ""
-        return {"code": 0, "data": {"date": day.isoformat(), "text": text}}
 
-    async def api_diary_write(self):
-        await self._ensure_ready()
-        payload = await self._body()
-        day = _diary_parse_day((payload or {}).get("date"))
-        if not day:
-            day = (_now() - timedelta(days=1)).date()
-        text = await self._generate_daily_diary(day)
-        if not text:
-            return {"code": 1, "msg": "日记生成失败（没有素材或模型没返回）"}
-        try:
-            path = _diary_write(self._diary_dir(), day, text)
-        except Exception as exc:
-            return {"code": 1, "msg": "写入失败: %s" % exc}
-        try:
-            self.db.kv_set("diary_written:" + day.isoformat(), path)
-        except Exception:
-            pass
-        logger.info("[amo] 日记已写（手动）: %s" % path)
-        return {"code": 0, "data": {"date": day.isoformat(), "path": path, "text": text}}
 
-    async def api_diary_open(self):
-        await self._ensure_ready()
-        root = self._diary_dir()
-        try:
-            os.makedirs(root, exist_ok=True)
-        except Exception:
-            pass
-        opened = False
-        try:
-            if os.name == "nt" and os.path.isdir(root):
-                os.startfile(root)
-                opened = True
-        except Exception as exc:
-            logger.debug("[amo] 打开日记文件夹失败: %s" % exc)
-        return {"code": 0, "data": {"root": root, "opened": opened}}
 
-    async def api_dispatch(self, action: str = ""):
-        await self._ensure_ready()
-        name = (action or "").replace("/", "_").strip("_").lower()
-        try:
-            if name in ("", "index", "status", "get_status"):
-                return await self.api_get_status()
-            if name in ("profiles", "profile_list"):
-                return await self.api_profiles()
-            if name in ("profile_delete", "delete_profile"):
-                return await self.api_profile_delete()
-            if name in ("profile_save", "save_profile"):
-                return await self.api_profile_save()
-            if name in ("memories", "memory_list"):
-                return await self.api_memories()
-            if name in ("memory_add", "add_memory"):
-                return await self.api_memory_add()
-            if name in ("memory_delete", "delete_memory"):
-                return await self.api_memory_delete()
-            if name in ("mood_update", "update_mood"):
-                return await self.api_mood_update()
-            if name == "schedule":
-                return await self.api_schedule()
-            if name in ("scenic_kb_regen", "regen_scenic_kb"):
-                return await self.api_scenic_kb_regen()
-            if name in ("kb_regen", "regen_kb", "dialect_kb_regen"):
-                return await self.api_kb_regen()
-            if name in ("schedule_regen", "regen_schedule"):
-                return await self.api_schedule_regen()
-            if name in ("weather", "weather_refresh", "refresh_weather"):
-                return await self.api_weather()
-            if name == "worldview":
-                return await self.api_worldview()
-            if name in ("worldview_regen", "regen_worldview"):
-                return await self.api_worldview_regen()
-            if name in ("say", "send"):
-                return await self.api_say()
-            if name in ("refresh_status", "refresh"):
-                return await self.api_refresh_status()
-            if name in ("get_profile", "profile"):
-                return await self.api_get_profile()
-            return {"code": 1, "msg": "未知接口：" + name}
-        except Exception as exc:
-            logger.error("[amo] Web API %s 异常: %s" % (name, exc))
-            return {"code": 1, "msg": str(exc)}
 
-    async def api_status(self):
-        await self._ensure_ready()
-        data = await self._status_data()
-        return {"code": 0, "data": data}
 
-    async def api_get_status(self):
-        await self._ensure_ready()
-        data = await self._status_data()
-        return {
-            "code": 0,
-            "data": {
-                "mood": data["dominant"] + "（" + data["mood"].__str__() + "）",
-                "schedule": data["activity"].get("activity", ""),
-                "health": data["health"]["status"],
-                "period": data["period"]["phase"] + " 第" + str(data["period"]["day"]) + "天",
-                "weather": data["weather_text"],
-                "switch_status": data["config"],
-                "threshold": data["threshold"],
-                "counts": data["counts"],
-            },
-        }
 
-    async def api_get_profile(self):
-        await self._ensure_ready()
-        data = await self._body()
-        uid = str(data.get("uid") or self._q("uid", "") or "")
-        if uid:
-            profile = self.db.get_profile(uid)
-        else:
-            profiles = self.db.list_profiles(limit=1)
-            profile = profiles[0] if profiles else {}
-        return {
-            "code": 0,
-            "data": {
-                "relation": profile.get("relation", "普通"),
-                "mem_count": len(self._external_all_memories(profile.get("uid", uid), "", 200)),
-                "profile": profile,
-            },
-        }
 
-    async def api_refresh_status(self):
-        await self._ensure_ready()
-        # 限频：这个接口会强制刷新天气（和风额度），被 <img>/外链或连点触发时不能每次都打出去
-        now = now_ts()
-        last = to_float(getattr(self, "_refresh_status_at", 0), 0)
-        if last and now - last < 5:
-            return {"code": 0, "msg": "刚刚刷新过，请稍候", "data": {"throttled": True}}
-        self._refresh_status_at = now
-        try:
-            await self.state.refresh_weather(force=True)
-        except Exception as exc:
-            logger.warning("[amo] 手动刷新天气失败: %s" % exc)
-            return {"code": 1, "msg": "刷新失败：%s" % exc}
-        return {"code": 0, "msg": "刷新成功"}
 
-    async def api_profiles(self):
-        await self._ensure_ready()
-        data = await self._body()
-        keyword = str(data.get("q") or self._q("q", "") or "")
-        limit = to_int(data.get("limit") or self._q("limit", 100), 100)
-        return {"code": 0, "data": self.db.list_profiles(keyword, limit)}
 
-    async def api_profile_save(self):
-        await self._ensure_ready()
-        data = await self._body()
-        uid = str(data.get("uid") or "").strip()
-        if not uid:
-            return {"code": 1, "msg": "uid 不能为空"}
-        fields = {}
-        for key in ("name", "alias", "birthday", "relation", "notes"):
-            value = data.get(key, None)
-            if value is not None:
-                fields[key] = str(value)[:100]
-        if "relation" in fields and fields["relation"] not in RELATIONS:
-            return {"code": 1, "msg": "关系只能是：" + "、".join(RELATIONS)}
-        if "birthday" in fields and fields["birthday"]:
-            match = re.match(r"^(\d{4}-)?(\d{1,2})-(\d{1,2})$", fields["birthday"])
-            if not match:
-                return {"code": 1, "msg": "生日格式应为 MM-DD 或 YYYY-MM-DD"}
-            fields["birthday"] = "%02d-%02d" % (to_int(match.group(2)), to_int(match.group(3)))
-        affection = data.get("affection", None)
-        if affection is not None:
-            fields["affection"] = int(clamp(to_int(affection, 10), 0, 100))
-        if not self.db.get_profile(uid):
-            self.db.touch_profile(uid, fields.get("name", ""), "web", "", "", True)
-        self.db.update_profile(uid, **fields)
-        if fields.get("relation") == "相恋":
-            self._register_lover(uid)
-        try:
-            await self._push_profile_to_data(uid, self.db.get_profile(uid))
-        except Exception as exc:
-            logger.debug("[amo] 画像同步失败: %s" % exc)
-        return {"code": 0, "data": self.db.get_profile(uid)}
 
-    async def api_chat_history(self):
-        await self._ensure_ready()
-        data = await self._body()
-        uid = str(data.get("uid") or self._q("uid", "") or "")
-        if not uid:
-            return {"code": 1, "msg": "uid 不能为空"}
-        limit = to_int(data.get("limit") or self._q("limit", 200), 200)
-        profile = self.db.get_profile(uid) or {}
-        memories = self._external_profile_memories(
-            uid, profile.get("name", ""), profile.get("alias", ""), limit
-        )
-        return {
-            "code": 0,
-            "data": {
-                "chat": self.db.chat_history(uid, limit),
-                "memories": memories,
-            },
-        }
 
-    async def api_memories(self):
-        """面板记忆页：只读外挂记忆插件的记忆（本插件不再存记忆）。"""
-        await self._ensure_ready()
-        data = await self._body()
-        uid = str(data.get("uid") or self._q("uid", "") or "")
-        if not uid:
-            return {"code": 1, "msg": "uid 不能为空"}
-        keyword = str(data.get("q") or self._q("q", "") or "")
-        limit = self._q_int("limit", 50)
-        items = await self._data_mem_list(uid, keyword, limit)
-        if not items:
-            items = self._external_all_memories(uid, keyword, limit)
-        return {"code": 0, "data": items[:max(1, min(100, limit))]}
 
-    async def api_memory_add(self):
-        """面板“添加记忆”改为写进外挂记忆插件。"""
-        await self._ensure_ready()
-        data = await self._body()
-        uid = str(data.get("uid") or "").strip()
-        content = str(data.get("content") or "").strip()
-        if not uid or not content:
-            return {"code": 1, "msg": "uid 和 content 不能为空"}
-        tier = to_int(data.get("tier", 1), 1)
-        if self._external_memory_write(uid, content, str(data.get("kind", "manual")), tier):
-            return {"code": 0, "msg": "已写入记忆终端"}
-        return {"code": 1, "msg": "没有可写入的记忆终端，请先安装并启用「我想永远记住你」"}
 
-    async def api_memory_delete(self):
-        """有记忆终端就删终端里的那条；没有就还按老规矩让对方插件自己管。"""
-        await self._ensure_ready()
-        data = await self._body()
-        memory_id = to_int(data.get("id") or 0)
-        if memory_id and self._data_mem() is not None:
-            ok = await self._data_call("delete_memory", self._data_bot_id(), memory_id)
-            if ok:
-                return {"code": 0, "msg": "已删除"}
-        return {
-            "code": 1,
-            "msg": "记忆由记忆终端保存，请到「我想永远记住你」面板里删除",
-        }
 
-    async def api_mood_update(self):
-        await self._ensure_ready()
-        data = await self._body()
-        incoming = data.get("mood") if isinstance(data.get("mood"), dict) else data
-        for key in MOOD_KEYS:
-            if key in incoming:
-                try:
-                    self.state.mood[key] = clamp(float(incoming[key]), 0.0, 100.0)
-                except Exception:
-                    continue
-        self.state.save()
-        return {"code": 0, "data": self.state.snapshot()}
 
-    async def api_schedule(self):
-        await self._ensure_ready()
-        data = await self._body()
-        day = str(data.get("date") or self._q("date", "") or today_str())
-        if day == today_str():
-            items = await self.state.ensure_schedule(self._last_umo)
-        else:
-            items = self.state._hourly_schedule(self.db.get_schedule(day) or [])
-        return {"code": 0, "data": {"day": day, "meta": day_meta(day), "items": items, "tree": self.state.schedule_tree(day), "current": self.state.current_activity(), "context": self.state.schedule_context(day)}}
 
-    async def api_schedule_detail(self):
-        await self._ensure_ready()
-        data = await self._body()
-        day = str(data.get("date") or "").strip() or today_str()
-        start_raw = str(data.get("start") or "").strip()
-        matched = re.match(r"^(\d{1,2})(?::(\d{2}))?$", start_raw)
-        if not matched:
-            return {"code": 1, "msg": "start 需要 HH:MM，例如 10:00"}
-        hour = max(0, min(23, int(matched.group(1))))
-        start = "%02d:00" % hour
-        if day == today_str():
-            items = await self.state.ensure_schedule(self._last_umo)
-        else:
-            items = self.state._hourly_schedule(self.db.get_schedule(day) or [])
-        item = None
-        for entry in items:
-            if str(entry.get("start") or "") == start:
-                item = entry
-                break
-        if item is None:
-            return {"code": 1, "msg": "没有找到这一小时的日程：" + start}
-        force_raw = data.get("force", "")
-        force = str(force_raw).lower() in ("1", "true", "yes", "on")
-        result = await self.state.expand_hour(day, item, items, force=force)
-        payload = {"day": day, "start": item.get("start", start), "end": item.get("end", "")}
-        payload.update(result)
-        return {"code": 0, "data": payload}
 
-    async def api_scenic_kb_regen(self):
-        await self._ensure_ready()
-        kb = await self._ensure_scenic_kb()
-        if kb is None:
-            return {
-                "code": 1,
-                "msg": "景区知识库创建失败：请检查 Embedding 供应商，并查看 AstrBot 日志",
-            }
-        return {"code": 0, "msg": "景区知识库已就绪：" + self._scenic_kb_name()}
-
-    async def api_kb_regen(self):
-        await self._ensure_ready()
-        try:
-            data = await self._body()
-        except Exception:
-            data = {}
-        style = str(data.get("dialect_style") or "").strip()
-        if style in DIALECT_REGIONS:
-            self.config["dialect_style"] = style
-            try:
-                if hasattr(self.config, "save_config"):
-                    self.config.save_config()
-            except Exception:
-                pass
-        style_now = self._dialect_style().strip()
-        logger.info("[amo] 重建语种: style=%s region=%s rows=%d kb=%s" % (
-            style_now, self._dialect_region(), len(self._dialect_rows()), self._dialect_kb_name()
-        ))
-        kb = await self._ensure_dialect_kb()
-        if kb is None:
-            return {
-                "code": 1,
-                "msg": "知识库创建失败：请检查是否配置了 Embedding 供应商，并查看 AstrBot 日志",
-            }
-        return {"code": 0, "msg": "知识库已就绪：" + self._dialect_kb_name()}
-
-    async def api_gift(self):
-        await self._ensure_ready()
-        if self.gift is None:
-            return {"code": 0, "data": {"enabled": False, "wishes": [], "gifts": []}}
-        try:
-            return {"code": 0, "data": self.gift.panel_data()}
-        except Exception as exc:
-            logger.debug("[amo] 礼物面板数据失败: %s" % exc)
-            return {"code": 0, "data": {"enabled": False, "wishes": [], "gifts": []}}
-
-    async def api_schedule_regen(self):
-        await self._ensure_ready()
-        items = await self.state.ensure_schedule(self._last_umo, force=True)
-        return {"code": 0, "data": items}
-
-    async def api_weather(self):
-        await self._ensure_ready()
-        weather = await self.state.refresh_weather(force=True)
-        return {"code": 0, "data": weather}
-
-    async def api_worldview(self):
-        await self._ensure_ready()
-        await self.state.ensure_worldview(self._last_umo)
-        return {"code": 0, "data": self.state.worldview}
-
-    async def api_worldview_regen(self):
-        await self._ensure_ready()
-        worldview = await self.state.ensure_worldview(self._last_umo, force=True)
-        return {"code": 0, "data": worldview}
-
-    async def api_say(self):
-        """面板「代她说一句」。只允许发到已知会话，参数只认 body。"""
-        await self._ensure_ready()
-        data = await self._body()
-        text = str(data.get("text") or "").strip()
-        umo = str(data.get("umo") or "").strip() or str(self._last_umo or "")
-        if not text:
-            return {"code": 1, "msg": "text 不能为空"}
-        if not umo:
-            return {"code": 1, "msg": "没有可发送的会话"}
-        known = set()
-        try:
-            for profile in self.db.list_profiles(limit=500):
-                for key in ("private_umo", "last_group"):
-                    value = str(profile.get(key) or "").strip()
-                    if value:
-                        known.add(value)
-        except Exception as exc:
-            logger.debug("[amo] 读取已知会话失败: %s" % exc)
-        if umo not in known:
-            logger.warning("[amo] 拒绝向未知会话发送: %s" % umo)
-            return {"code": 1, "msg": "umo 不在已知会话内"}
-        ok = await self._send_to_umo(umo, text)
-        return {"code": 0 if ok else 1, "msg": "已发送" if ok else "发送失败"}

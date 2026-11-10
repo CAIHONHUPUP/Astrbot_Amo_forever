@@ -5,6 +5,10 @@
 """
 
 from __future__ import annotations
+try:
+    from .amo_observability import note as _note_swallowed
+except ImportError:  # 直接按文件加载时
+    from amo_observability import note as _note_swallowed
 
 import re
 
@@ -54,18 +58,21 @@ def assess(mood, health=None) -> tuple:
     mood = mood or {}
     try:
         tired = float(mood.get("疲惫", 0) or 0) >= 55
-    except Exception:
+    except Exception as _amo_exc:
+        _note_swallowed("wander.assess", _amo_exc)
         tired = False
     try:
         low = (
             float(mood.get("郁闷", 0) or 0) + float(mood.get("委屈", 0) or 0)
             + float(mood.get("焦虑", 0) or 0)
         ) >= 60 or float(mood.get("开心", 0) or 0) <= 20
-    except Exception:
+    except Exception as _amo_exc:
+        _note_swallowed("wander.assess", _amo_exc)
         low = False
     try:
         status = str((health or {}).get("status") or "")
-    except Exception:
+    except Exception as _amo_exc:
+        _note_swallowed("wander.assess", _amo_exc)
         status = ""
     if any(word in status for word in ("累", "疲", "不舒服", "难受")):
         tired = True

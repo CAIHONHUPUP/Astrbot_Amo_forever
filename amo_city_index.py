@@ -12,6 +12,10 @@ LocationList 生成，见 tools/gen_city_ids.py）。纯标准库、无 astrbot 
 """
 
 from __future__ import annotations
+try:
+    from .amo_observability import note as _note_swallowed
+except ImportError:  # 直接按文件加载时
+    from amo_observability import note as _note_swallowed
 
 import json
 import os
@@ -89,7 +93,8 @@ def _load():
                 table = json.load(fh)
             if not isinstance(table, dict):
                 table = {}
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("amo_city_index._load", _amo_exc)
             table = {}
         rows, groups, provinces = [], {}, []
         cities, names = {}, {}

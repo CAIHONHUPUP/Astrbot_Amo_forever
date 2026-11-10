@@ -22,6 +22,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from greet_route import greeting_targets, within_minutes  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _plugin_source  # noqa: E402
 
 QQ = "大肥鱼:FriendMessage:302578963"
 LARK = "lark:FriendMessage:ou_cec66ea605ad17f62632fb044bc5f6ac"
@@ -40,24 +42,27 @@ WANTED = {
 }
 
 
-def load_methods(main_path):
-    """把 HumanCorePlugin 里这几个方法抠出来，放同一个全局命名空间里编译。"""
-    with open(main_path, encoding="utf-8") as fp:
-        source = fp.read()
-    tree = ast.parse(source)
+CLASSES = ("HumanCorePlugin", "ApiMixin", "ProactiveMixin", "ScheduleMixin", "LlmMixin")
+
+
+def load_methods(root):
+    """从拆分后的模块里把这几个方法抠出来，放同一个全局命名空间里编译。"""
     nodes = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == "HumanCorePlugin":
-            for item in node.body:
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name in WANTED:
-                    nodes.append(item)
+    for path in _plugin_source.module_paths(root):
+        with open(path, encoding="utf-8") as fp:
+            tree = ast.parse(fp.read())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name in CLASSES:
+                for item in node.body:
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name in WANTED:
+                        nodes.append(item)
     missing = WANTED - {node.name for node in nodes}
     if missing:
-        raise AssertionError("main.py 里找不到方法：%s" % sorted(missing))
+        raise AssertionError("拆分后的模块里找不到方法：%s" % sorted(missing))
     module = ast.Module(body=nodes, type_ignores=[])
     ast.fix_missing_locations(module)
     namespace = {}
-    exec(compile(module, main_path, "exec"), namespace)
+    exec(compile(module, "<plugin>", "exec"), namespace)
     return {name: namespace[name] for name in WANTED}
 
 
@@ -185,7 +190,7 @@ def parse_hhmm(value):
 class RitualBehaviorTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.methods = load_methods(os.path.join(ROOT, "main.py"))
+        cls.methods = load_methods(ROOT)
 
     @staticmethod
     def patch_globals(func):

@@ -6,6 +6,10 @@
 """
 
 from __future__ import annotations
+try:
+    from .amo_observability import note as _note_swallowed
+except ImportError:  # 直接按文件加载时
+    from amo_observability import note as _note_swallowed
 
 import re
 
@@ -32,7 +36,8 @@ def _display_name(hit, name: str, raw: str = "") -> str:
     city = str(hit.get("city") or "").strip()
     try:
         level = int(hit.get("level") or 1)
-    except Exception:
+    except Exception as _amo_exc:
+        _note_swallowed("city_follow._display_name", _amo_exc)
         level = 1
     if level >= 2 and city:
         stem = city[:-1] if city.endswith("市") else city
@@ -55,7 +60,8 @@ def _prefer_ambiguous(piece: str, prefer_city: str):
     for sep in ("", "市"):
         try:
             alt = amo_city_index.resolve_city(_stem_name(prefer) + sep + piece)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("city_follow._prefer_ambiguous", _amo_exc)
             alt = None
         if alt and int(alt.get("ambiguous") or 0) <= 1 and str(alt.get("id") or "").strip():
             return alt

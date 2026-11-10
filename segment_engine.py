@@ -1,3 +1,7 @@
+try:
+    from .amo_observability import note as _note_swallowed
+except ImportError:  # 直接按文件加载时
+    from amo_observability import note as _note_swallowed
 import asyncio
 import random
 import time
@@ -147,7 +151,8 @@ class SegmentEngine:
         if plugin is not None and hasattr(plugin, "typing_seconds"):
             try:
                 required = float(plugin.typing_seconds(segment) or 0.0)
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("segment_engine.SegmentEngine._wait_segment", _amo_exc)
                 required = 0.0
         gap = self._calculate_delay(prev_segment, segment)
         target = max(required, gap)
@@ -236,8 +241,8 @@ class SegmentEngine:
                 if i == 0 and quote_id is not None and group:
                     try:
                         chain.chain.append(Reply(id=quote_id))
-                    except Exception:
-                        pass
+                    except Exception as _amo_exc:
+                        _note_swallowed("segment_engine.SegmentEngine.handle_segment_reply", _amo_exc)
                 chain.message(segment)
                 await event.send(chain)
                 sent += 1
@@ -282,7 +287,8 @@ class SegmentEngine:
                     (p for p in platforms if p.meta().id == event.platform_meta.id),
                     None,
                 )
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("segment_engine.SegmentEngine._send_proactive_rest", _amo_exc)
                 platform_inst = None
             if not platform_inst:
                 logger.warning(
@@ -302,7 +308,8 @@ class SegmentEngine:
                 if self.plugin is not None and hasattr(self.plugin, "typing_seconds"):
                     try:
                         required = float(self.plugin.typing_seconds(segments[i]) or 0.0)
-                    except Exception:
+                    except Exception as _amo_exc:
+                        _note_swallowed("segment_engine.SegmentEngine._send_proactive_rest", _amo_exc)
                         required = 0.0
                 delay = max(required, self._calculate_delay(segments[i - 1], segments[i]))
                 await asyncio.sleep(delay)
@@ -586,8 +593,8 @@ class SegmentEngine:
                 user_id=user_id,
                 event_type=1 if typing else 0,
             )
-        except Exception:
-            pass  # 平台不支持或调用失败时静默忽略
+        except Exception as _amo_exc:
+            _note_swallowed("segment_engine.SegmentEngine._set_typing", _amo_exc)
 
     # ========================= 对话历史 =========================
 

@@ -16,8 +16,8 @@ import astrbot_stub  # noqa: E402
 
 astrbot_stub.install()
 
-import main  # noqa: E402,F401
 from main import AmoDB, HumanCorePlugin, WRITE_ROUTES  # noqa: E402
+import amo_api  # noqa: E402
 
 
 class FakeHeaders(dict):
@@ -50,14 +50,14 @@ def make_plugin():
 
 class WebGuardTests(unittest.TestCase):
     def setUp(self):
-        self._orig_request = main.web_request
+        self._orig_request = amo_api.web_request
         self.plugin = make_plugin()
 
     def tearDown(self):
-        main.web_request = self._orig_request
+        amo_api.web_request = self._orig_request
 
     def _call(self, handler, request):
-        main.web_request = request
+        amo_api.web_request = request
         return asyncio.run(self.plugin._web_guard(handler, is_write=True)())
 
     def test_write_routes_are_post_only_and_guarded(self):

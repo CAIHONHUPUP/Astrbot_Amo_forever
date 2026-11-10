@@ -13,6 +13,10 @@
 """
 
 from __future__ import annotations
+try:
+    from .amo_observability import note as _note_swallowed
+except ImportError:  # 直接按文件加载时
+    from amo_observability import note as _note_swallowed
 
 import asyncio
 import json
@@ -293,7 +297,8 @@ def is_gift_intent(text: str) -> bool:
 def fmt_day(ts) -> str:
     try:
         ts = float(ts)
-    except Exception:
+    except Exception as _amo_exc:
+        _note_swallowed("gift_engine.fmt_day", _amo_exc)
         return ""
     if not ts:
         return ""
@@ -454,7 +459,8 @@ class GiftEngine:
         base = ""
         try:
             base = os.path.dirname(str(getattr(plugin.db, "path", "") or ""))
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine.__init__", _amo_exc)
             base = ""
         if not base:
             base = str(getattr(plugin, "plugin_dir", "") or ".")
@@ -471,13 +477,15 @@ class GiftEngine:
     def _bool(self, key, default=False):
         try:
             return bool(self.plugin.cfg_bool(key, default))
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._bool", _amo_exc)
             return default
 
     def _int(self, key, default=0):
         try:
             return int(self.plugin.cfg_int(key, default))
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._int", _amo_exc)
             return default
 
     def _float(self, key, default=0.0):
@@ -486,13 +494,15 @@ class GiftEngine:
             if callable(fn):
                 return float(fn(key, default))
             return float(self.plugin.cfg_str(key, default) or default)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._float", _amo_exc)
             return float(default)
 
     def _str(self, key, default=""):
         try:
             return str(self.plugin.cfg_str(key, default))
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._str", _amo_exc)
             return default
 
     @property
@@ -597,7 +607,8 @@ class GiftEngine:
             weather = self.plugin.state.weather or {}
             value = weather.get("temp")
             return float(value) if value is not None else None
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._temp", _amo_exc)
             return None
 
     def _affordance_text(self, item, text, temp):
@@ -637,11 +648,12 @@ class GiftEngine:
             uid = self.plugin._canonical_uid(event)
             if uid:
                 return str(uid)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._uid", _amo_exc)
         try:
             return str(event.get_sender_id() or "")
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._uid", _amo_exc)
             return ""
 
     def _owner_ids(self):
@@ -649,8 +661,8 @@ class GiftEngine:
         ids = {item.strip() for item in re.split(r"[,，\s]+", raw) if item.strip()}
         try:
             ids |= {str(item) for item in (getattr(self.plugin, "admin_uids", set()) or set())}
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._owner_ids", _amo_exc)
         return ids
 
     def is_owner(self, event):
@@ -661,18 +673,20 @@ class GiftEngine:
             profile = self.plugin.db.get_profile(uid) or {}
             if str(profile.get("relation") or "") in ("相恋", "恋人"):
                 return True
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine.is_owner", _amo_exc)
         try:
             return bool(event.is_admin())
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine.is_owner", _amo_exc)
             return False
 
     @staticmethod
     def _private(event):
         try:
             return bool(event.is_private_chat())
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._private", _amo_exc)
             return False
 
     def _allowed_here(self, event):
@@ -686,13 +700,15 @@ class GiftEngine:
     def _place(self):
         try:
             return str((self.plugin.state.current_activity() or {}).get("place") or "")
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._place", _amo_exc)
             return ""
 
     def _activity(self):
         try:
             return self.plugin.state.current_activity() or {}
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._activity", _amo_exc)
             return {}
 
     def is_shopping(self):
@@ -705,7 +721,8 @@ class GiftEngine:
     def _short_place(self, place):
         try:
             return str(self.plugin._short_place(place) or "")
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._short_place", _amo_exc)
             value = str(place or "")
             return value.split("·")[-1].strip() if "·" in value else value
 
@@ -726,7 +743,8 @@ class GiftEngine:
             backup_path = self.path + ".broken-%d" % int(time.time())
             try:
                 os.replace(self.path, backup_path)
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("gift_engine.GiftEngine._load", _amo_exc)
                 backup_path = ""
             logger.warning(
                 "[amo] gifts.json 解析失败（%s: %s），%s；本次从空数据开始"
@@ -1029,7 +1047,8 @@ class GiftEngine:
         try:
             if self.recent_wishes(limit=1):
                 return
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._maybe_shop_hint", _amo_exc)
             return
         now = time.time()
         with self._lock:
@@ -1151,7 +1170,8 @@ class GiftEngine:
     def _message_key(event, text):
         try:
             msg_id = str(getattr(event.message_obj, "message_id", "") or "")
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._message_key", _amo_exc)
             msg_id = ""
         return (msg_id + "|" + text[:60]) if msg_id else ""
 
@@ -1167,8 +1187,8 @@ class GiftEngine:
                 content = str(row.get("content") or "").strip()
                 if content:
                     lines.append((float(row.get("created_at") or 0), str(row.get("role") or ""), content))
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._wish_from_recent_bot", _amo_exc)
         for ts, text in self._user_tail.get(umo, [])[-8:]:
             lines.append((ts, "user", text))
         for ts, text in self._bot_tail.get(umo, [])[-8:]:
@@ -1188,7 +1208,8 @@ class GiftEngine:
             if self._bool("gift_extract_with_llm", True):
                 try:
                     item = await asyncio.wait_for(self._llm_extract_wish(text), timeout=12)
-                except Exception:
+                except Exception as _amo_exc:
+                    _note_swallowed("gift_engine.GiftEngine._wish_from_recent_bot", _amo_exc)
                     item = ""
             if not item:
                 item = extract_wish_regex(text)
@@ -1218,7 +1239,8 @@ class GiftEngine:
             return
         try:
             umo = str(getattr(event, "unified_msg_origin", "") or "")
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine.observe_reply", _amo_exc)
             return
         text = (text or "").strip()
         if not text:
@@ -1263,10 +1285,12 @@ class GiftEngine:
         provider = None
         try:
             provider = await self.plugin.context.get_using_provider_async()
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._llm_extract_wish", _amo_exc)
             try:
                 provider = self.plugin.context.get_using_provider()
-            except Exception:
+            except Exception as _amo_exc:
+                _note_swallowed("gift_engine.GiftEngine._llm_extract_wish", _amo_exc)
                 provider = None
         if provider is None:
             return ""
@@ -1287,11 +1311,13 @@ class GiftEngine:
             return ""
         try:
             data = json.loads(match.group(0))
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._parse_wish_json", _amo_exc)
             return ""
         try:
             confidence = float(data.get("confidence", 0) or 0)
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._parse_wish_json", _amo_exc)
             confidence = 0.0
         if confidence < 0.45:
             return ""
@@ -1307,8 +1333,8 @@ class GiftEngine:
                 self.plugin.state.nudge(开心=8, 兴奋=5, 依恋=4)
             else:
                 self.plugin.state.nudge(开心=6, 兴奋=4, 依恋=3)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._nudge_mood", _amo_exc)
 
     def _remember_gift(self, uid, item, kind="small"):
         if not uid or not item:
@@ -1324,8 +1350,8 @@ class GiftEngine:
             writer = getattr(self.plugin, "_external_memory_write", None)
             if callable(writer):
                 writer(uid, content, "gift", 2)
-        except Exception:
-            pass
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._remember_gift", _amo_exc)
 
     # ---------- 提示词素材 ----------
     def _wall_topic(self, text):
@@ -1435,8 +1461,8 @@ class GiftEngine:
                               self._seen_gift, self._last_shop_hint):
                     try:
                         cache.pop(umo, None)
-                    except Exception:
-                        pass
+                    except Exception as _amo_exc:
+                        _note_swallowed("gift_engine.GiftEngine.purge_user", _amo_exc)
         return max(0, removed)
 
     # ---------- 任务 ----------
@@ -1452,7 +1478,8 @@ class GiftEngine:
         self._tasks.discard(task)
         try:
             exc = task.exception()
-        except Exception:
+        except Exception as _amo_exc:
+            _note_swallowed("gift_engine.GiftEngine._task_done", _amo_exc)
             exc = None
         if exc:
             logger.debug("[amo] 礼物后台任务异常: %s" % exc)

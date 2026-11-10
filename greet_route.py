@@ -8,6 +8,10 @@
 """
 
 from __future__ import annotations
+try:
+    from .amo_observability import note as _note_swallowed
+except ImportError:  # 直接按文件加载时
+    from amo_observability import note as _note_swallowed
 
 import random
 
@@ -43,5 +47,6 @@ def within_minutes(last_ts, now, minutes):
         if window <= 0:
             return False
         return 0 <= float(now) - float(last_ts or 0) < window
-    except Exception:
+    except Exception as _amo_exc:
+        _note_swallowed("greet_route.within_minutes", _amo_exc)
         return False

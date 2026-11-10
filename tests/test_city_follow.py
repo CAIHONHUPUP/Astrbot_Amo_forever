@@ -7,6 +7,8 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _plugin_source  # noqa: E402
 
 from city_follow import (  # noqa: E402
     compose_block,
@@ -110,7 +112,7 @@ class WiringTests(unittest.TestCase):
     """main.py 接了这三个入口；schema 里有开关。"""
 
     def test_main_wiring(self) -> None:
-        src = open(os.path.join(ROOT, "main.py"), encoding="utf-8").read()
+        src = _plugin_source.all_source(ROOT)
         self.assertIn("detect_city as _city_detect", src)
         self.assertIn("compose_block as _city_block", src)
         self.assertIn("_city_detect(text, prefer_city", src)
@@ -125,7 +127,7 @@ class WiringTests(unittest.TestCase):
         self.assertTrue(schema["city_follow_weather"]["default"])
 
     def test_travel_wiring(self) -> None:
-        src = open(os.path.join(ROOT, "main.py"), encoding="utf-8").read()
+        src = _plugin_source.all_source(ROOT)
         self.assertIn("apply_travel_overlay", src)
         self.assertIn("_city_travel_events", src)
         self.assertIn("_city_travel_action", src)

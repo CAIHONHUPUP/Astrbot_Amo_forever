@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _plugin_source  # noqa: E402
 
 import clock  # noqa: E402
 
@@ -78,11 +80,10 @@ class ClockTests(unittest.TestCase):
 
 class SourceGuardTests(unittest.TestCase):
     def test_main_has_no_bare_datetime_now(self):
-        with open(os.path.join(ROOT, "main.py"), encoding="utf-8") as fp:
-            body = fp.read()
-        self.assertLessEqual(body.count("datetime.now()"), 1,
-                             "main.py 还残留裸 datetime.now()，会跟着服务器时区跑")
-        self.assertEqual(body.count("date.today()"), 0, "main.py 还残留 date.today()")
+        for path in _plugin_source.module_paths(ROOT):
+            body = open(path, encoding="utf-8").read()
+            self.assertLessEqual(body.count("datetime.now()"), 1, path + " 还残留裸 datetime.now()")
+            self.assertEqual(body.count("date.today()"), 0, path + " 还残留 date.today()")
 
     def test_schema_default_is_shanghai(self):
         with open(os.path.join(ROOT, "_conf_schema.json"), encoding="utf-8") as fp:

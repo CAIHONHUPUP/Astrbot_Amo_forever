@@ -12,6 +12,10 @@
 """
 
 from __future__ import annotations
+try:
+    from .amo_observability import note as _note_swallowed
+except ImportError:  # 直接按文件加载时
+    from amo_observability import note as _note_swallowed
 
 import re
 import unicodedata
@@ -35,7 +39,8 @@ QUOTE_LIMIT = 40
 def _to_float(value, default=0.0):
     try:
         return float(value)
-    except Exception:
+    except Exception as _amo_exc:
+        _note_swallowed("proactive_guard._to_float", _amo_exc)
         return default
 
 
@@ -80,7 +85,8 @@ except Exception:
 def _clock(timestamp):
     try:
         return _clock_from_ts(_to_float(timestamp)).strftime("%H:%M")
-    except Exception:
+    except Exception as _amo_exc:
+        _note_swallowed("proactive_guard._clock", _amo_exc)
         return ""
 
 

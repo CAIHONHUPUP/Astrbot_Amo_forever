@@ -1,6 +1,9 @@
 import os
 import re
+import sys
 import unittest
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _plugin_source  # noqa: E402
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -24,8 +27,7 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(duplicates, set())
 
     def test_main_registers_gift_api(self):
-        with open(os.path.join(ROOT, "main.py"), encoding="utf-8") as handle:
-            source = handle.read()
+        source = _plugin_source.all_source(ROOT)
         self.assertEqual(source.count('("/gift", self.api_gift, ["GET"])'), 1)
         self.assertEqual(source.count("async def api_gift"), 1)
 
