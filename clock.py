@@ -95,7 +95,25 @@ def configure(name=""):
     """插件启动时调用一次：设置进程时区。返回实际生效的时区名。"""
     _state["name"] = normalize(name)
     target = resolve_name(_state["name"])
+    if get_zone(target) is None:
+        # 名字写错（Asia/Shangai、GMT+8:00…）时 tzset 不抛异常（glibc 回落 UTC），
+        # 于是整个插件按 UTC 算时间却没有任何提示。这里回退默认时区。
+        prev_name = target
+        target = DEFAULT_TIMEZONE
+        _state["name"] = target
+        try:
+            from astrbot.api import logger as _logger
+            _logger.warning("[amo] 时区名无效: %r，已回退 %s" % (prev_name, target))
+        except Exception:
+            pass
     prev = os.environ.get("TZ")
+    if not hasattr(_time, "tzset"):
+        # Windows 等没有 tzset 的平台：把 TZ 写成 "Asia/Shanghai" 这种 IANA 名字，
+        # C 运行库会当成非法值回落到 UTC——于是 datetime.now() 还是本地时间，
+        # 而 fromtimestamp()/mktime() 已经变成 UTC，同一进程里两套时钟差 8 小时。
+        # 这里宁可不碰 TZ，统一交给 zoneinfo 换算（now/from_timestamp 都支持）。
+        _applied.update({"ok": False, "name": target, "prev": None})
+        return target
     try:
         os.environ["TZ"] = target
         _time.tzset()
@@ -108,8 +126,11 @@ def configure(name=""):
 def restore():
     """把进程时区还原（测试用）。"""
     prev = _applied.get("prev")
-    if _applied.get("ok") and prev is not None:
-        os.environ["TZ"] = prev
+    if _applied.get("ok"):
+        if prev is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = prev
         try:
             _time.tzset()
         except Exception:

@@ -15,13 +15,26 @@ import threading
 import asyncio
 from collections import deque
 from typing import Dict, Optional, List, Any, Set, Tuple
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from astrbot.api.star import Context, Star
-from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.star import Context
+from astrbot.api.event import AstrMessageEvent
 from astrbot.api import logger, AstrBotConfig
 from astrbot.api.message_components import Plain, At, Reply
 from astrbot.api.provider import LLMResponse
+
+# 统一时区（只影响面板/日志里显示的时间，但别和 clock 配置打架）
+try:
+    from .clock import now as _hf_now, from_timestamp as _hf_ts
+except Exception:
+    try:
+        from clock import now as _hf_now, from_timestamp as _hf_ts
+    except Exception:
+        def _hf_now(*args, **kwargs):
+            return datetime.datetime.now()
+
+        def _hf_ts(ts, *args, **kwargs):
+            return datetime.datetime.fromtimestamp(float(ts or 0))
 
 # ============================================================
 # 正则
@@ -844,6 +857,13 @@ class HeartflowEngine:
             return False
         if not (event.message_str and event.message_str.strip()):
             return False
+        try:
+            if self._is_judgment_paused(event.unified_msg_origin):
+                # 上一轮已经判定「该回」、正在生成或等冷却：这条先只记账，别再触发一次
+                self._record_raw_message(event, is_bot=False)
+                return False
+        except Exception:
+            pass
 
         if event.is_at_or_wake_command:
             # @ 机器人 / 唤醒词不走进判定，但必须留在上下文里：
@@ -1124,7 +1144,7 @@ class HeartflowEngine:
             if not content:
                 continue
             role = "assistant" if msg.is_bot else "user"
-            stamp = datetime.datetime.fromtimestamp(msg.timestamp).strftime("%H:%M")
+            stamp = _hf_ts(msg.timestamp).strftime("%H:%M")
             marks = []
             if msg.at_ids:
                 if msg.at_self:
@@ -1178,7 +1198,7 @@ class HeartflowEngine:
         dynamic_threshold, activity, _ = self._get_dynamic_threshold(event.unified_msg_origin)
         activity_desc = self._get_activity_description(activity)
         return (f"活跃度:{activity_desc}({activity:.0%}) | 回复率:{rate:.1f}% | "
-                f"模式:{mode} | 阈值:{dynamic_threshold:.2f} | {datetime.datetime.now().strftime('%H:%M')}")
+                f"模式:{mode} | 阈值:{dynamic_threshold:.2f} | {_hf_now().strftime('%H:%M')}")
 
     def _get_last_bot_reply(self, event: AstrMessageEvent) -> Optional[str]:
         """获取机器人最后一次回复内容"""
@@ -1255,14 +1275,22 @@ class HeartflowEngine:
         system_inst = f"你是群聊机器人决策系统，严格返回JSON，不要输出其他内容。所有分数必须在{int(self.score_min)}到{int(self.score_max)}之间，不能为0。"
         contexts = self._build_optimized_contexts(self._get_raw_history_for_context(event))
 
+        judge_timeout = float(getattr(self, "judge_timeout", 20.0) or 20.0)
         for attempt in range(self.judge_max_retries + 1):
             try:
-                resp = await provider.text_chat(
-                    prompt=judge_prompt,
-                    contexts=contexts,
-                    system_prompt=system_inst,
-                    image_urls=[]
-                )
+                try:
+                    resp = await asyncio.wait_for(
+                        provider.text_chat(
+                            prompt=judge_prompt,
+                            contexts=contexts,
+                            system_prompt=system_inst,
+                            image_urls=[]
+                        ),
+                        timeout=judge_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("[心流] 判定模型 %.0fs 无响应（这次不回复）" % judge_timeout)
+                    return JudgeResult(should_reply=False, reasoning="判定超时")
                 data = _extract_json(resp.completion_text.strip())
                 scores = {
                     "relevance": safe_extract_score(data, "relevance", self.score_min, self.score_max),
@@ -1382,14 +1410,22 @@ class HeartflowEngine:
 严格返回 JSON：
 {{"should_reply": true或false, "target": "bot|other|all|unknown", "thought": "一句话说明在对谁说"{immersive_reasoning_part}}}
 """
+        judge_timeout = float(getattr(self, "judge_timeout", 20.0) or 20.0)
         for attempt in range(self.judge_max_retries + 1):
             try:
-                resp = await provider.text_chat(
-                    prompt=judge_prompt,
-                    contexts=contexts,
-                    system_prompt=system_inst,
-                    image_urls=[]
-                )
+                try:
+                    resp = await asyncio.wait_for(
+                        provider.text_chat(
+                            prompt=judge_prompt,
+                            contexts=contexts,
+                            system_prompt=system_inst,
+                            image_urls=[]
+                        ),
+                        timeout=judge_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("[心流] 判定模型 %.0fs 无响应（这次不回复）" % judge_timeout)
+                    return JudgeResult(should_reply=False, reasoning="判定超时")
                 data = _extract_json(resp.completion_text.strip())
                 should_reply = bool(data.get("should_reply", False))
                 target = _normalize_target(data.get("target")) or "unknown"
@@ -1712,7 +1748,7 @@ class HeartflowEngine:
         lines = ["📋 **最近消息记录**（最多20条）\n━━━━━━━━━━━━━━"]
         for msg in msgs[-20:]:
             prefix = "🤖" if msg.is_bot else "👤"
-            time_str = datetime.datetime.fromtimestamp(msg.timestamp).strftime("%H:%M:%S")
+            time_str = _hf_ts(msg.timestamp).strftime("%H:%M:%S")
             content = msg.content[:60] + "..." if len(msg.content) > 60 else msg.content
             lines.append(f"{prefix} [{time_str}] {msg.sender_name}: {content or '[空消息]'}")
         yield event.plain_result("\n".join(lines) + f"\n━━━━━━━━━━\n📊 共 {len(msgs)} 条记录")

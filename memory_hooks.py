@@ -519,7 +519,15 @@ class MemoryCompanionProvider(MemoryProvider):
             try:
                 rows = await method(query, top_k=limit)
             except TypeError:
-                continue
+                # 牢记的签名是 search_for_event(event, query, top_k=6)：
+                # 只传 (query, top_k=) 会 TypeError，以前直接 continue 到返回 []，
+                # 一条日志都没有（表现为「记忆源选牢记，召回永远空」）。
+                try:
+                    rows = await method(None, query, top_k=limit)
+                except TypeError:
+                    continue
+                except Exception:
+                    return []
             except Exception:
                 return []
             return self.rt.normalize_memories(rows)

@@ -26,6 +26,22 @@ import uuid
 # 上架规范：logger 只能从 astrbot.api 导入，不允许回退到内置 logging
 from astrbot.api import logger
 
+# 统一时区：容器/服务器常在 UTC 跑，「今天/昨天」和礼物日志日期必须按配置时区算，
+# 不能用 time.localtime()（那是服务器本地时区）。
+from datetime import datetime as _dt
+
+try:
+    from .clock import from_timestamp as _clock_from_ts, now as _clock_now
+except Exception:
+    try:
+        from clock import from_timestamp as _clock_from_ts, now as _clock_now
+    except Exception:
+        def _clock_from_ts(ts, *args, **kwargs):
+            return _dt.fromtimestamp(float(ts or 0))
+
+        def _clock_now(*args, **kwargs):
+            return _dt.now()
+
 MAX_WISHES = 400
 MAX_GIFTS = 400
 WISH_TTL_DEFAULT = 72 * 3600
@@ -281,14 +297,14 @@ def fmt_day(ts) -> str:
         return ""
     if not ts:
         return ""
-    day = time.strftime("%Y-%m-%d", time.localtime(ts))
-    today = time.strftime("%Y-%m-%d", time.localtime())
-    yesterday = time.strftime("%Y-%m-%d", time.localtime(time.time() - 86400))
+    day = _clock_from_ts(ts).strftime("%Y-%m-%d")
+    today = _clock_now().strftime("%Y-%m-%d")
+    yesterday = _clock_from_ts(time.time() - 86400).strftime("%Y-%m-%d")
     if day == today:
         return "今天"
     if day == yesterday:
         return "昨天"
-    return time.strftime("%m-%d", time.localtime(ts))
+    return _clock_from_ts(ts).strftime("%m-%d")
 
 
 def wall_text(gifts) -> str:
@@ -553,7 +569,7 @@ class GiftEngine:
             item = str(gift.get("item") or "")
             if not item:
                 continue
-            day = time.strftime("%m-%d", time.localtime(float(gift.get("ts") or 0)))
+            day = _clock_from_ts(float(gift.get("ts") or 0)).strftime("%m-%d")
             lines.append("%s %s" % (day, item))
             if len(lines) >= max(1, int(limit)):
                 break
@@ -1022,7 +1038,7 @@ class GiftEngine:
             if not isinstance(shop, dict):
                 shop = {}
                 meta["shop_hint"] = shop
-            day = time.strftime("%Y-%m-%d", time.localtime(now))
+            day = _clock_now().strftime("%Y-%m-%d")
             if str(shop.get("day") or "") != day:
                 shop["day"] = day
                 shop["count"] = 0
@@ -1298,7 +1314,7 @@ class GiftEngine:
         if not uid or not item:
             return
         try:
-            day = time.strftime("%m月%d日", time.localtime())
+            day = _clock_now().strftime("%m月%d日")
             if kind in ("vehicle", "home", "luxury"):
                 content = "%s他送了我%s，这么贵重的东西，我收下了。" % (day, item)
             elif kind == "valuable":

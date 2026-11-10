@@ -1,5 +1,35 @@
 # Changelog
 
+## 未发布（基于 6.6.8）
+
+### 跨平台归一：同一个人的 QQ / 飞书两边记忆真正相通
+
+- **平台名不再被写成机器人名字**：QQ 的 umo 前缀是 `大肥鱼`，以前 `platform` 直接取第一段，
+  库里 25 行 `platform='大肥鱼'`，跨平台按 `aiocqhttp` 查不到那半边；新增 `normalize_platform()`。
+- **她的回复挂到人身上**：`add_message` 给 `role='bot'` 的行按会话另一方补 `pid`，
+  `person_context` 才能把她的话（`other_platform_bot_lines`）带回来。
+- **`person_context` 分开展量**：他的近聊按 (平台, uid)、她的按 `pid + role='bot'`，
+  以前混在一条 SQL 里她的话会把他的挤出 limit；记忆按这个人的所有身份 uid 查（飞书那头以前永远 0 条）。
+- **时间回看跨平台**：私聊合并该人所有会话再排序去重；群聊仍按 uid（不串群友）。
+- 修了她的回复写入时的平台名（`_platform_for_umo()`），历史 38 条被标成 `role=user` 的消息已迁移。
+
+### 其余修复
+
+- 延迟回复 4-18 分钟后无条件发：期间已回复/有新消息就丢弃；
+- 回看判定收窄：「我10点开会」「我在3号线地铁上」「明天9点叫我」不再触发「记不清」；
+- 心流判定 20s 超时；「判断暂停」真正生效；
+- 室内景点池不再写死贵阳/贵州；`float(temp)` 非数字不再炸整天日程；
+- `/status` 只读（不再 force 刷天气/现生成日程）；
+- **Windows 时区修复**：没有 `tzset` 的平台不再把 `TZ` 写成 `Asia/Shanghai`（Windows CRT
+  会把它当非法值按 UTC 算，`datetime.now()` 本地、`fromtimestamp()` 却 UTC，同一进程两套时钟）；
+  心流里两处 `datetime.fromtimestamp` 改走 `clock`；
+- `weather_alert` 的兜底函数原来放进了礼物模块的 `except` 分支，礼物导入失败时会反过来
+  盖掉天气函数、天气模块失败时又完全没有兜底 → 已归位；
+- `dialect_style` 补进配置 schema，保存语种不再依赖接口特判；
+- 测试在 Windows 可跑：没有 `tzset` 时跳过进程时区用例，时间断言改用 `clock`；
+- P2：清掉未使用导入/死变量。
+
+
 ## 6.6.8（主动消息/日程一致性 + 引用守卫）
 
 ### 主动消息不再和当前日程、另一个平台打架（11-10）

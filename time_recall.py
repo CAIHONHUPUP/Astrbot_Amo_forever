@@ -27,14 +27,31 @@ _TIME_PATTERNS = (
     r"[零一二三四五六七八九十两]{1,3}\s*[号日点]",
 )
 
-_RECALL_HINTS = (
-    "聊", "说", "讲", "干", "做", "去", "吃", "发生", "记得", "记不记得",
-    "什么", "啥", "哪", "怎么", "几点", "多久", "那天", "时候", "我们", "你", "我",
+# 「过去/回忆」的明确说法：出现就算在回看
+_PAST_WORDS = (
+    "昨天", "昨晚", "前天", "大前天", "上周", "上上", "上个月", "上月", "去年", "前年",
+    "那天", "那次", "当时", "之前", "最近", "前几天", "前些天",
+)
+# 「今天/这周」+ 这些动词才算回看（「今天吃了什么」；「我10点开会」不算）
+_TODAY_WORDS = ("今天", "今晚", "这周", "本周", "这个月", "本月")
+_TODAY_INTENT = ("聊", "说", "讲", "干", "做", "发生", "记得", "提过", "问过", "告诉我",
+                   "什么", "啥", "哪", "怎么", "吗", "呢", "？", "?")
+# 只有具体钟点/日期时，必须像在问/回忆（「11月6号晚上我们干嘛了」；
+# 「我10点开会」「我在3号线地铁上」「明天9点叫我」都不算）
+_RECALL_INTENT = (
+    "聊", "说", "讲", "干", "做", "发生", "记得", "记不记得", "提过", "说过", "问过",
+    "告诉我", "什么", "啥", "哪", "怎么", "几", "吗", "呢", "？", "?",
 )
 
 
 def looks_like_time_query(text: Any) -> bool:
-    """这句话是不是在问某个时间点/时间段的事？"""
+    r"""这句话是不是在问某个时间点/时间段的事？
+
+    以前只要出现「\d点 / \d号」加「我/你/去/吃」就返回 True，于是
+    「我10点开会，晚点回你」「我下午3点去公司」「我在3号线地铁上」都会被当成
+    回看，查不到记录就注入「你们没聊到什么，别编，说记不清」——她对一句日常
+    陈述回「记不清」，还多一次 DB 查询。
+    """
     raw = str(text or "").strip()
     if not raw or len(raw) > 120:
         return False
@@ -43,8 +60,11 @@ def looks_like_time_query(text: Any) -> bool:
     # 天气是另一条链路（weather_query）负责的，别抢："今天天气怎么样"不算回看
     if any(word in raw for word in ("天气", "气温", "温度", "下雨", "下雪", "带伞", "几度", "预报")):
         return False
-    # 只有时间词、没有"聊/说/吃/干"这类内容词的也不算回看
-    return any(word in raw for word in _RECALL_HINTS)
+    if any(word in raw for word in _PAST_WORDS):
+        return True
+    if any(word in raw for word in _TODAY_WORDS):
+        return any(word in raw for word in _TODAY_INTENT)
+    return any(word in raw for word in _RECALL_INTENT)
 
 
 def render_time_block(label: str, messages: Iterable[Dict[str, Any]],

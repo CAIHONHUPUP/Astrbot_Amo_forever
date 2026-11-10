@@ -33,6 +33,20 @@ class DetectTests(unittest.TestCase):
         ):
             self.assertFalse(looks_like_time_query(text), text)
 
+    def test_statements_with_clock_are_not_recall(self):
+        # 日常陈述里也带「10点/3点/3号线」，以前会被当回看，查不到就回「记不清」
+        for text in (
+            "我10点开会，晚点回你",
+            "我下午3点去公司",
+            "我在3号线地铁上",
+            "明天9点叫我起床",
+        ):
+            self.assertFalse(looks_like_time_query(text), text)
+
+    def test_today_question_about_content_is_recall(self):
+        self.assertTrue(looks_like_time_query("今天中午吃了什么"))
+        self.assertFalse(looks_like_time_query("今天吃面"))
+
 
 class RenderTests(unittest.TestCase):
     def test_block_has_label_and_lines(self):
@@ -77,6 +91,22 @@ class WiringTests(unittest.TestCase):
         with open(os.path.join(root, "main.py"), encoding="utf-8") as fh:
             source = fh.read()
         self.assertIn("await self._time_recall_context(event, uid)", source)
+
+    def test_time_recall_private_keeps_her_lines_group_filters_uid(self):
+        # 私聊：不传 uid（否则只剩「他」说的话，她的回复全丢），范围由 umo 卡住；
+        # 群聊：群里还有别人，必须保留 uid 过滤，不能把群友的话拉进【按时间回看】。
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "main.py"), encoding="utf-8") as fh:
+            source = fh.read()
+        start = source.index("async def _time_recall_context")
+        end = source.index("async def ", start + 10)
+        body = source[start:end]
+        self.assertIn('"recall_messages"', body)
+        self.assertIn("跨平台：同一个人", body)
+        private_part = body.split("跨平台：同一个人", 1)[1].split("else:", 1)[0]
+        self.assertNotIn("uid=str(uid)", private_part)
+        group_part = body.split("群聊：**仍然要按 uid**", 1)[1]
+        self.assertIn("uid=str(uid)", group_part)
 
 
 if __name__ == "__main__":

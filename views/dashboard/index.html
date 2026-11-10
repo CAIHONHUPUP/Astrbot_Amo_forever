@@ -954,7 +954,9 @@
       document.getElementById("clock").textContent = time;
       const dialectSelect = document.getElementById("worldDialect");
       const statusConfig = data.config || {};
-      const selectedDialect = data.dialect_style || statusConfig.dialect_style || "贵州话";
+      const dialectOff = statusConfig.dialect_enabled === false;
+      const selectedDialect = dialectOff ? "普通话"
+        : (data.dialect_style || statusConfig.dialect_style || "贵州话");
       if (dialectSelect) dialectSelect.value = selectedDialect;
       const dialectHint = document.getElementById("dialectHint");
       if (dialectHint) dialectHint.textContent = "当前语种词条：" + (data.dialect_count || statusConfig.dialect_count || 0) + " 条";
@@ -1095,6 +1097,8 @@
         box.appendChild(meta);
         box.appendChild(text);
         box.dataset.loaded = "1";
+        // 收起判断看的是 row.dataset.loaded：只写 box 的话卡片点开就再也收不回去
+        row.dataset.loaded = "1";
         delete row.dataset.loading;
       } catch (error) {
         delete row.dataset.loading;
@@ -3052,6 +3056,8 @@
       document.getElementById("neuronModal").hidden = true;
       document.getElementById("btnNeuron").classList.remove("on");
       setNeuronMode(false);
+      // 关闭后 canvas 还在文档里但宽高为 0，帧循环会一直空转占 60fps
+      if (neuronRaf) { cancelAnimationFrame(neuronRaf); neuronRaf = 0; }
     });
     document.getElementById("neuronTitle").addEventListener("dblclick", () => {
       const editing = document.getElementById("neuronEdit").hidden === false;

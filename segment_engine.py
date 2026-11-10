@@ -6,7 +6,6 @@ import re
 import unicodedata
 from typing import List, Optional, Tuple
 
-from astrbot.api.event import filter as event_filter
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api import logger
 from astrbot.core.message.message_event_result import MessageChain
@@ -200,6 +199,11 @@ class SegmentEngine:
 
         try:
             segments = self.segment_text_by_rules(raw_text)
+            if not segments:
+                # 整条回复都是被规则吃掉的符号（如「。。」）时 segments 是空列表：
+                # 后面的 chain.clear() 会先把回复清空、然后 for 一次都不跑，
+                # 消息永久丢失（force 分支还会 IndexError）。交回核心按原文发。
+                return False
 
             if len(segments) <= 1 and quote_id is None and not force:
                 # 即使只有一段，也要先按字数等待打字时间；返回 False 让 AstrBot 自己发。

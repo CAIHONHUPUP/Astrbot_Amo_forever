@@ -67,9 +67,19 @@ def near_duplicate(text, previous, threshold=DEDUPE_THRESHOLD):
     return None
 
 
+try:
+    from .clock import from_timestamp as _clock_from_ts
+except Exception:
+    try:
+        from clock import from_timestamp as _clock_from_ts
+    except Exception:
+        def _clock_from_ts(ts, *args, **kwargs):
+            return datetime.fromtimestamp(float(ts or 0))
+
+
 def _clock(timestamp):
     try:
-        return datetime.fromtimestamp(_to_float(timestamp)).strftime("%H:%M")
+        return _clock_from_ts(_to_float(timestamp)).strftime("%H:%M")
     except Exception:
         return ""
 

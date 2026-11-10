@@ -25,6 +25,19 @@ import random
 import re
 from datetime import date, datetime, timedelta
 
+# 统一时区：日程的 generated_at / 跨天日期按配置时区算，不吃服务器本地时区。
+try:
+    from .clock import now as _clock_now, today as _clock_today
+except Exception:
+    try:
+        from clock import now as _clock_now, today as _clock_today
+    except Exception:
+        def _clock_now(*args, **kwargs):
+            return datetime.now()
+
+        def _clock_today(*args, **kwargs):
+            return date.today()
+
 MOOD_KEYS = ("开心", "平静", "郁闷", "生气", "暴躁", "委屈", "疲惫", "焦虑", "兴奋", "依恋")
 MOOD_BASE = {
     "开心": 55, "平静": 60, "郁闷": 18, "生气": 8, "暴躁": 6, "委屈": 20,
@@ -555,7 +568,7 @@ class ScheduleEngine:
             "profile": profile,
             "location": (event.get("where") if event.get("kind") == "business_trip" else city),
             "seed": seed,
-            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "generated_at": _clock_now().strftime("%Y-%m-%d %H:%M:%S"),
         }
 
     def _gift_assets(self, extra=""):
@@ -622,7 +635,13 @@ class ScheduleEngine:
                 labels = gift.wear_labels(temp)
             except Exception:
                 labels = []
-        own = ["围巾"] if temp is not None and float(temp) <= 20 else []
+        try:
+            temp_value = float(temp) if temp is not None else None
+        except (TypeError, ValueError):
+            # 和风缺字段/旧 kv 里的 "N/A" 会让 float() 抛错，整个主干生成失败、
+            # 退回兜底日程（当天活动/地点/穿戴全废）
+            temp_value = None
+        own = ["围巾"] if temp_value is not None and temp_value <= 20 else []
         if not labels and not own:
             return items
         extras = []
@@ -658,7 +677,7 @@ class ScheduleEngine:
         try:
             target = date.fromisoformat(str(day))
         except Exception:
-            target = date.today()
+            target = _clock_today()
         prev_day = (target - timedelta(days=1)).isoformat()
         items = []
         try:
@@ -797,15 +816,17 @@ class ScheduleEngine:
                 "area": "", "projects": ["慢慢逛", "找个地方坐会儿", "拍几张照"],
                 "duration": "3-4小时", "indoor": False,
             }
-        guiyang = [item for item in spots if "贵阳" in str(item.get("city") or "")]
-        guizhou = [item for item in spots if str(item.get("province") or "") == "贵州"]
+        # 以前这里写死「贵阳/贵州」：非贵阳城市 guiyang/guizhou 恒为空 →
+        # 下雨时 pool=[] 又回退成全部景点（含户外），文案还说「找个室内的地方」。
+        # 现在按 spots 自己的 indoor 标记选，和城市无关。
         if not good_weather:
-            indoor = [item for item in guizhou if item.get("indoor")]
-            pool = indoor or guiyang
+            indoor = [item for item in spots if item.get("indoor")]
+            pool = indoor or list(spots)
         elif int((meta or {}).get("holiday_days") or 0) >= 4:
-            pool = [item for item in guizhou if "贵阳" not in str(item.get("city") or "")] or guizhou
+            # 长假去外地：先挑不在本市的
+            pool = [item for item in spots if str(city or "") not in str(item.get("city") or "")] or list(spots)
         else:
-            pool = guiyang or guizhou
+            pool = list(spots)
         if good_weather:
             outdoor = [item for item in pool if not item.get("indoor")]
             if outdoor:
@@ -1206,7 +1227,6 @@ class ScheduleEngine:
     def _activity_for(self, item, ctx, hour, rng, prev):
         zone = str(item.get("zone") or "")
         category = str(item.get("category") or "")
-        place = str(item.get("place") or "")
         transit = str(item.get("transit") or "")
         spot = str(item.get("spot") or "")
         base = str(item.get("activity") or "")

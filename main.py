@@ -25,13 +25,26 @@ from datetime import date, datetime, timedelta, timezone
 # （「大晚上的」就是这么来的）。clock.now() 返回目标时区下的 naive 本地时间，
 # 和原来的用法完全兼容。
 try:
-    from .clock import now as _clock_now, configure as _clock_configure, current_name as _clock_name
+    from .clock import (
+        now as _clock_now,
+        from_timestamp as _clock_from_ts,
+        configure as _clock_configure,
+        current_name as _clock_name,
+    )
 except Exception:
     try:
-        from clock import now as _clock_now, configure as _clock_configure, current_name as _clock_name
+        from clock import (
+            now as _clock_now,
+            from_timestamp as _clock_from_ts,
+            configure as _clock_configure,
+            current_name as _clock_name,
+        )
     except Exception:
         def _clock_now(*args, **kwargs):
             return datetime.now()
+
+        def _clock_from_ts(ts, *args, **kwargs):
+            return datetime.fromtimestamp(float(ts or 0))
 
         def _clock_configure(*args, **kwargs):
             return ""
@@ -110,14 +123,6 @@ except Exception:
             return ""
         def parse_weather_daily(*args, **kwargs):
             return []
-
-try:
-    from .gift_engine import GiftEngine
-except Exception:
-    try:
-        from gift_engine import GiftEngine
-    except Exception:
-        GiftEngine = None
         def next_check_slot(*args, **kwargs):
             return ""
         def parse_clock(*args, **kwargs):
@@ -128,6 +133,14 @@ except Exception:
             return False
         def forecast_brief(*args, **kwargs):
             return ""
+
+try:
+    from .gift_engine import GiftEngine
+except Exception:
+    try:
+        from gift_engine import GiftEngine
+    except Exception:
+        GiftEngine = None
 
 try:
     from .proactive_guard import analyze_rows as _pg_analyze_rows, compose_task as _pg_compose_task, near_duplicate as _pg_near_duplicate
@@ -207,11 +220,10 @@ except Exception:
             parse_day as _diary_parse_day,
             build_prompt as _diary_build_prompt,
             import_folder as _diary_import_folder,
-        build_prompt as _diary_build_prompt,
             write_diary as _diary_write,
             read_diary as _diary_read,
             list_tree as _diary_tree,
-                )
+        )
     except Exception:
         _DIARY_DEFAULT_DIR = ""
         _diary_resolve_dir = None
@@ -1265,7 +1277,8 @@ USAGE_DEFAULT_PRICES = {
 def usage_is_peak(ts):
     """北京时间工作日 9-12、14-18 为高峰；周末全天算空闲（法定节假日未处理）。"""
     try:
-        dt = datetime.fromtimestamp(float(ts), timezone.utc) + timedelta(hours=8)
+        # 不能写死 +8：时区是可配的（clock.configure），服务器跑 UTC 时 +8 只是碰巧对
+        dt = _clock_from_ts(ts)
     except Exception:
         return False
     if dt.weekday() >= 5:
@@ -3079,7 +3092,6 @@ class HumanState:
         result = []
         for hour in range(24):
             start_min = hour * 60
-            end_min = start_min + 60
             found = None
             for item in valid:
                 begin = parse_hhmm(item.get("start"))
@@ -3158,7 +3170,6 @@ class HumanState:
             block["children"] = children
             block["current"] = any(child["current"] for child in children)
             if children:
-                activities = [str(child.get("activity") or "") for child in children]
                 if all(item.get("category") == "sleep" for item in children):
                     block["activity"] = "睡觉"
                 elif any(item.get("category") in ("play", "social") for item in children):
@@ -7049,10 +7060,44 @@ class HumanCorePlugin(Star):
             umo = str(getattr(event, "unified_msg_origin", "") or "")
             # 配 0 / 负数时以前会「请求 4 条、只渲染 1 条」，两边都按同一档位收敛
             limit = max(1, min(40, self.cfg_int("time_recall_limit", 6)))
-            result = await self._data_call(
-                "recall_messages", self._data_bot_id(), query=text, umo=umo,
-                uid=str(uid), limit=min(limit * 2, 40),
-            )
+            # 私聊：不传 uid。recall_messages 按 uid 过滤后只剩「他」说的话，她的回复全被滤掉，
+            # 块里就成了「他：是啊 / 自己煮的 / 厉害吧」这种碎片；umo 已经把范围限在这一个
+            # 1:1 会话，双方的话都要，不会串到别人。
+            # 群聊：**仍然要按 uid**，否则会把群里其他人的话也拉进【按时间回看】。
+            try:
+                private = bool(event.is_private_chat())
+            except Exception:
+                private = True
+            if private:
+                # 跨平台：同一个人在 QQ / 飞书两边说过的话都要算进「昨天聊了什么」，
+                # 否则飞书说的「今天吃面」在 QQ 上问就等于没说过。
+                profile = self.db.get_profile(uid) or {}
+                umos = self._ritual_umos(profile)[:3] or [umo]
+                gathered = []
+                label = ""
+                for one_umo in umos:
+                    result = await self._data_call(
+                        "recall_messages", self._data_bot_id(), query=text,
+                        umo=one_umo, limit=min(limit * 2, 40),
+                    )
+                    if not isinstance(result, dict):
+                        continue
+                    label = label or str(result.get("label") or "")
+                    gathered.extend(result.get("messages") or [])
+                seen = set()
+                merged = []
+                for row in sorted(gathered, key=lambda r: to_int(r.get("created_at"), 0)):
+                    key = (to_int(row.get("created_at"), 0), str(row.get("content") or "")[:80])
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    merged.append(row)
+                result = {"label": label, "messages": merged} if merged else {}
+            else:
+                result = await self._data_call(
+                    "recall_messages", self._data_bot_id(), query=text, umo=umo,
+                    uid=str(uid), limit=min(limit * 2, 40),
+                )
         except Exception as exc:
             logger.debug("[amo] 时间回看失败: %s" % exc)
             return ""
@@ -8128,7 +8173,6 @@ class HumanCorePlugin(Star):
             elif self._is_angel_memory(plugin):
                 items.extend(self._angel_all_memories(uid, "", limit))
                 if not items and names:
-                    known = self._angel_known_ids(plugin)
                     for record in self._angel_records(plugin):
                         tags = self._angel_tags(record)
                         content = str(record.get("judgment") or record.get("reasoning") or "")
@@ -8550,7 +8594,7 @@ class HumanCorePlugin(Star):
             created = to_int(item.get("created_at"))
             if created and any(w in body for w in rel_words):
                 try:
-                    day = datetime.fromtimestamp(created)
+                    day = _clock_from_ts(created)
                     if day.strftime("%Y-%m-%d") != _now().strftime("%Y-%m-%d"):
                         body = "（记于 %s）%s" % (day.strftime("%m-%d"), body)
                 except Exception:
@@ -8792,7 +8836,6 @@ class HumanCorePlugin(Star):
             return
 
         umo = event.unified_msg_origin
-        group_id = event.get_group_id()
         private = event.is_private_chat()
         if private:
             self._clear_proactive_pending(uid)
@@ -8932,12 +8975,25 @@ class HumanCorePlugin(Star):
             self.cfg_int("delay_max_minutes", 18),
         ) * 60
         text = event.message_str or ""
+        started = now_ts()
 
         async def runner():
             try:
                 await asyncio.sleep(delay)
                 if not self._running or not self._ready:
                     return
+                # 这 4-18 分钟里他已经又说话了、或者她已经回过 → 这条补话已经过期，
+                # 再用当初那句 event 走一遍会答非所问（真机上出现过重复回答旧问题）。
+                if to_float(self._last_reply_at.get(umo, 0), 0) > started:
+                    logger.debug("[amo] 延迟回复已过期（期间已回复）: %s" % umo)
+                    return
+                try:
+                    latest = self._recent(umo, 1) or []
+                    if latest and to_float(latest[-1].get("created_at"), 0) > started:
+                        logger.debug("[amo] 延迟回复已过期（期间有新消息）: %s" % umo)
+                        return
+                except Exception:
+                    pass
                 snap = self.state.snapshot()
                 note = "你刚刚忙完，主动补一句；不要提等待时间，语气自然。"
                 reply = await self._compose_reply(
@@ -9240,6 +9296,24 @@ class HumanCorePlugin(Star):
             return  # 别的插件伪造的主动消息事件，不是这一轮的正常回复
         self._remember_bot_message(event.unified_msg_origin, text)
 
+    def _platform_for_umo(self, umo):
+        """umo 对应的平台名。QQ 的 umo 前缀是机器人名字，不能直接拿第一段当平台。"""
+        umo = str(umo or "")
+        cached = (getattr(self, "_umo_platforms", None) or {}).get(umo)
+        if cached:
+            return cached
+        head = umo.split(":", 1)[0].strip().lower()
+        if head in ("qq", "onebot", "onebotv11"):
+            return "aiocqhttp"
+        if head in ("aiocqhttp", "lark", "webchat", "telegram", "discord"):
+            return head
+        bn = str(getattr(self, "bot_name", "") or "").strip().lower()
+        if bn and head == bn:
+            return "aiocqhttp"
+        if ":FriendMessage:" in umo or ":GroupMessage:" in umo:
+            return "aiocqhttp"
+        return head
+
     def _remember_bot_message(self, umo, text):
         """把机器人自己发出去的话也写进 messages 表。
 
@@ -9278,7 +9352,7 @@ class HumanCorePlugin(Star):
                 try:
                     store.add_message(
                         self._data_bot_id(), umo, "bot", self.bot_name, "bot", text,
-                        platform=str(umo).split(":", 1)[0],
+                        platform=self._platform_for_umo(umo),
                     )
                     saved = True
                 except TypeError:
@@ -9294,7 +9368,7 @@ class HumanCorePlugin(Star):
                     loop = asyncio.get_running_loop()
                     task = loop.create_task(self._data_call(
                         "add_message", self._data_bot_id(), umo, "bot", self.bot_name, "bot", text,
-                        platform=str(umo).split(":", 1)[0],
+                        platform=self._platform_for_umo(umo),
                     ))
                     def _log_failed_task(task):
                         if task.cancelled():
@@ -9446,12 +9520,16 @@ class HumanCorePlugin(Star):
                             qq_nick = str(stranger_data.get("nickname") or "")
             except Exception as exc:
                 logger.debug("[amo] 获取机器人QQ昵称失败: %s" % exc)
+        fallback_only = False
         if not qq_nick:
             qq_nick = display_name or role_name
+            fallback_only = True
             logger.info("[amo] get_login_info 不可用，QQ昵称回退为 %s" % qq_nick)
         if not display_name:
             display_name = qq_nick
-        if uid:
+        if uid and not fallback_only:
+            # 兜底值（角色名/群名片）不能进缓存：get_login_info 一次瞬时失败会让
+            # 整进程一直用错昵称，他问「你QQ昵称叫什么」就答成角色名。
             self._self_nickname = qq_nick
             self._self_nickname_uid = uid
             self._self_display = display_name
@@ -9509,8 +9587,11 @@ class HumanCorePlugin(Star):
         uid = self._canonical_uid(event)
         profile = self.db.get_profile(uid)
         relation = profile.get("relation", "普通")
+        follow_text = ""
         try:
-            await self._maybe_follow_city(event, uid, profile)
+            # 以前返回值被直接丢掉：城市/日程/天气都改了，她却收不到【邀请】【出发】【回家】，
+            # 整条「跟去陪他」的对话等于没生效。
+            follow_text = await self._maybe_follow_city(event, uid, profile) or ""
         except Exception as exc:
             logger.debug("[amo] 城市跟随失败: %s" % exc)
         wander_text = ""
@@ -9640,6 +9721,8 @@ class HumanCorePlugin(Star):
                 )
         except Exception:
             pass
+        if follow_text:
+            parts.append(follow_text)
         if wander_text:
             parts.append(wander_text)
         if is_group:
@@ -10227,7 +10310,7 @@ class HumanCorePlugin(Star):
         if now - self._last_relation_decay > 3600:
             self._last_relation_decay = now
             self._decay_hate_relations()
-        if (self.cfg_bool("enable_auto_relation", True)
+        if (self.cfg_bool("auto_relation", True)
                 and now - self._last_relation_sediment > 1800):
             self._last_relation_sediment = now
             try:
@@ -10497,10 +10580,20 @@ class HumanCorePlugin(Star):
                 since = to_int(self.db.kv_get(key, 0))
             except Exception:
                 since = 0
-            try:
-                rows = await self._data_call("messages_since", self._data_bot_id(), uid, since, 400)
-            except Exception as exc:
-                logger.debug("[amo] 里程碑取聊天失败: %s" % exc)
+            # 按这个人的会话取（umo），会话里双方的话都在；不能按 uid（她的行是 uid='bot'），
+            # 也不能不带范围（会把所有人的聊天拉进来）。
+            rows = []
+            for one_umo in self._ritual_umos(profile)[:3]:
+                try:
+                    part = await self._data_call(
+                        "messages_since", self._data_bot_id(), "", since, 200, umo=one_umo
+                    )
+                except Exception as exc:
+                    logger.debug("[amo] 里程碑取聊天失败(%s): %s" % (one_umo, exc))
+                    continue
+                rows.extend(part or [])
+            rows.sort(key=lambda r: to_int(r.get("created_at"), 0))
+            if not rows:
                 continue
             if not rows:
                 continue
@@ -10568,16 +10661,33 @@ class HumanCorePlugin(Star):
                 continue
             if str(profile.get("relation") or "") != "相恋":
                 continue
-            try:
-                # 按人取（不限会话）：他上午可能在飞书、晚上在 QQ
-                result = await self._data_call(
-                    "recall_messages", self._data_bot_id(), query="昨天",
-                    umo="", uid=uid, limit=300,
-                )
-            except Exception as exc:
-                logger.debug("[amo] 每日总结取聊天失败: %s" % exc)
+            # 他上午可能在飞书、晚上在 QQ，所以按**这个人自己的会话**逐个拉，
+            # 每个会话里双方的话都要（机器人行 uid='bot'，按 uid 过滤会把她的话丢光）。
+            # 注意不能传 umo=""：那会把这个 bot 下所有人的聊天都拉进来。
+            umos = self._ritual_umos(profile)[:3]
+            messages = []
+            for one_umo in umos:
+                try:
+                    result = await self._data_call(
+                        "recall_messages", self._data_bot_id(), query="昨天",
+                        umo=one_umo, limit=150,
+                    )
+                except Exception as exc:
+                    logger.debug("[amo] 每日总结取聊天失败(%s): %s" % (one_umo, exc))
+                    continue
+                messages.extend((result or {}).get("messages") or [])
+            if not messages:
                 continue
-            messages = (result or {}).get("messages") or []
+            # 两个平台各拉一遍可能重复（同一会话不会被拉两次，但保守起见按内容去重）
+            seen_lines = set()
+            deduped = []
+            for row in messages:
+                key = (to_int(row.get("created_at"), 0), str(row.get("content") or "")[:80])
+                if key in seen_lines:
+                    continue
+                seen_lines.add(key)
+                deduped.append(row)
+            messages = sorted(deduped, key=lambda r: to_int(r.get("created_at"), 0))
             lines = []
             for row in messages:
                 text = str(row.get("content") or "").strip().replace("\n", " ")
@@ -10999,7 +11109,11 @@ class HumanCorePlugin(Star):
                     continue
                 if not self._ritual_in_window(self.cfg_str(window_key, default_window)):
                     continue
-                daily_key = "ritual_" + kind + "_" + uid + "_" + today_str()
+                # 晚安跨零点：00:00-02:00 仍算前一晚，否则 22:00 发过、0 点后 key 变了再发一次
+                ritual_day = today_str()
+                if kind == "goodnight" and minutes_now() < 120:
+                    ritual_day = (_now() - timedelta(days=1)).date().isoformat()
+                daily_key = "ritual_" + kind + "_" + uid + "_" + ritual_day
                 if self.db.kv_get(daily_key, False):
                     continue
                 if kind == "morning" and (snap.get("activity") or {}).get("category") == "sleep":
@@ -11021,10 +11135,17 @@ class HumanCorePlugin(Star):
                 except Exception as exc:
                     logger.debug("[amo] 仪式生成失败: %s" % exc)
                 if not text:
+                    # 兜底文案也要跟着方言开关：关掉方言/普通话时不能冒出「吃啥子哦」
+                    lunch_text = name + "，今天中午吃什么呢？"
+                    try:
+                        if self._dialect_active() and "贵州" in self._dialect_style():
+                            lunch_text = name + "，今天中午吃啥子哦？"
+                    except Exception:
+                        pass
                     text = {
                         "goodnight": name + "，太晚了，我先去睡觉啦，你也早点睡。",
                         "morning": name + "，早上好呀，还没起来吗？",
-                        "lunch": name + "，今天中午吃啥子哦？",
+                        "lunch": lunch_text,
                     }.get(kind, "")
                 if not text:
                     continue
@@ -11425,6 +11546,8 @@ class HumanCorePlugin(Star):
                 and count == 0
                 and self.cfg_bool("proactive_daily_guarantee", True)
                 and _now().hour >= 8
+                and _now().hour < 23
+                and not quiet
             )
             if quiet and not guaranteed:
                 continue
@@ -11501,16 +11624,9 @@ class HumanCorePlugin(Star):
         umo = self._last_umo or self._first_private_umo()
         if not self.state.weather:
             self.state.weather = self.state._simulate_weather()
-        desired_city = (
-            self.cfg_str("weather_city_name", "").strip()
-            or self.cfg_str("weather_city", "").strip()
-            or str((getattr(self.state, "schedule_profile", {}) or {}).get("city") or "").strip()
-            or "贵阳"
-        )
-        if self.state.weather.get("city") != desired_city:
-            await self.state.refresh_weather(force=True)
-        else:
-            self._spawn(self.state.refresh_weather())
+        # /status 每 60 秒被面板轮询一次，必须是只读：以前城市名对不上就 force 刷天气
+        # （烧和风额度），日程缺失就现生成（走模型）。都丢给后台。
+        self._spawn(self.state.refresh_weather())
         if not self.state.worldview:
             self.state.worldview = self.state._fallback_world()
             self._spawn(self.state.ensure_worldview(umo))
@@ -11519,7 +11635,7 @@ class HumanCorePlugin(Star):
             or self.db.kv_get("schedule_version", "") != SCHEDULE_VERSION
             or not self.state.schedule_context(today_str())
         ):
-            await self.state.ensure_schedule(umo)
+            self._spawn(self.state.ensure_schedule(umo))
         snap = self.state.snapshot()
         activity = 0.0
         threshold = {"value": 0.0, "base": 0.0, "absolute": 0.0}
@@ -11585,6 +11701,8 @@ class HumanCorePlugin(Star):
                 "weather_host": self.cfg_str("weather_host", "https://devapi.qweather.com"),
                 "version": PLUGIN_VERSION,
                 "dialect_style": self._dialect_style(),
+                # 面板靠这个判断「方言到底开没开」：dialect_style 可能还留着上次的方言名
+                "dialect_enabled": self._dialect_active(),
                 "dialect_count": len(self._dialect_rows()) if self._dialect_active() else 0,
                 "companion_memory_available": self._companion_plugin() is not None,
             },
@@ -11791,7 +11909,7 @@ class HumanCorePlugin(Star):
                 "🩺 身体状态：" + health["status"] + "\n"
                 + ("备注：" + health["note"] + "\n" if health.get("note") else "")
                 + "恢复时间：" + (
-                    datetime.fromtimestamp(health["until"]).strftime("%m-%d %H:%M")
+                    _clock_from_ts(health["until"]).strftime("%m-%d %H:%M")
                     if health.get("until") else "—"
                 )
             )
