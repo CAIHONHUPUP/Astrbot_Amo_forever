@@ -1,5 +1,11 @@
 # Changelog
 
+## 6.8.6（仓库地址规范）
+
+- `metadata.yaml` 的 `repo` 统一成主仓库规范写法：`https://github.com/GM888888456/Astrbot_Amo_forever/`
+  （结尾带斜杠，指向主仓库，不是 `_ui` / `_Test`）；
+- `tools/check_version.py` 增加校验：repo 不是这个格式就直接失败，防止以后又指错。
+
 ## 6.8.4（关系图以画像为准）
 
 - 画像字段叫「相恋」、关系网叫「恋人」，之前没换算导致写边被白名单挡掉；现在统一换算
