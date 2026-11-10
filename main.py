@@ -699,26 +699,53 @@ def today_str():
     return _now().date().isoformat()
 
 
-def other_platform_bot_lines(rows, umo, limit=3):
+def other_platform_bot_lines(rows, umo, limit=3, platform=""):
     """从跨平台近聊里挑出「她自己说的、且不是当前会话」的几句话。
 
     主动消息以前只看当前会话的最近 12 句：QQ 上 08:48 说「等散会了跟你说」，
     之后一直没人说话，12:00 的主动消息就接着那场会往下说；与此同时飞书那边
     早就是「在便利店买饭」了。把她在别的平台刚说的话也放进去，两边才不会
     各讲各的故事（内容冲突时以当前状态为准，见 gen_proactive 的规则）。
+
+    数据插件有的行没有 `umo`，所以再按 `platform` 兜一层，避免把本平台的
+    话当成「另一边说过」。
     """
     umo = str(umo or "")
+    platform = str(platform or "")
     out = []
     for row in rows or []:
         if str(row.get("role") or "") != "bot":
             continue
         if str(row.get("umo") or "") == umo:
             continue
+        row_platform = str(row.get("platform") or "")
+        if row_platform and platform and row_platform == platform:
+            continue
         text = str(row.get("content") or "").strip().replace("\n", " ")
         if text:
             out.append(text)
     size = max(1, int(limit or 1))
     return out[-size:]
+
+
+_CATEGORY_MOOD_CACHE = None
+
+
+def schedule_category_mood():
+    """日程类别 → 每小时心情增量（复用 schedule_engine.CATEGORY_MOOD）。"""
+    global _CATEGORY_MOOD_CACHE
+    if _CATEGORY_MOOD_CACHE is not None:
+        return _CATEGORY_MOOD_CACHE
+    table = {}
+    try:
+        from .schedule_engine import CATEGORY_MOOD as table
+    except Exception:
+        try:
+            from schedule_engine import CATEGORY_MOOD as table
+        except Exception:
+            table = {}
+    _CATEGORY_MOOD_CACHE = dict(table or {})
+    return _CATEGORY_MOOD_CACHE
 
 
 
@@ -3705,6 +3732,23 @@ class HumanState:
                     applied = True
                 except Exception:
                     continue
+        if not applied:
+            # 日常活动也要影响真实心情：上班会累、逛街会开心、睡觉回血。
+            # CATEGORY_MOOD 是日程内部用的「每小时」增量，真实心情每轮都会向基准
+            # 回落，所以乘一个增益（schedule_mood_gain，默认 3）才看得出来。
+            try:
+                gain = max(0.0, self.p.cfg_float("schedule_mood_gain", 3.0))
+            except Exception:
+                gain = 3.0
+            category = str(item.get("category") or "")
+            for mood_key, delta in (schedule_category_mood().get(category) or {}).items():
+                if mood_key not in MOOD_KEYS:
+                    continue
+                try:
+                    clean[mood_key] = float(delta) * gain
+                except Exception:
+                    continue
+            applied = bool(clean)
         if clean:
             self.nudge(**clean)
         # 兼容旧版日程里用 detail 标记的事件链。
@@ -4117,6 +4161,7 @@ class LLMService:
             try:
                 other_bot = other_platform_bot_lines(
                     await self.p._recent_by_uid(uid, 12, ""), umo,
+                    platform=str(umo).split(":", 1)[0],
                 )
             except Exception as exc:
                 logger.debug("[amo] 取跨平台近聊失败: %s" % exc)
@@ -6083,6 +6128,25 @@ class HumanCorePlugin(Star):
         except Exception:
             return False
 
+    def _quote_allowed(self, umo, group=None):
+        """能不能引用原消息：私聊（任何平台）永远不引用，群聊按人数 + 概率。
+
+        `group` 不传就看 umo 里的消息类型。私聊不引用是硬规则：无论 QQ、飞书
+        还是别的平台，都不该在私聊里把他的话再引用一遍；群聊才看
+        `_should_quote_group()`（人数阈值 + `quote_group_probability`）。
+        """
+        umo = str(umo or "")
+        if group is None:
+            group = "GroupMessage" in umo
+        if not group:
+            return False
+        if "GroupMessage" not in umo:
+            return False
+        try:
+            return bool(self._should_quote_group(umo))
+        except Exception:
+            return False
+
     def _install_lark_quote_guard(self):
         """飞书私聊不要引用：适配器把每条消息都发成「回复」。
 
@@ -6093,8 +6157,6 @@ class HumanCorePlugin(Star):
             from astrbot.core.platform.sources.lark.lark_event import LarkMessageEvent
         except Exception:
             return
-        if getattr(LarkMessageEvent, "_amo_quote_guard", False):
-            return
         plugin = self
 
         async def send(ev, message):
@@ -6102,12 +6164,11 @@ class HumanCorePlugin(Star):
                 is_private = bool(ev.is_private_chat())
             except Exception:
                 is_private = False
-            quote = False
-            if not is_private:
-                try:
-                    quote = bool(plugin._should_quote_group(ev.unified_msg_origin))
-                except Exception:
-                    quote = False
+            try:
+                quote = bool(plugin._quote_allowed(getattr(ev, "unified_msg_origin", ""),
+                                                 (not is_private)))
+            except Exception:
+                quote = False
             kwargs = lark_quote_kwargs(
                 is_private,
                 getattr(ev.message_obj, "message_id", ""),
@@ -6115,12 +6176,20 @@ class HumanCorePlugin(Star):
                 ev.get_group_id(),
                 quote,
             )
+            message_type = getattr(getattr(ev.message_obj, "type", None), "value", "")
             try:
                 await LarkMessageEvent.send_message_chain(
-                    message,
-                    ev.bot,
-                    message_type=getattr(ev.message_obj.type, "value", ""),
-                    **kwargs,
+                    message, ev.bot, message_type=message_type, **kwargs,
+                )
+            except Exception as exc:
+                if "reply_message_id" in kwargs:
+                    raise
+                # 普通发送失败（比如 open_id 被拒）就退回原来的引用发送，别把话吞了
+                logger.warning("[amo] 飞书普通发送失败，退回引用发送: %s" % exc)
+                await LarkMessageEvent.send_message_chain(
+                    message, ev.bot,
+                    reply_message_id=getattr(ev.message_obj, "message_id", ""),
+                    message_type=message_type,
                 )
             finally:
                 # 父类只做 metrics 记录，不能少
@@ -6129,7 +6198,6 @@ class HumanCorePlugin(Star):
         LarkMessageEvent.send = send
         LarkMessageEvent._amo_quote_guard = True
         logger.info("[amo] 飞书引用守卫已安装：私聊不引用，群聊按概率")
-
     @staticmethod
     def _is_memory_companion(plugin):
         return plugin is not None and getattr(plugin, "memory_companion", None) is not None
@@ -9125,8 +9193,8 @@ class HumanCorePlugin(Star):
                 await self._segment_wait(event, segment, segments[index - 1], last_sent_at)
             chain = []
             if (
-                group and index == 0 and quote_id is not None
-                and self._should_quote_group(event.unified_msg_origin)
+                index == 0 and quote_id is not None
+                and self._quote_allowed(event.unified_msg_origin, group)
             ):
                 try:
                     chain.append(Comp.Reply(id=quote_id))
@@ -9244,8 +9312,8 @@ class HumanCorePlugin(Star):
                 await self._segment_wait(None, segment, "", 0.0)
             chain = []
             if (
-                group and index == 0 and quote_id is not None
-                and self._should_quote_group(umo)
+                index == 0 and quote_id is not None
+                and self._quote_allowed(umo, group)
             ):
                 try:
                     chain.append(Comp.Reply(id=quote_id))
@@ -9884,14 +9952,18 @@ class HumanCorePlugin(Star):
                 result.chain = [Comp.Plain(text=text)]
             if not text.strip():
                 return
+            group = not event.is_private_chat()
+            if not group:
+                # 私聊永远不引用（QQ / 飞书 / 任何平台）：连上游核心或别的插件
+                # 塞进 chain 的 Reply 也在这里摘掉，而不是整条消息交回去不管。
+                result.chain = [
+                    comp for comp in result.chain if not isinstance(comp, Comp.Reply)
+                ]
             if any(not isinstance(comp, (Comp.Plain, Comp.At)) for comp in result.chain):
                 return
-            group = not event.is_private_chat()
             quote_enabled = bool(
-                group and (
-                    self._should_quote_group(event.unified_msg_origin)
-                    or getattr(event, "amo_quote_hint", False)
-                )
+                self._quote_allowed(event.unified_msg_origin, group)
+                or (group and getattr(event, "amo_quote_hint", False))
             )
             quote_id = getattr(event.message_obj, "message_id", None) if quote_enabled else None
             if self.cfg_bool("polish_native", False):

@@ -174,6 +174,15 @@ class OtherPlatformLinesTests(unittest.TestCase):
             other_platform_bot_lines(rows, QQ_UMO, limit=2), ["第二句", "第三句"]
         )
 
+    def test_platform_filter_when_rows_have_no_umo(self):
+        rows = [
+            {"role": "bot", "platform": "lark", "content": "另一平台说的", "created_at": 1.0},
+            {"role": "bot", "platform": "aiocqhttp", "content": "本平台说的", "created_at": 2.0},
+        ]
+        self.assertEqual(
+            other_platform_bot_lines(rows, QQ_UMO, platform="aiocqhttp"), ["另一平台说的"]
+        )
+
     def test_handles_junk(self):
         self.assertEqual(other_platform_bot_lines(None, QQ_UMO), [])
         self.assertEqual(other_platform_bot_lines([{"role": "bot"}], QQ_UMO), [])

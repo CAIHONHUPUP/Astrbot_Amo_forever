@@ -86,6 +86,27 @@
   （类上留标记，热重载不会套娃），只在飞书环境生效。
 - `segment_engine` 加 `group` 守卫：私聊即使误传了 `quote_id` 也不会拼 `Reply` 段。
 
+### 引用规则统一到所有平台，日程活动影响真实心情（11-10）
+
+- **私聊一律不引用（QQ / 飞书 / 任何平台）**：判定收敛到 `_quote_allowed()`——不看平台，
+  私聊直接 False；`on_decorating_result` 在私聊里连上游核心或别的插件塞进 `result.chain`
+  的 `Reply` 也一并摘掉（以前只会在自己拼链时不给 Reply，核心开了 `reply_with_quote`
+  就照样引用）；`_send_reply` / `_send_to_umo` / 分段引擎全部走它，群聊才看
+  `quote_group_speaker_threshold` 人数 + `quote_group_probability` 概率。
+- **飞书守卫改成每次加载都重装**：以前用类标记「装过就跳过」，热重载后旧闭包还绑着上一个
+  插件实例；现在每次 `__init__` 都重新绑定（类上的标记只用于排查）。
+- **日程活动会改真实心情**：`apply_schedule_events()` 以前只有突发事件的 `effects` 会
+  `nudge()` 真实心情，日常的上班/吃饭/休息/逛街/通勤只在日程自己的 `mood` 字段里变。
+  现在每小时按 `CATEGORY_MOOD` 给真实心情加减，强度乘以 `schedule_mood_gain`（默认 3，0=关），
+  每小时只结算一次；突发事件仍然优先用自己的 `effects`。
+- 顺手修 `CATEGORY_MOOD["commute"]` 里的 `烦躁`——十维心情里没有这个键，等于通勤从来没有
+  影响过心情，改成 `暴躁`。
+- `other_platform_bot_lines()` 增加 `platform` 兜底：数据插件有的行没有 `umo`，
+  以前会把「本平台说过的话」当另一边。
+- `_conf_schema.json` 补上 `quote_group_probability`（改了代码却没给面板入口）和
+  `schedule_mood_gain`。
+- 新增 `tests/test_quote_policy.py`（10 项）、`tests/test_schedule_mood.py`（6 项）。
+
 ### 其它
 
 - `PLUGIN_VERSION` 从 6.6.4 补到 6.6.8，和 `metadata.yaml` / CHANGELOG / README 对齐
