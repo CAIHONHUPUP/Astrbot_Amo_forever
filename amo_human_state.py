@@ -11,6 +11,25 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
     except ImportError:  # 直接按文件加载时
         from amo_observability import note as _note_swallowed
 
+try:
+    from .day_types import normalize_day_types, pick_day_type
+except ImportError:
+    try:
+        from day_types import normalize_day_types, pick_day_type
+    except ImportError:
+        normalize_day_types = None
+        pick_day_type = None
+
+try:
+    from .schedule_change import apply_change as apply_sched_change, detect_schedule_change
+except ImportError:
+    try:
+        from schedule_change import apply_change as apply_sched_change, detect_schedule_change
+    except ImportError:
+        detect_schedule_change = None
+        apply_sched_change = None
+
+
 from datetime import date
 from datetime import timedelta
 import asyncio
@@ -880,6 +899,33 @@ class HumanState:
             })
         return items
 
+    def _day_types(self) -> list:
+        """读配置里的日子类型；没配就用默认那六种。"""
+        if normalize_day_types is None:
+            return []
+        raw = []
+        try:
+            raw = self.p.cfg_list("schedule_day_types", [])
+        except Exception:
+            raw = []
+        return normalize_day_types(raw or None)
+
+    def _today_day_type(self, day: str) -> dict:
+        """今天是什么日子：上班日 / 休息日 / 外出日 / 宅家日 / 加班日 / 摸鱼日。"""
+        if pick_day_type is None:
+            return {"id": "workday", "name": "上班日", "guide": ""}
+        try:
+            import datetime as _dt
+
+            d = _dt.date.fromisoformat(str(day))
+            is_weekend = d.weekday() >= 5
+            picked = pick_day_type(self._day_types(), is_weekend, str(day))
+            self.db.kv_set("day_type_" + str(day), picked)
+            return picked
+        except Exception as _amo_exc:
+            _note_swallowed("amo_human_state._today_day_type", _amo_exc)
+            return {"id": "workday", "name": "上班日", "guide": ""}
+
     async def ensure_schedule(self, umo, force=False):
         """每天只生成一次主干；点击二级卡片时再动态生成这一小时的日记。"""
         today = today_str()
@@ -891,6 +937,7 @@ class HumanState:
             and isinstance(context, dict)
             and context.get("version") == "backbone-v5"
         )
+        day_type = self._today_day_type(today)
         if existing and version_ok and not force:
             hourly = self._hourly_schedule(existing)
             if hourly != existing:
@@ -927,6 +974,7 @@ class HumanState:
                     persona=persona, salt=str(now_ts()) if force else "",
                 )
                 self.schedule_profile = context.get("profile") or self.schedule_profile
+                context["day_type"] = day_type
                 items = self.engine.build_skeleton(context)
                 try:
                     items = await self.engine.enrich(umo, context, items, self.p.llm)

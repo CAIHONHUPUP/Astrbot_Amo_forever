@@ -43,6 +43,12 @@ class RuntimeMixin(_MixinBase):
     async def on_message(self, event: AstrMessageEvent):
         try:
             await self._ensure_ready()
+            try:
+                raw_text = (event.message_str or "").strip()
+                if raw_text and not raw_text.startswith(("/", "／")):
+                    await self._apply_user_schedule_change(event.unified_msg_origin, raw_text)
+            except Exception as _amo_exc:
+                _note_swallowed("amo_runtime.on_message.schedule_change", _amo_exc)
             await self._handle_message(event)
         except Exception:
             logger.exception("[amo] 消息处理异常")

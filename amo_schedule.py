@@ -2,6 +2,15 @@
 """ScheduleMixin：从 main.py 拆出的 mixin，由 HumanCorePlugin 组合使用。"""
 from __future__ import annotations
 
+try:
+    from .schedule_change import apply_change as apply_sched_change, detect_schedule_change
+except ImportError:
+    try:
+        from schedule_change import apply_change as apply_sched_change, detect_schedule_change
+    except ImportError:
+        detect_schedule_change = None
+        apply_sched_change = None
+
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
@@ -39,6 +48,53 @@ else:  # 运行时用 object：协议里的声明不能进 MRO，否则会挡掉
 
 
 class ScheduleMixin(_MixinBase):
+    async def _apply_user_schedule_change(self, umo, user_text: str) -> None:
+        """用户明确安排了行程（来接我 / 一起睡 / 出去吃），把那一段日程改掉。"""
+        if detect_schedule_change is None or apply_sched_change is None:
+            return
+        try:
+            change = detect_schedule_change(user_text)
+            if not change:
+                return
+            import datetime as _dt
+
+            key = _dt.date.today().isoformat()
+            items = self.schedule.get(key) or self.db.get_schedule(key) or []
+            if not items:
+                return
+            new_items = apply_sched_change(items, change, _dt.datetime.now())
+            if new_items == items:
+                return
+            self.schedule[key] = new_items
+            self.db.kv_set("schedule", self.schedule)
+            self.db.save_schedule(key, new_items)
+            logger.info("[amo] 按用户的话改了日程: %s" % change.get("activity"))
+        except Exception as _amo_exc:
+            _note_swallowed("amo_schedule._apply_user_schedule_change", _amo_exc)
+
+    def schedule_text_of(self, day: str) -> str:
+        """把某天的日程拍成一段文本，给 schedule_view 工具用。"""
+        try:
+            items = self.schedule.get(day) or self.db.get_schedule(day) or []
+            if not items:
+                return "那天还没有安排。"
+            info = self.db.kv_get("day_type_" + day, None) or {}
+            lines = []
+            if isinstance(info, dict) and info.get("name"):
+                lines.append("今天是%s。" % info["name"])
+            for it in items:
+                act = str(it.get("activity") or "").strip()
+                if not act:
+                    continue
+                place = str(it.get("place") or "").strip()
+                lines.append("%s-%s %s%s" % (
+                    it.get("start") or "", it.get("end") or "", act,
+                    ("（%s）" % place) if place else ""))
+            return "\n".join(lines[:24]) or "那天还没有安排。"
+        except Exception as _amo_exc:
+            _note_swallowed("amo_schedule.schedule_text_of", _amo_exc)
+            return "想不起来…"
+
     def _migrate_schedule_defaults(self):
         """5.1.1：位置/资产改为“人格优先、缺失随机”，清掉 5.1.0 自动写入的固定默认值。"""
         try:

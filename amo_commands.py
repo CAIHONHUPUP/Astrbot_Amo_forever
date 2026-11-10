@@ -442,6 +442,66 @@ class CommandMixin(_MixinBase):
 
         return "未知指令。发送 /amo help 查看帮助。"
 
+    @filter.command("日程")
+    async def cmd_schedule(self, event: AstrMessageEvent):
+        """查看日程：/日程 [今天|明天|昨天]"""
+        await self._ensure_ready()
+        try:
+            import datetime as _dt
+
+            args = str(getattr(event, "message_str", "") or "").split()
+            which = args[-1] if len(args) > 1 else "今天"
+            today = _dt.date.today()
+            if which in ("明天", "tomorrow"):
+                target = today + _dt.timedelta(days=1)
+            elif which in ("昨天", "yesterday"):
+                target = today - _dt.timedelta(days=1)
+            else:
+                target = today
+            yield event.plain_result(self.state.schedule_text_of(target.isoformat()))
+        except Exception as _amo_exc:
+            _note_swallowed("amo_commands.cmd_schedule", _amo_exc)
+            yield event.plain_result("日程读不出来…")
+
+    @filter.command("改日程")
+    async def cmd_schedule_edit(self, event: AstrMessageEvent):
+        """改今天某一段：/改日程 15:00 提前回家"""
+        await self._ensure_ready()
+        try:
+            raw = str(getattr(event, "message_str", "") or "").strip()
+            parts = raw.split(None, 2)
+            if len(parts) < 3:
+                yield event.plain_result("用法：/改日程 15:00 提前回家")
+                return
+            clock, activity = parts[1], parts[2]
+            import datetime as _dt
+
+            key = _dt.date.today().isoformat()
+            items = self.state.schedule.get(key) or self.db.get_schedule(key) or []
+            hit = None
+            for it in items:
+                if str(it.get("start") or "") == clock[:5]:
+                    hit = it
+                    break
+            if hit is None:
+                for it in items:
+                    s0 = str(it.get("start") or "")
+                    e0 = str(it.get("end") or "")
+                    if s0 and e0 and s0 <= clock[:5] < e0:
+                        hit = it
+                        break
+            if hit is None:
+                yield event.plain_result("那个时间点找不到对应的安排。")
+                return
+            hit["activity"] = activity.strip()[:60]
+            self.state.schedule[key] = items
+            self.db.kv_set("schedule", self.state.schedule)
+            self.db.save_schedule(key, items)
+            yield event.plain_result("改好了，%s 那段现在是「%s」。" % (hit.get("start"), activity.strip()[:30]))
+        except Exception as _amo_exc:
+            _note_swallowed("amo_commands.cmd_schedule_edit", _amo_exc)
+            yield event.plain_result("没改成…")
+
     @filter.command("heartflow")
     async def cmd_heartflow(self, event: AstrMessageEvent):
         await self._ensure_ready()
