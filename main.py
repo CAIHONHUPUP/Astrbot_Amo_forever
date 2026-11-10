@@ -477,7 +477,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.8.2"
+PLUGIN_VERSION = "6.8.4"
 
 # 这些开关是面板/主链路的底座：隐藏开关并强制开启，避免误关后整块功能消失。
 FORCED_ON_CONFIG_KEYS = frozenset({
@@ -7136,6 +7136,9 @@ class HumanCorePlugin(Star):
         """
         uid = str(uid or "").strip()
         relation = str(relation or "").strip()
+        # 画像用的是「相恋」，关系网用的是「恋人」；不换算就会被下面的白名单挡掉，
+        # 于是又回到「设了恋人、图上还是熟人」。
+        relation = {"相恋": "恋人", "熟识": "熟人", "仇恨": "仇人"}.get(relation, relation)
         if not uid or not relation or relation in ("普通",):
             return
         if uid in INTERNAL_RELATION_NODES or relation not in NETWORK_RELATIONS:
@@ -13222,6 +13225,7 @@ class HumanCorePlugin(Star):
             relation = str(profile.get("relation") or "").strip()
             if not uid or not relation or uid in INTERNAL_RELATION_NODES:
                 continue
+            relation = {"相恋": "恋人", "熟识": "熟人", "仇恨": "仇人"}.get(relation, relation)
             if relation in ("普通", ""):
                 continue
             key = tuple(sorted(["bot", uid]))
