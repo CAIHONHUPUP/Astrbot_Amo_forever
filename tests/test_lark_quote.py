@@ -18,7 +18,8 @@ import astrbot_stub  # noqa: E402
 
 astrbot_stub.install()
 
-from main import HumanCorePlugin, lark_quote_kwargs  # noqa: E402
+from main import HumanCorePlugin  # noqa: E402
+from amo_shared import lark_quote_kwargs  # noqa: E402
 
 SENDER = "ou_cec66ea605ad17f62632fb044bc5f6ac"
 CHAT = "oc_private_chat"

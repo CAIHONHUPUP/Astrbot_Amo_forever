@@ -6,6 +6,8 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _plugin_source  # noqa: E402
 
 from time_recall import looks_like_time_query, render_time_block  # noqa: E402
 
@@ -88,16 +90,14 @@ class WiringTests(unittest.TestCase):
     def test_dynamic_context_calls_time_recall(self):
         # 之前 _time_recall_context 只有定义、从没被调用（配置和文档都写着已生效）
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        with open(os.path.join(root, "main.py"), encoding="utf-8") as fh:
-            source = fh.read()
+        source = _plugin_source.all_source(root)
         self.assertIn("await self._time_recall_context(event, uid)", source)
 
     def test_time_recall_private_keeps_her_lines_group_filters_uid(self):
         # 私聊：不传 uid（否则只剩「他」说的话，她的回复全丢），范围由 umo 卡住；
         # 群聊：群里还有别人，必须保留 uid 过滤，不能把群友的话拉进【按时间回看】。
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        with open(os.path.join(root, "main.py"), encoding="utf-8") as fh:
-            source = fh.read()
+        source = _plugin_source.all_source(root)
         start = source.index("async def _time_recall_context")
         end = source.index("async def ", start + 10)
         body = source[start:end]

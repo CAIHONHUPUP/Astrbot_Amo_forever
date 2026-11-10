@@ -20,6 +20,8 @@ import astrbot_stub  # noqa: E402
 astrbot_stub.install()
 
 import main as amo_main  # noqa: E402
+import amo_memory  # noqa: E402
+import amo_shared  # noqa: E402
 
 
 def edge(a, b, relation="朋友", note=""):
@@ -84,11 +86,11 @@ def run_sync(plugin):
 class RelationSyncTests(unittest.TestCase):
     def setUp(self):
         self.recorder = _Recorder()
-        self._old_logger = amo_main.logger
-        amo_main.logger = self.recorder
+        self._old_logger = amo_memory.logger
+        amo_memory.logger = self.recorder
 
     def tearDown(self):
-        amo_main.logger = self._old_logger
+        amo_memory.logger = self._old_logger
 
     def test_bot_edges_do_not_trigger_warning(self):
         """本机真实形状：本地 3 条（2 条 bot 边），远端 1 条真人边。"""
@@ -152,7 +154,7 @@ class RelationSyncTests(unittest.TestCase):
 class InternalNodeConstantTests(unittest.TestCase):
     def test_push_uses_same_nodes(self):
         """推送过滤和同步过滤必须用同一个常量，不然两边又会脱节。"""
-        self.assertEqual(tuple(amo_main.INTERNAL_RELATION_NODES), ("bot", "self"))
+        self.assertEqual(tuple(amo_shared.INTERNAL_RELATION_NODES), ("bot", "self"))
 
 
 if __name__ == "__main__":

@@ -14,6 +14,8 @@ import astrbot_stub  # noqa: E402
 astrbot_stub.install()
 
 from main import HumanCorePlugin  # noqa: E402
+import main as main_module  # noqa: E402
+import amo_shared  # noqa: E402
 
 QQ_PRIVATE = "大肥鱼:FriendMessage:302578963"
 LARK_PRIVATE = "lark:FriendMessage:ou_cec66ea605ad17f62632fb044bc5f6ac"
@@ -75,8 +77,6 @@ class QuoteProbabilityTests(unittest.TestCase):
         self.assertFalse(HumanCorePlugin._should_quote_group(self._fake(5, 0, 1.0), QQ_GROUP))
 
     def test_probability_is_respected(self):
-        import main as main_module
-
         original = main_module.random.random
         try:
             main_module.random.random = lambda: 0.3
@@ -94,8 +94,6 @@ class QQGuardTests(unittest.TestCase):
         import asyncio
         import sys
         import types
-
-        import main as main_module
 
         full = "astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event"
         parents = (
@@ -145,10 +143,8 @@ class QQGuardTests(unittest.TestCase):
 
     def test_private_strips_reply(self):
         asyncio, types, FakeEvent, FakeClass, restore = self._install()
-        import main as main_module
-
         try:
-            chain = [main_module.Comp.Reply(id="1"), main_module.Comp.Plain("你好")]
+            chain = [amo_shared.Comp.Reply(id="1"), amo_shared.Comp.Plain("你好")]
             asyncio.run(FakeClass.send(FakeEvent(""), types.SimpleNamespace(chain=chain)))
             names = FakeClass.sent[-1]
             self.assertNotIn("Reply", names)
@@ -158,10 +154,8 @@ class QQGuardTests(unittest.TestCase):
 
     def test_group_keeps_reply(self):
         asyncio, types, FakeEvent, FakeClass, restore = self._install()
-        import main as main_module
-
         try:
-            chain = [main_module.Comp.Reply(id="1"), main_module.Comp.Plain("你好")]
+            chain = [amo_shared.Comp.Reply(id="1"), amo_shared.Comp.Plain("你好")]
             asyncio.run(FakeClass.send(FakeEvent("123456"), types.SimpleNamespace(chain=chain)))
             self.assertIn("Reply", FakeClass.sent[-1])
         finally:

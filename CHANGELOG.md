@@ -4,10 +4,14 @@
 
 ### 结构：main.py 拆分 + 吞异常可观测
 
-- 13,982 行的 `main.py` 拆成 `amo_shared.py`（导入兜底 / 常量 / 工具 / 用量）+
-  四个 mixin：`amo_api.py`（面板 API）、`amo_proactive.py`（主动消息/问候）、
-  `amo_schedule.py`（日程/日记/天气）、`amo_llm.py`（LLM/记忆/回复）；main 只留组装与核心类，
-  降到 9,954 行；
+- 13,982 行的 `main.py` 拆到 **3,677 行**：`amo_shared.py`（导入兜底 / 常量 / 工具 / 用量）
+  加 13 个 mixin——
+  `amo_api.py`（面板 API）、`amo_proactive.py`（主动消息/问候）、`amo_schedule.py`（日程/日记/天气）、
+  `amo_llm.py`（LLM 注入/回复）、`amo_memory.py`（记忆/外部记忆桥/数据插件同步）、
+  `amo_commands.py`（命令与状态）、`amo_config.py`（配置迁移/热重载）、
+  `amo_message.py`（消息收发/分段/防抖）、`amo_social.py`（关系/群聊/引用守卫）、
+  `amo_travel.py`（城市跟随/旅行）、`amo_runtime.py`（钩子/后台循环/主动上下文）、
+  `amo_kb.py`（方言/景区知识库）、`amo_usage.py`（用量/余额）；
 - 827 处静默 `except Exception` 改成「计数 + 限流 warning」：同一个点 10 分钟最多一条、
   全局 15 秒最多一条；`/status` 的 `counts.swallowed` 给出被吞最多的 10 个点；
 - 新增 `amo_observability.py` 与 4 项单测；

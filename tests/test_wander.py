@@ -7,6 +7,8 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _plugin_source  # noqa: E402
 
 from wander import (  # noqa: E402
     ask_limit,
@@ -222,7 +224,7 @@ class TextTests(unittest.TestCase):
 
 class WiringTests(unittest.TestCase):
     def test_main_wiring(self) -> None:
-        src = open(os.path.join(ROOT, "main.py"), encoding="utf-8").read()
+        src = _plugin_source.all_source(ROOT)
         self.assertIn("_maybe_wander", src)
         self.assertIn("_start_solo_trip", src)
         self.assertIn("_end_solo_trip", src)
