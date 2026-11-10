@@ -4652,6 +4652,10 @@ class HumanCorePlugin(Star):
             self._install_lark_quote_guard()
         except Exception as exc:
             logger.debug("[amo] 飞书引用守卫安装失败: %s" % exc)
+        try:
+            self._install_qq_quote_guard()
+        except Exception as exc:
+            logger.debug("[amo] QQ 引用守卫安装失败: %s" % exc)
         self._ready = False
         self._init_lock = asyncio.Lock()
         self._running = True
@@ -6146,6 +6150,38 @@ class HumanCorePlugin(Star):
             return bool(self._should_quote_group(umo))
         except Exception:
             return False
+
+    def _install_qq_quote_guard(self):
+        """QQ 私聊也不许引用。
+
+        AstrBot 核心的 `reply_with_quote` 是在插件 `on_decorating_result` **之后**
+        才往消息链里插 Reply 的，插件钩子里摘不干净；所以在发送前再兜一层。
+        群聊保持原样（插件自己按人数 + 概率加 Reply）。
+        """
+        try:
+            from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
+                AiocqhttpMessageEvent,
+            )
+        except Exception:
+            return
+        original = getattr(AiocqhttpMessageEvent, "_amo_original_send", None)
+        if original is None:
+            original = AiocqhttpMessageEvent.send
+            AiocqhttpMessageEvent._amo_original_send = original
+
+        async def send(ev, message):
+            try:
+                if not ev.get_group_id():
+                    message.chain = [
+                        comp for comp in message.chain if not isinstance(comp, Comp.Reply)
+                    ]
+            except Exception:
+                pass
+            await original(ev, message)
+
+        AiocqhttpMessageEvent.send = send
+        AiocqhttpMessageEvent._amo_quote_guard = True
+        logger.info("[amo] QQ 引用守卫已安装：私聊不引用，群聊按概率")
 
     def _install_lark_quote_guard(self):
         """飞书私聊不要引用：适配器把每条消息都发成「回复」。

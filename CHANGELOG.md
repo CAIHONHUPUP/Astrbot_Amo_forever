@@ -99,6 +99,10 @@
   `nudge()` 真实心情，日常的上班/吃饭/休息/逛街/通勤只在日程自己的 `mood` 字段里变。
   现在每小时按 `CATEGORY_MOOD` 给真实心情加减，强度乘以 `schedule_mood_gain`（默认 3，0=关），
   每小时只结算一次；突发事件仍然优先用自己的 `effects`。
+- **QQ 私聊同样不引用**：AstrBot 核心的 `reply_with_quote` 是在插件
+  `on_decorating_result` **之后**才往消息链插 `Reply` 的，插件钩子里摘不干净；
+  新增 `_install_qq_quote_guard()`，在 `AiocqhttpMessageEvent.send` 发送前把私聊链里的
+  `Reply` 去掉（群聊不动，仍由插件按概率加）。加上飞书守卫，私聊不引用对所有平台成立。
 - 顺手修 `CATEGORY_MOOD["commute"]` 里的 `烦躁`——十维心情里没有这个键，等于通勤从来没有
   影响过心情，改成 `暴躁`。
 - `other_platform_bot_lines()` 增加 `platform` 兜底：数据插件有的行没有 `umo`，

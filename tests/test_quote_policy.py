@@ -87,5 +87,86 @@ class QuoteProbabilityTests(unittest.TestCase):
             main_module.random.random = original
 
 
+class QQGuardTests(unittest.TestCase):
+    """核心的 reply_with_quote 在插件钩子之后才插 Reply，发送前要再兜一层。"""
+
+    def _install(self):
+        import asyncio
+        import sys
+        import types
+
+        import main as main_module
+
+        full = "astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event"
+        parents = (
+            "astrbot.core",
+            "astrbot.core.platform",
+            "astrbot.core.platform.sources",
+            "astrbot.core.platform.sources.aiocqhttp",
+        )
+        saved = {name: sys.modules.get(name) for name in parents + (full,)}
+
+        class FakeEvent:
+            def __init__(self, group=""):
+                self._group = group
+
+            def get_group_id(self):
+                return self._group
+
+        class FakeClass:
+            sent = []
+
+            async def send(self, ev, message):  # 会被守卫替换
+                raise AssertionError("不应直接调用原 send")
+
+        async def original_send(ev, message):
+            FakeClass.sent.append([type(comp).__name__ for comp in message.chain])
+
+        FakeClass.send = original_send
+        module = types.ModuleType(full)
+        module.AiocqhttpMessageEvent = FakeClass
+        for name in parents:
+            sys.modules.setdefault(name, types.ModuleType(name))
+        sys.modules[full] = module
+
+        class Plugin:
+            pass
+
+        main_module.HumanCorePlugin._install_qq_quote_guard(Plugin())
+
+        def restore():
+            for name, value in saved.items():
+                if value is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = value
+
+        return asyncio, types, FakeEvent, FakeClass, restore
+
+    def test_private_strips_reply(self):
+        asyncio, types, FakeEvent, FakeClass, restore = self._install()
+        import main as main_module
+
+        try:
+            chain = [main_module.Comp.Reply(id="1"), main_module.Comp.Plain("你好")]
+            asyncio.run(FakeClass.send(FakeEvent(""), types.SimpleNamespace(chain=chain)))
+            names = FakeClass.sent[-1]
+            self.assertNotIn("Reply", names)
+            self.assertIn("Plain", names)
+        finally:
+            restore()
+
+    def test_group_keeps_reply(self):
+        asyncio, types, FakeEvent, FakeClass, restore = self._install()
+        import main as main_module
+
+        try:
+            chain = [main_module.Comp.Reply(id="1"), main_module.Comp.Plain("你好")]
+            asyncio.run(FakeClass.send(FakeEvent("123456"), types.SimpleNamespace(chain=chain)))
+            self.assertIn("Reply", FakeClass.sent[-1])
+        finally:
+            restore()
+
+
 if __name__ == "__main__":
     unittest.main()
