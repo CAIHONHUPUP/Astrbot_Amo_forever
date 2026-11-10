@@ -25,9 +25,49 @@ try:
 except Exception:
     from diary_lines import DIARY_ENDING_HINTS, pick_hints
 
-DEFAULT_DIR = r"D:\dafeiyu\日记"
+# 上架规范：持久化数据只能写在 data/plugin_data/<plugin_name> 下，
+# 所以默认目录不再写死作者本机路径，留空由 resolve_dir() 落到插件数据目录。
+DEFAULT_DIR = ""
+DEFAULT_SUBDIR = "diary"
+_WIN_ABS_RE = re.compile(r"^[A-Za-z]:[\\/]")
 TITLE_PREFIX = "我的日记"
 _FILE_RE = re.compile(r"^我的日记(\d{4})年(\d{2})月(\d{2})日\.txt$")
+
+
+def resolve_dir(setting: Any, data_root: str) -> str:
+    """把配置里的日记目录解析成合规路径（只允许落在插件数据目录下）。
+
+    - 留空：``<data_root>/diary``，这是默认行为；
+    - 相对路径：挂在 ``<data_root>/`` 下，例如 ``日记`` -> ``<data_root>/日记``；
+    - 绝对路径：只有位于 ``data_root`` 内部才采用，写到别处一律回退默认目录；
+    - 老版本默认值（Windows 盘符路径 ``D:\\...``）一律回退默认目录，避免升级后
+      还在往插件数据目录外面写文件。
+    """
+    root = str(data_root or "").strip()
+    default = os.path.join(root, DEFAULT_SUBDIR) if root else ""
+    text = str(setting or "").strip()
+    if not text:
+        return default
+    # 作者本机路径一类的旧默认值：不管当前平台认不认，直接回退
+    if _WIN_ABS_RE.match(text):
+        return default
+    if not os.path.isabs(text):
+        if not root:
+            return text
+        joined = os.path.abspath(os.path.join(root, text))
+        resolved_root = os.path.abspath(root)
+        if joined == resolved_root or joined.startswith(resolved_root + os.sep):
+            return joined
+        return default
+    if root:
+        try:
+            resolved_root = os.path.abspath(root)
+            resolved = os.path.abspath(text)
+            if resolved == resolved_root or resolved.startswith(resolved_root + os.sep):
+                return resolved
+        except (OSError, ValueError):
+            pass
+    return default
 
 
 def parse_day(value: Any) -> Optional[date]:

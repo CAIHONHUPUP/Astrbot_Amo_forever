@@ -168,6 +168,7 @@ except Exception:
 try:
     from .diary_engine import (
         DEFAULT_DIR as _DIARY_DEFAULT_DIR,
+        resolve_dir as _diary_resolve_dir,
         parse_day as _diary_parse_day,
         build_prompt as _diary_build_prompt,
         import_folder as _diary_import_folder,
@@ -179,6 +180,7 @@ except Exception:
     try:
         from diary_engine import (
             DEFAULT_DIR as _DIARY_DEFAULT_DIR,
+            resolve_dir as _diary_resolve_dir,
             parse_day as _diary_parse_day,
             build_prompt as _diary_build_prompt,
             import_folder as _diary_import_folder,
@@ -189,6 +191,7 @@ except Exception:
                 )
     except Exception:
         _DIARY_DEFAULT_DIR = ""
+        _diary_resolve_dir = None
         _diary_parse_day = _diary_write = _diary_read = _diary_tree = _diary_import_folder = None
 
 try:
@@ -9941,8 +9944,21 @@ class HumanCorePlugin(Star):
         if now - self._last_ritual >= 60:
             await self._maybe_rituals()
 
+    def _diary_data_root(self):
+        """插件数据目录 data/plugin_data/<plugin_name>（上架规范要求写在这里）。"""
+        try:
+            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+            return os.path.join(str(get_astrbot_data_path()), "plugin_data", PLUGIN_NAME)
+        except Exception:
+            return os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+
     def _diary_dir(self):
-        return str(self.cfg_str("diary_dir", "") or "").strip() or (_DIARY_DEFAULT_DIR or "")
+        """日记目录：默认 <插件数据目录>/diary，配置只能落在数据目录内。"""
+        setting = str(self.cfg_str("diary_dir", "") or "").strip()
+        root = self._diary_data_root()
+        if callable(_diary_resolve_dir):
+            return _diary_resolve_dir(setting, root)
+        return os.path.join(root, "diary") if root else (_DIARY_DEFAULT_DIR or "")
 
     def _diary_clock(self):
         """diary_time 默认 10:00。"""

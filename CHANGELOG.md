@@ -1,6 +1,20 @@
 # Changelog
 
-## 未发布（基于 6.6.4）
+## 6.6.6（上架修复）
+
+### 日记不再写到插件数据目录外（审核驳回项）
+
+- `diary_engine.DEFAULT_DIR` 与 `_conf_schema.json` 里 `diary_dir` 的默认值原本是作者本机路径
+  `D:\dafeiyu\日记`，`_diary_dir()` 拿它直接 makedirs/写文件，等于把用户日记持久化到
+  `data/plugin_data/<plugin_name>` 之外，违反上架规范（影响数据迁移与审计）；
+- 新增 `diary_engine.resolve_dir(setting, data_root)`：留空 → `<plugin_data>/diary`；
+  相对路径挂在 `<plugin_data>/` 下；绝对路径只有位于插件数据目录内才采用，目录外
+  （包括旧的盘符默认值）一律回退默认目录，`../` 这类越界相对路径同样回退；
+- `_diary_dir()` 改为按 `get_astrbot_data_path()/plugin_data/Astrbot_Amo_forever/diary`
+  解析，没有 astrbot 环境时退回插件目录下的 `data/`；写入点（自动写日记、手动补写、
+  导入文件夹、面板读取）都走同一入口，不再有第二处拼路径；
+- 配置项 `diary_dir` 默认值改为空，提示文案说明「留空即可」以及越界会被忽略；
+- 新增 `tests/test_diary_dir.py`：解析规则、越界防护、仓库内不得再出现作者个人路径。
 
 ### 每日问候只发一个平台（11-10）
 
