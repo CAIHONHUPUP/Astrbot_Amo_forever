@@ -2,6 +2,21 @@
 
 ## 未发布（基于 6.6.4）
 
+### 每日问候只发一个平台（11-10）
+
+- 她同时挂着 QQ 和飞书，以前问候固定发 `private_umo`（QQ）；早晨的主动消息又可能在飞书发一条，
+  于是两个平台在几分钟内各响一次。现在每次早安/午饭/晚安问候会在她收到过消息的会话里
+  **随机挑一个**发送（`ritual_random_platform`，默认开），发送失败才换另一处；
+- 问候「今天已经打过」按人算（跨平台），两边的近聊都会参与「已经互相问候就跳过」判断，
+  一处收到后另一头不会再补一句（kv `greeting_last:<uid>` 记最近一次的平台和时间，
+  `ritual_min_gap_minutes` 控制两次问候最短间隔）；
+- 处在还没发的问候时段时，主动消息先让路（`_ritual_pending`），不会抢在问候前面把另一个平台占了；
+  问候发出后 `proactive_after_greeting_minutes`（默认 60）内也不再主动搭话；
+- 只把「她刚主动说过话」的标记打在真正收到消息的平台，另一头只做跨平台去重；
+- 关掉 `ritual_random_platform` 就回到「只发主页平台」的老行为；
+- 新增 `greet_route.py` + `tests/test_ritual_platform.py`（纯函数/接线）+
+  `tests/test_ritual_behavior.py`（从源码抠方法喂假 self 跑：随机、回退、跨平台去重、让路）。
+
 ### 关系网同步：不再误报「远端比本地少」
 
 - `_push_relation_to_data` 有意不推 `bot`/`self` 边（否则记忆终端的关系图里会多出一个
