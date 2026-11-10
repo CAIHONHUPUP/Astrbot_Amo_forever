@@ -339,6 +339,24 @@
     "hint": "例如你 6 点已经说过早安，她起床后不再重复“还没起来吗”",
     "default": true
   },
+  "ritual_random_platform": {
+    "type": "bool",
+    "description": "问候随机挑一个平台",
+    "hint": "QQ 和飞书都有会话时，每次随机选一处发；关掉就只发主页会话（旧行为）",
+    "default": true
+  },
+  "ritual_min_gap_minutes": {
+    "type": "int",
+    "description": "两次问候最短间隔（分钟）",
+    "hint": "时段配置重叠时，刚发过问候就不再发第二条；默认 30",
+    "default": 30
+  },
+  "proactive_after_greeting_minutes": {
+    "type": "int",
+    "description": "问候后多久不再主动搭话（分钟）",
+    "hint": "防止早安刚在一头发完，另一头又来一句；默认 60",
+    "default": 60
+  },
   "proactive_check_seconds": {
     "type": "int",
     "description": "主动私聊检查间隔（秒）",

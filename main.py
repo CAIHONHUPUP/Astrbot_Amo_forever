@@ -127,6 +127,25 @@ except Exception:
             return ""
 
 try:
+    from .greet_route import greeting_targets as _greeting_targets, within_minutes as _within_minutes
+except Exception:
+    try:
+        from greet_route import greeting_targets as _greeting_targets, within_minutes as _within_minutes
+    except Exception:
+        logger.warning("[amo] greet_route 载入失败，问候平台随机功能不可用")
+
+        def _greeting_targets(candidates, primary="", randomize=True, rng=None):
+            items = []
+            for umo in list(candidates or []) + [primary]:
+                value = str(umo or "")
+                if value and value not in items:
+                    items.append(value)
+            return items if randomize else ([primary] if primary else [])
+
+        def _within_minutes(last_ts, now, minutes):
+            return False
+
+try:
     from .diary_lines import (
         DIARY_WRITTEN_REPLIES as _DIARY_WRITTEN,
         DIARY_SHOW_REPLIES as _DIARY_SHOW,
@@ -10373,6 +10392,13 @@ class HumanCorePlugin(Star):
             self.state.nudge(委屈=-8, 郁闷=-8, 开心=5, 依恋=3)
             logger.debug("[amo] 抑郁状态被哄好: %s" % uid)
 
+    # 每天的固定问候：kind、开关、时段、默认时段
+    RITUAL_SPECS = (
+        ("goodnight", "ritual_goodnight", "ritual_goodnight_window", "22:00-02:00"),
+        ("morning", "ritual_morning", "ritual_morning_window", "06:30-10:00"),
+        ("lunch", "ritual_lunch", "ritual_lunch_window", "11:00-13:30"),
+    )
+
     FOLLOWUP_TEMPLATES = {
         "slack": [
             "在忙吗？怎么不理我。",
@@ -10475,11 +10501,87 @@ class HumanCorePlugin(Star):
         except Exception:
             return False
 
-    def _ritual_should_send(self, umo, kind):
+    def _ritual_umos(self, profile):
+        """她能给你发问候的会话：QQ、飞书…按最近说过话排序。"""
+        uid = str(profile.get("uid") or "")
+        items = []
         try:
-            rows = self._recent(umo, 10)
+            data = self.db.kv_get("channels:%s" % uid, {}) or {}
         except Exception:
-            rows = []
+            data = {}
+        if isinstance(data, dict):
+            entries = [value for value in data.values() if isinstance(value, dict) and value.get("umo")]
+            entries.sort(key=lambda value: -to_float(value.get("ts"), 0))
+            for value in entries:
+                umo = str(value.get("umo") or "")
+                if umo and umo not in items:
+                    items.append(umo)
+        private_umo = str(profile.get("private_umo") or "")
+        if private_umo and private_umo not in items:
+            items.append(private_umo)
+        return items
+
+    def _recent_greeting(self, uid, minutes):
+        """最近一次每日问候发在哪个平台、隔了多久（QQ/飞书算同一个人）。"""
+        if not uid:
+            return False
+        try:
+            data = self.db.kv_get("greeting_last:%s" % uid, {}) or {}
+        except Exception:
+            data = {}
+        if not isinstance(data, dict):
+            return False
+        return _within_minutes(data.get("ts"), now_ts(), minutes)
+
+    def _mark_greeting(self, uid, kind, umo):
+        try:
+            self.db.kv_set("greeting_last:%s" % str(uid), {
+                "kind": str(kind),
+                "umo": str(umo or ""),
+                "ts": now_ts(),
+            })
+        except Exception:
+            pass
+
+    def _ritual_pending(self, profile):
+        """现在是否正处在「还没发」的问候时段。
+
+        主动消息要让路：早晨 8 点主动搭话和早安问候撞在一起，就是
+        「两个地方各响一次」的来源。非恋人的好友、刚问候过的、没有会话可发的，
+        都不算待发，否则会白让路一整个时段。
+        """
+        if not self.cfg_bool("ritual_enabled", True):
+            return False
+        if str(profile.get("relation") or "") != "相恋":
+            return False
+        uid = str(profile.get("uid") or "")
+        umos = self._ritual_umos(profile)
+        if not uid or not umos:
+            return False
+        if self._recent_greeting(uid, self.cfg_int("ritual_min_gap_minutes", 30)):
+            return False
+        for kind, enabled_key, window_key, default_window in self.RITUAL_SPECS:
+            if not self.cfg_bool(enabled_key, True):
+                continue
+            if not self._ritual_in_window(self.cfg_str(window_key, default_window)):
+                continue
+            if self.db.kv_get("ritual_" + kind + "_" + uid + "_" + today_str(), False):
+                continue
+            if not self._ritual_should_send(umos, kind):
+                continue
+            return True
+        return False
+
+    def _ritual_should_send(self, umos, kind):
+        """今天这个问候还该不该发；QQ/飞书的近聊一起算，避免两边各问候一遍。"""
+        umos = list(umos) if isinstance(umos, (list, tuple, set)) else [umos]
+        rows = []
+        for item in umos:
+            try:
+                rows.extend(self._recent(item, 10))
+            except Exception:
+                pass
+        rows.sort(key=lambda row: to_float(row.get("created_at"), 0))
         now = now_ts()
         recent_gap = max(5, self.cfg_int("ritual_skip_recent_minutes", 45)) * 60
         if rows:
@@ -10513,17 +10615,13 @@ class HumanCorePlugin(Star):
         for profile in profiles:
             if str(profile.get("relation") or "") != "相恋":
                 continue
-            umo = str(profile.get("private_umo") or "")
             uid = str(profile.get("uid") or "")
-            if not umo or not uid:
+            umos = self._ritual_umos(profile)
+            if not umos or not uid:
                 continue
+            home_umo = str(profile.get("private_umo") or "")
             name = str(profile.get("alias") or profile.get("name") or "宝").strip() or "宝"
-            rituals = [
-                ("goodnight", "ritual_goodnight", "ritual_goodnight_window", "22:00-02:00"),
-                ("morning", "ritual_morning", "ritual_morning_window", "06:30-10:00"),
-                ("lunch", "ritual_lunch", "ritual_lunch_window", "11:00-13:30"),
-            ]
-            for kind, enabled_key, window_key, default_window in rituals:
+            for kind, enabled_key, window_key, default_window in self.RITUAL_SPECS:
                 if not self.cfg_bool(enabled_key, True):
                     continue
                 if not self._ritual_in_window(self.cfg_str(window_key, default_window)):
@@ -10533,11 +10631,20 @@ class HumanCorePlugin(Star):
                     continue
                 if kind == "morning" and (snap.get("activity") or {}).get("category") == "sleep":
                     continue
-                if not self._ritual_should_send(umo, kind):
+                if self._recent_greeting(uid, self.cfg_int("ritual_min_gap_minutes", 30)):
+                    continue
+                if not self._ritual_should_send(umos, kind):
+                    continue
+                targets = _greeting_targets(
+                    umos,
+                    home_umo,
+                    randomize=self.cfg_bool("ritual_random_platform", True),
+                )
+                if not targets:
                     continue
                 text = ""
                 try:
-                    text = await self.llm.gen_proactive(umo, profile, snap, kind)
+                    text = await self.llm.gen_proactive(targets[0], profile, snap, kind)
                 except Exception as exc:
                     logger.debug("[amo] 仪式生成失败: %s" % exc)
                 if not text:
@@ -10548,12 +10655,24 @@ class HumanCorePlugin(Star):
                     }.get(kind, "")
                 if not text:
                     continue
-                if await self._send_to_umo(umo, text):
-                    self._mark_bot_initiated(umo)
-                    self.db.kv_set(daily_key, True)
-                    self.db.log_proactive(uid, kind, text)
-                    logger.info("[amo] 每日问候(%s) -> %s: %s" % (kind, name, text[:200]))
-                    break
+                sent_umo = ""
+                for candidate in targets:
+                    if await self._send_to_umo(candidate, text):
+                        sent_umo = candidate
+                        break
+                if not sent_umo:
+                    continue
+                # 只标记真正收到的那一处；另一头靠 greeting_last 跨平台去重，
+                # 不能把「她刚跟我说过话」的副作用（火气/打扰冷却）打到没收到消息的平台
+                self._mark_bot_initiated(sent_umo)
+                self._mark_greeting(uid, kind, sent_umo)
+                self.db.kv_set(daily_key, True)
+                self.db.log_proactive(uid, kind, text)
+                logger.info(
+                    "[amo] 每日问候(%s) -> %s [%s]: %s"
+                    % (kind, name, str(sent_umo).split(":", 1)[0], text[:200])
+                )
+                break
 
     def _choose_proactive_kind(self, profile, snap, category=""):
         relation = profile.get("relation", "普通")
@@ -10910,6 +11029,11 @@ class HumanCorePlugin(Star):
         interval = max(10, self.cfg_int("proactive_interval_min", 90)) * 60
         daily_max = max(0, self.cfg_int("proactive_daily_max", 3))
         for profile in profiles:
+            uid = str(profile.get("uid") or "")
+            if self._ritual_pending(profile):
+                continue
+            if self._recent_greeting(uid, self.cfg_int("proactive_after_greeting_minutes", 60)):
+                continue
             target_umo = self._pick_proactive_umo(profile)
             if not target_umo:
                 continue
