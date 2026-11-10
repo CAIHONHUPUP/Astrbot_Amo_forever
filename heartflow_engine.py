@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from astrbot.api.star import Context, Star
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api import logger, AstrBotConfig
-from astrbot.api.message_components import Plain, At
+from astrbot.api.message_components import Plain, At, Reply
 from astrbot.api.provider import LLMResponse
 
 # ============================================================
@@ -105,10 +105,19 @@ BASE_JUDGE_PROMPT = """你是群聊机器人决策系统，判断机器人是否
 - 看最近 3-5 条：谁在回答谁？有没有人的问题还悬着？现在这条在接谁的话？
 
 **第 2 步 · 判断这条消息在对谁说（target）**：
-- `bot`：叫了机器人名字/别名、@机器人、回复机器人上一条、接着机器人刚说的话题往下聊、用“你/你呢”问机器人。
-- `other`：叫了别的群友名字、@别人、两个人一问一答、明显在回应别人刚才的话。
+- `bot`：消息里出现机器人名字/别名、@机器人、引用机器人上一条，才算在对机器人说。
+  **单独一个“你 / 你呢 / 你pr好了吗”不算**——群聊里“你”大多在问别人。
+- `other`：@别人、引用/回复别人的消息、叫了别的群友名字、两个人一问一答；
+  或者**上一条明确 @ 了某个群友 / 回复了某个群友，这条没有新的 @/引用/名字**——那就继续算那个群友。
 - `all`：抛给全群的问题、分享、感叹、群通知，没有特定对象。
 - `unknown`：信息不足，看不出来。
+
+对话历史每条都带 `[HH:MM]` 时间；群友消息后面的 `→@xxx` 表示这条 @ 了谁，
+`→回复xxx` 表示这条在回复谁。判断 target 时优先看这两个标记，不要只看“你”。
+
+**时间规则**：如果“上次Bot回复”已经超过 3 分钟，当前消息**不要**当成在接机器人的话；
+超过 5 分钟只当背景。不要因为机器人十几分钟前说过一句“我去翻代码”，
+就把一句“你pr好了吗”认成在追问机器人。
 
 **第 3 步 · 判断插话价值（这一步才是核心）**：
 不是“被叫到才说话”的客服；你是群里一个会自己插话的人。
@@ -152,7 +161,8 @@ BASE_JUDGE_PROMPT = """你是群聊机器人决策系统，判断机器人是否
 分数范围: {score_min}-{score_max}分
 
 ## 结构化字段
-- `is_mentioning_bot`：这条是不是在直接叫机器人（名字/别名/@/回复机器人上一条）。
+- `is_mentioning_bot`：只有出现机器人名字/别名、@机器人、引用机器人上一条时才为 true；
+  单独的“你”不算。上一条 @ 的是别人、这条只是“你……”，一律 false。
 - `context_type`：mention_bot=在叫机器人；knowledge_comment=在聊知识、新闻、作品并发表看法；question=在提问（不一定问机器人）；casual_chat=日常闲聊；other=其他。
 - `topic`：当前在聊什么，2-6 个字（如“AI技术”“晚饭”“加班”）。
 - `reply_style`：answer=直接回答；comment=插一句评论/接话；quote=引用着接更清楚（人多、指代不清时）；none=这次不该说话。
@@ -198,6 +208,17 @@ class RawMessage:
     normalized_content: str
     timestamp: float
     is_bot: bool = False
+    msg_id: str = ""
+    # 记录这条消息时平台返回的机器人 ID；为空 = 平台没给，@ 目标无法可靠判断。
+    self_id: str = ""
+    # 这条消息 @ 了谁 / 回复了谁。只靠 message_str 判断对象会丢信息：
+    # 群友上一条 @ 的是别人，下一条只说“你pr好了吗”，模型就会把“你”认成机器人。
+    at_ids: Tuple[str, ...] = ()
+    at_self: bool = False
+    reply_to_id: str = ""
+    reply_to_uid: str = ""
+    reply_to_name: str = ""
+    reply_to_self: bool = False
 
 @dataclass
 class ChatState:
@@ -632,50 +653,95 @@ class HeartflowEngine:
                 return candidate
         return ""
 
+    @staticmethod
+    def _is_side_question(text: str) -> bool:
+        """这条是不是在问某个人（而不是随口感慨）。"""
+        return bool(re.search(r"[?？]|你|吗|呢|怎么|为什么|哪|谁|多少|几点", str(text or "")))
+
+    @classmethod
+    def _should_veto_side_question(cls, target: str, hard: bool, text: str) -> bool:
+        """上下文明确显示在对别人说，而且这条是在问别人 → 不接。"""
+        return bool(hard and target == "other" and cls._is_side_question(text))
+
+    @staticmethod
+    def _explicit_target(msg) -> str:
+        """只看一条消息自带的 @ / 引用，判断它在对谁说。
+
+        平台没返回机器人 ID 时（self_id 为空），@ 的目标根本没法可靠比较：
+        以前会把所有 @ 都当成「@别人」，真正 @ 机器人的提问反而被硬证据
+        🔇 掉。这里改成「不知道就不给硬证据」，交回模型按上下文判断。
+        """
+        if msg is None:
+            return ""
+        if msg.at_ids:
+            if msg.at_self:
+                return "bot"
+            return "other" if msg.self_id else ""
+        if msg.reply_to_id:
+            if msg.reply_to_self:
+                return "bot"
+            if msg.self_id and (msg.reply_to_uid or msg.reply_to_name):
+                return "other"
+        return ""
+
     def _retrieve_addressing(self, event: AstrMessageEvent):
         """从最近上下文里检索证据：这条消息到底在对谁说。
 
         返回 (target, hard)：
           target = bot / other / all / unknown；取不到证据返回空字符串。
-          hard   = 是否硬证据（叫了机器人名字 / @ 了机器人）。硬证据可以覆盖模型判定；
-                   软证据（看起来像在接机器人的话）只在模型判不出对象时兜底。
-        这里只提供证据，不做否决——要不要说话仍由评分决定。
+          hard   = 是否硬证据。硬证据会覆盖模型判定，并在 on_group_message 里
+                   决定“这条是在问别人，不接”。
+
+        判定顺序（从强到弱）：
+          1. 当前消息 @ 了谁 / 引用了谁；
+          2. 当前消息里有没有机器人名字/别名；
+          3. 上一条**明确 @ 了别人 / 回复了别人**的消息 → 继承给这条（5 分钟内）；
+          4. 机器人 60 秒内说过话 + 这条是个短问句 → 软证据；
+          5. 提到了别的群友昵称 → 对别人说（软证据）。
+        单独的“你”不算证据：群聊里“你吃了吗”太常见，把它认成机器人是上次
+        “你pr好了吗”被误答的直接原因。
         """
         text = event.message_str or ""
+        try:
+            msgs = self._get_raw_buffer(event.unified_msg_origin)
+        except Exception:
+            msgs = []
+        current = None
+        history = msgs
+        if msgs and not msgs[-1].is_bot and msgs[-1].sender_id == str(event.get_sender_id()) and msgs[-1].content == text:
+            current = msgs[-1]
+            history = msgs[:-1]
+
+        # 1. 当前这条自带的 @ / 引用最可靠（先于名字判断：引用的旧文本里可能带机器人名字）
+        who = self._explicit_target(current)
+        if who:
+            return who, True
+        # 2. 明确叫了机器人名字/别名
         if self._addresses_bot(text):
             return "bot", True
-        self_id = ""
-        try:
-            self_id = str(event.get_self_id())
-        except Exception:
-            self_id = ""
-        # @ 了谁：@ 机器人 = 对机器人说；@ 别人 = 对别人说
-        try:
-            for component in (getattr(event.message_obj, "message", None) or []):
-                if isinstance(component, At):
-                    if self_id and str(getattr(component, "qq", "")) == self_id:
-                        return "bot", True
-                    return "other", True
-        except Exception:
-            pass
-        try:
-            umo = event.unified_msg_origin
-            msgs = self._get_raw_buffer(umo)
-        except Exception:
-            return "", False
-        if msgs and not msgs[-1].is_bot and msgs[-1].content == text:
-            msgs = msgs[:-1]
-        recent = msgs[-4:]
-        if not recent:
-            return "", False
-        last = recent[-1]
+        # 3. 上一条明确 @ 了别人 / 回复了别人：这条没有新的 @/引用，就是在继续对他说
+        last_who = ""
+        for msg in reversed(history[-8:]):
+            if msg.is_bot:
+                continue
+            if time.time() - msg.timestamp > 300:
+                break
+            who = self._explicit_target(msg)
+            if who:
+                last_who = who
+                break
+        if last_who == "other":
+            return "other", True
+        if last_who == "bot":
+            return "bot", False
+        # 4. 机器人刚说过话，这条又是个短问句：软证据
+        last = history[-1] if history else None
         plain = re.sub(r"\s+", "", text)
-        # 上一条是机器人自己说的，这条又在接话：短句 + 疑问/第二人称，大概率是在回机器人
-        if last.is_bot and (time.time() - last.timestamp) <= 180:
-            if len(plain) <= 24 and re.search(r"[?？]|你|吗|呢|咋|怎么|为啥|为什么", text):
+        if last is not None and last.is_bot and (time.time() - last.timestamp) <= 60:
+            if len(plain) <= 24 and re.search(r"[?？]", text):
                 return "bot", False
-        # 提到了别的群友的昵称：在对别人说（昵称至少两个字，避免误判）
-        for msg in reversed(recent):
+        # 5. 提到了别的群友的昵称：在对别人说（昵称至少两个字，避免误判）
+        for msg in reversed(history[-4:]):
             if msg.is_bot:
                 continue
             name = re.sub(r"\s+", "", str(msg.sender_name or ""))
@@ -780,6 +846,9 @@ class HeartflowEngine:
             return False
 
         if event.is_at_or_wake_command:
+            # @ 机器人 / 唤醒词不走进判定，但必须留在上下文里：
+            # 下一次“你……”要知道上一条是在叫她。
+            self._record_raw_message(event, is_bot=False)
             umo = event.unified_msg_origin
             debounce_state = self._debounce_states.get(umo)
             if debounce_state and debounce_state.get("active"):
@@ -787,8 +856,13 @@ class HeartflowEngine:
             return False
 
         try:
+            self_id = str(event.get_self_id() or "")
             for component in event.message_obj.message:
-                if isinstance(component, At) and str(component.qq) != event.get_self_id():
+                # 平台没返回 self_id 时不要瞎判：所有 @ 都当成「@别人」会把
+                # 真正 @ 机器人的提问也挡掉。宁可交回模型按上下文判断。
+                if self_id and isinstance(component, At) and str(component.qq) != self_id:
+                    # @ 别人的消息同理：不判定，但它是“上一条在对谁说”的证据。
+                    self._record_raw_message(event, is_bot=False)
                     return False
         except Exception:
             pass
@@ -811,6 +885,39 @@ class HeartflowEngine:
             return ""
         return RE_URL.sub("[链接]", RE_XML_TAG.sub("", text)).strip().lower()
 
+    @staticmethod
+    def _message_meta(msg_obj) -> dict:
+        """从消息对象里抠出 @ 对象和引用对象。
+
+        ``event.message_str`` 在 AstrBot 里已经被拍平成纯文本，@ 的目标和
+        “回复的是哪条消息”都会丢失；只靠文本判断，群聊里很容易把“你……”
+        误判成在对机器人说。
+        """
+        meta = {
+            "msg_id": str(getattr(msg_obj, "message_id", "") or ""),
+            "at_ids": [],
+            "reply_to_id": "",
+            "reply_to_uid": "",
+            "reply_to_name": "",
+        }
+        try:
+            components = getattr(msg_obj, "message", None) or []
+        except Exception:
+            components = []
+        for component in components:
+            try:
+                if isinstance(component, At):
+                    target = str(getattr(component, "qq", "") or "")
+                    if target:
+                        meta["at_ids"].append(target)
+                elif isinstance(component, Reply):
+                    meta["reply_to_id"] = str(getattr(component, "id", "") or "")
+                    meta["reply_to_uid"] = str(getattr(component, "sender_id", "") or "")
+                    meta["reply_to_name"] = str(getattr(component, "sender_nickname", "") or "")
+            except Exception:
+                continue
+        return meta
+
     def _record_raw_message(self, event: AstrMessageEvent, is_bot: bool = False) -> bool:
         """记录原始消息到缓冲区"""
         umo = event.unified_msg_origin
@@ -823,10 +930,25 @@ class HeartflowEngine:
             sender_id = "bot" if is_bot else str(event.get_sender_id())
             if buf and buf[-1].sender_id == sender_id and buf[-1].normalized_content == normalized and (time.time() - buf[-1].timestamp) < 5:
                 return False
+            meta = self._message_meta(getattr(event, "message_obj", None))
+            self_id = ""
+            try:
+                self_id = str(event.get_self_id())
+            except Exception:
+                self_id = ""
+            at_ids = tuple(meta["at_ids"])
             buf.append(RawMessage(
                 sender_name="bot" if is_bot else event.get_sender_name(),
                 sender_id=sender_id, content=raw_content,
                 normalized_content=normalized, timestamp=time.time(), is_bot=is_bot,
+                msg_id=meta["msg_id"],
+                self_id=self_id,
+                at_ids=at_ids,
+                at_self=bool(self_id and self_id in at_ids),
+                reply_to_id=meta["reply_to_id"],
+                reply_to_uid=meta["reply_to_uid"],
+                reply_to_name=meta["reply_to_name"],
+                reply_to_self=bool(self_id and meta["reply_to_uid"] == self_id),
             ))
             self._get_chat_state(umo).last_recorded_message = normalized
             return True
@@ -991,14 +1113,37 @@ class HeartflowEngine:
         return msgs[-self.judge_context_count:]
 
     def _build_optimized_contexts(self, raw_msgs: List[RawMessage]) -> List[Dict[str, str]]:
-        """将原始消息构建为小模型所需的上下文格式（user/assistant交替）"""
+        """将原始消息构建为小模型所需的上下文格式（user/assistant 交替）。
+
+        每条带 `[HH:MM]` 时间；群友消息额外带 `→@xxx` / `→回复xxx`，
+        让小模型能看见“上一条 @ 的是谁”，而不是只看到一句光秃秃的“你”。
+        """
         contexts = []
         for msg in raw_msgs:
             content = self._clean_message_content(msg.content, 200)
             if not content:
                 continue
             role = "assistant" if msg.is_bot else "user"
-            text = content if msg.is_bot else f"[{msg.sender_name}] {content}"
+            stamp = datetime.datetime.fromtimestamp(msg.timestamp).strftime("%H:%M")
+            marks = []
+            if msg.at_ids:
+                if msg.at_self:
+                    marks.append("→@你(机器人)")
+                else:
+                    targets = [item for item in msg.at_ids if item]
+                    if targets:
+                        marks.append("→@" + ",".join(targets))
+            if msg.reply_to_id:
+                if msg.reply_to_self:
+                    who = "你(机器人)"
+                else:
+                    who = msg.reply_to_name or msg.reply_to_uid or "某条消息"
+                marks.append("→回复" + str(who))
+            if msg.is_bot:
+                text = f"[{stamp}] {content}"
+            else:
+                flag = (" " + " ".join(marks)) if marks else ""
+                text = f"[{stamp}] [{msg.sender_name}]{flag} {content}"
             # 合并连续同一角色的消息，减少上下文碎片
             if contexts and contexts[-1]["role"] == role:
                 contexts[-1]["content"] += "\n" + text
@@ -1317,6 +1462,20 @@ class HeartflowEngine:
                 elif target in ("", "unknown") and hinted:
                     target = hinted
                 style = res.reply_style or ""
+                if hard and target == "other":
+                    # 模型把“你……”认成机器人，但上下文明确显示上一条 @ 的是别人：
+                    # 先撤掉“点名”标记，再决定是插话还是不接。
+                    res.is_mentioning_bot = False
+                    if res.context_type == "mention_bot":
+                        res.context_type = "other"
+                    if style == "answer":
+                        style = "comment"
+                    _text = event.message_str or ""
+                    if self._should_veto_side_question(target, hard, _text):
+                        # 两个人在一问一答，她插进去只会像“没问你，去玩吧你”
+                        logger.info("[心流] 🔇 这条明确在对别人说（上一条 @ 了别人），不接：%s" % _text[:40])
+                        state.total_messages += 1
+                        return
                 if style == "none":
                     style = "comment" if target != "bot" else "answer"
 

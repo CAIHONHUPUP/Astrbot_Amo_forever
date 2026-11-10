@@ -174,8 +174,13 @@ class SegmentEngine:
         except Exception as exc:
             logger.debug(f"[分段] 记录回复失败: {exc}")
 
-    async def handle_segment_reply(self, event: AstrMessageEvent, quote_id=None, group=False):
-        """拦截 LLM 回复，执行分段并逐条发送。返回 True 表示已接管发送。"""
+    async def handle_segment_reply(self, event: AstrMessageEvent, quote_id=None, group=False, force=False):
+        """拦截 LLM 回复，执行分段并逐条发送。返回 True 表示已接管发送。
+
+        force=True：即使只有一段且不带引用，也由本引擎发送。用于 AstrBot 核心
+        开了全局「引用回复 / @ 发送者」时——不接管的话，核心会在插件 hook 之后
+        再补 Reply/At，私聊不引用和群聊概率都会被覆盖。
+        """
         result = event.get_result()
         if not result or not result.chain:
             return False
@@ -196,7 +201,7 @@ class SegmentEngine:
         try:
             segments = self.segment_text_by_rules(raw_text)
 
-            if len(segments) <= 1 and quote_id is None:
+            if len(segments) <= 1 and quote_id is None and not force:
                 # 即使只有一段，也要先按字数等待打字时间；返回 False 让 AstrBot 自己发。
                 await self._wait_segment(event, segments[0], "", 0.0)
                 await self._set_typing(event, False)

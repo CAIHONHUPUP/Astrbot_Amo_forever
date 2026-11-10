@@ -1,6 +1,6 @@
 # Changelog
 
-## 未发布（基于 6.6.8）
+## 6.6.8（主动消息/日程一致性 + 引用守卫）
 
 ### 主动消息不再和当前日程、另一个平台打架（11-10）
 
@@ -91,7 +91,7 @@
 - **私聊一律不引用（QQ / 飞书 / 任何平台）**：判定收敛到 `_quote_allowed()`——不看平台，
   私聊直接 False；`on_decorating_result` 在私聊里连上游核心或别的插件塞进 `result.chain`
   的 `Reply` 也一并摘掉（以前只会在自己拼链时不给 Reply，核心开了 `reply_with_quote`
-  就照样引用）；`_send_reply` / `_send_to_umo` / 分段引擎全部走它，群聊才看
+  就照样引用）；发送路径（`_send_to_umo` / 分段引擎）全部走它，群聊才看
   `quote_group_speaker_threshold` 人数 + `quote_group_probability` 概率。
 - **飞书守卫改成每次加载都重装**：以前用类标记「装过就跳过」，热重载后旧闭包还绑着上一个
   插件实例；现在每次 `__init__` 都重新绑定（类上的标记只用于排查）。
@@ -123,15 +123,15 @@
   `tests/test_schedule_detail_consistency.py`（6 项）、
   `tests/test_proactive_consistency.py`（9 项）、`tests/test_schedule_structure.py`（8 项）。
 
-## 6.6.8（时区修复：不再把早上十点说成「大晚上」）
+### 时区修复：不再把早上十点说成「大晚上」
 
-### 根因
+#### 根因
 
 - AstrBot 容器 `TZ=UTC`，插件里有 35 处 `datetime.now()`、21 处 `date.today()` 直接取**服务器**
   本地时间：北京时间 10:00 被算成了 02:00，于是她说「大晚上的」；
 - 同一原因，日志里 20:00 UTC（北京次日 04:00）也被打成了「天气提醒（晚上）」。
 
-### 改法
+#### 改法
 
 - 新增 `clock.py`：`configure()` 设置进程 `TZ` 并调用 `time.tzset()`，这样 `datetime.now()`、
   `.timestamp()`、`time.localtime()`、SQLite 的 `'localtime'` 会**一起**对齐，不会出现

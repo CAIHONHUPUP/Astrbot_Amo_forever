@@ -4718,6 +4718,27 @@ class HumanCorePlugin(Star):
         except Exception:
             return default
 
+    def _core_decor_flags(self, umo=""):
+        """AstrBot 核心会不会在插件 hook 之后再加「引用 / @」。
+
+        上架要求不能改 AstrBot 核心；但核心的 platform_settings.reply_with_quote /
+        reply_with_mention 是全局的，会在 on_decorating_result 之后无条件装饰结果，
+        把本插件的私聊不引用、群聊按概率引用覆盖掉。这里只读配置，检测到开了就由
+        插件自己发送，核心就没机会再补。
+        """
+        try:
+            config = self.context.get_config() or {}
+        except Exception:
+            config = {}
+        try:
+            settings = config.get("platform_settings") or {}
+        except Exception:
+            settings = {}
+        return {
+            "quote": bool(settings.get("reply_with_quote", False)),
+            "mention": bool(settings.get("reply_with_mention", False)),
+        }
+
     async def _persona_name_for(self, umo=""):
         """读取当前会话的人格名；读不到时返回空字符串。"""
         if not self.cfg_bool("use_persona_name", True):
@@ -6193,18 +6214,23 @@ class HumanCorePlugin(Star):
             from astrbot.core.platform.sources.lark.lark_event import LarkMessageEvent
         except Exception:
             return
-        plugin = self
-
         async def send(ev, message):
             try:
                 is_private = bool(ev.is_private_chat())
             except Exception:
                 is_private = False
+            # 只认消息链里已经有的 Reply（插件按人数+概率加的那一条）；
+            # 这里不能重新掷一次概率，否则「插件决定不引用」会被守卫再翻成引用。
             try:
-                quote = bool(plugin._quote_allowed(getattr(ev, "unified_msg_origin", ""),
-                                                 (not is_private)))
+                has_reply = any(isinstance(comp, Comp.Reply) for comp in message.chain)
             except Exception:
-                quote = False
+                has_reply = False
+            quote = bool(has_reply and not is_private)
+            if not quote:
+                try:
+                    message.chain = [comp for comp in message.chain if not isinstance(comp, Comp.Reply)]
+                except Exception:
+                    pass
             kwargs = lark_quote_kwargs(
                 is_private,
                 getattr(ev.message_obj, "message_id", ""),
@@ -8913,9 +8939,9 @@ class HumanCorePlugin(Star):
                 if not self._running or not self._ready:
                     return
                 snap = self.state.snapshot()
-                prompt_text = "（你刚刚忙完，主动补一句，不要提等待时间，语气自然）"
+                note = "你刚刚忙完，主动补一句；不要提等待时间，语气自然。"
                 reply = await self._compose_reply(
-                    event, prompt_text, snap, profile, [], "", False
+                    event, text, snap, profile, [], "", False, note=note
                 )
                 if reply:
                     await self._send_to_umo(umo, reply)
@@ -8956,7 +8982,7 @@ class HumanCorePlugin(Star):
             return value
         return "".join(parts[:limit]).strip()
 
-    async def _compose_reply(self, event, text, snap, profile, memories, memory_text, group):
+    async def _compose_reply(self, event, text, snap, profile, memories, memory_text, group, note=""):
         umo = event.unified_msg_origin
         uid = self._canonical_uid(event)
         name = profile.get("alias") or profile.get("name") or event.get_sender_name() or "对方"
@@ -9117,6 +9143,9 @@ class HumanCorePlugin(Star):
             "【规则】你就是角色本人。只输出你要说的话，不要解释、不要旁白、不要复述设定、"
             "不要用括号描述动作；像真人在聊天，句子口语化。"
         )
+        if note:
+            # 延迟补话的说明放在系统侧，不能混进“对方刚刚说”里
+            system_parts.append("【这次的情况】" + note)
         system = "\n\n".join(system_parts)
         if group:
             prompt = (
@@ -9204,56 +9233,6 @@ class HumanCorePlugin(Star):
                 pass
         return 0.3
 
-    async def _send_reply(self, event, text, quote_id=None, group=None):
-        text = clean_reply(text, self.cfg_int("max_reply_chars", 220))
-        addressed_to_me = self._is_talking_to_me(event)
-        if not addressed_to_me and (
-            looks_like_defensive_reply(text) or looks_like_ai_admission(text)
-        ):
-            text = "你们聊你们的，我不抢话。"
-        elif looks_like_ai_admission(text):
-            text = "你才人机呢，你见过这么会聊天的机器人吗？"
-        if looks_like_model_leak(text):
-            text = "秘密，不告诉你。"
-        if not text:
-            return False
-        if group is None:
-            group = not event.is_private_chat()
-        segments = self._segment(text)
-        if not segments:
-            return False
-        await self._typing(event, segments[0])
-        last_sent_at = time.monotonic()
-        for index, segment in enumerate(segments):
-            if index > 0:
-                await self._segment_wait(event, segment, segments[index - 1], last_sent_at)
-            chain = []
-            if (
-                index == 0 and quote_id is not None
-                and self._quote_allowed(event.unified_msg_origin, group)
-            ):
-                try:
-                    chain.append(Comp.Reply(id=quote_id))
-                except Exception:
-                    pass
-            chain.append(Comp.Plain(segment))
-            try:
-                await event.send(MessageChain(chain))
-            except Exception as exc:
-                logger.error("[amo] 发送失败: %s" % exc)
-                return False
-            last_sent_at = time.monotonic()
-            try:
-                if hasattr(event, "stop_typing"):
-                    await event.stop_typing()
-            except Exception:
-                pass
-        self._remember_bot_message(event.unified_msg_origin, text)
-        self._last_reply_at[event.unified_msg_origin] = now_ts()
-        self.state.nudge(依恋=1, 开心=1)
-        logger.info("[amo] 回复 -> %s: %s" % (event.unified_msg_origin, text[:300]))
-        return True
-
     def _remember_sent_reply(self, event, text):
         """分段引擎没接手时（关掉分段 / 发送异常）的兜底记录。"""
         msg_obj = getattr(event, "message_obj", None)
@@ -9330,6 +9309,30 @@ class HumanCorePlugin(Star):
             self._last_bot_saved[umo] = (text, time.time(), last_user)
         except Exception as exc:
             logger.debug("[amo] 记录自己的回复失败: %s" % exc)
+
+    async def _send_now(self, event, text, quote_id=None):
+        """跳过分段引擎直接发一条（seg 关闭时，用来绕开 AstrBot 核心的引用/@）。"""
+        if Comp is None or MessageChain is None:
+            return False
+        chain = []
+        if quote_id is not None:
+            try:
+                chain.append(Comp.Reply(id=quote_id))
+            except Exception:
+                pass
+        chain.append(Comp.Plain(text))
+        try:
+            await event.send(MessageChain(chain))
+        except Exception as exc:
+            logger.error("[amo] 直接发送失败: %s" % exc)
+            return False
+        self._remember_sent_reply(event, text)
+        try:
+            self._last_reply_at[event.unified_msg_origin] = now_ts()
+        except Exception:
+            pass
+        logger.info("[amo] 直接发送 -> %s: %s" % (event.unified_msg_origin, text[:300]))
+        return True
 
     async def _send_to_umo(self, umo, text, quote_id=None, group=False):
         text = clean_reply(text, self.cfg_int("max_reply_chars", 220))
@@ -9985,7 +9988,6 @@ class HumanCorePlugin(Star):
                 logger.info("[amo] 拦截后台信息泄漏: %s" % text[:60])
                 text = "秘密，不告诉你。"
                 result.chain = [Comp.Plain(text=text)]
-                result.chain = [Comp.Plain(text=text)]
             if not text.strip():
                 return
             group = not event.is_private_chat()
@@ -10002,6 +10004,14 @@ class HumanCorePlugin(Star):
                 or (group and getattr(event, "amo_quote_hint", False))
             )
             quote_id = getattr(event.message_obj, "message_id", None) if quote_enabled else None
+            core_decor = self._core_decor_flags(event.unified_msg_origin)
+            takeover = bool(core_decor.get("quote") or core_decor.get("mention"))
+            if takeover and not getattr(self, "_core_decor_logged", False):
+                logger.info(
+                    "[amo] 检测到 AstrBot 全局引用/mention 开启：本插件接管发送，"
+                    "避免核心覆盖「私聊不引用 / 群聊按概率引用」"
+                )
+                self._core_decor_logged = True
             if self.cfg_bool("polish_native", False):
                 snap = self.state.snapshot()
                 native_profile = self.db.get_profile(self._canonical_uid(event)) or {}
@@ -10034,6 +10044,11 @@ class HumanCorePlugin(Star):
 
             # 群聊/私聊的最终发送只交给完整本地分段引擎。
             if self.segment_engine is None or not self.cfg_bool("seg_enable", True):
+                if takeover and await self._send_now(
+                    event, text, quote_id if quote_enabled else None
+                ):
+                    result.chain = []
+                    return
                 self._remember_sent_reply(event, text)
                 return
             backup = list(result.chain)
@@ -10042,6 +10057,7 @@ class HumanCorePlugin(Star):
                     event,
                     quote_id=quote_id if quote_enabled else None,
                     group=group,
+                    force=takeover,
                 )
             except Exception as exc:
                 logger.error("[amo] 完整分段引擎异常: %s" % exc)
