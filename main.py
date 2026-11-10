@@ -21,6 +21,29 @@ import threading
 import time
 from datetime import date, datetime, timedelta, timezone
 
+# 统一时区：容器/服务器常在 UTC 跑，直接取服务器本地时间会把北京时间 10 点算成凌晨 2 点
+# （「大晚上的」就是这么来的）。clock.now() 返回目标时区下的 naive 本地时间，
+# 和原来的用法完全兼容。
+try:
+    from .clock import now as _clock_now, configure as _clock_configure, current_name as _clock_name
+except Exception:
+    try:
+        from clock import now as _clock_now, configure as _clock_configure, current_name as _clock_name
+    except Exception:
+        def _clock_now(*args, **kwargs):
+            return datetime.now()
+
+        def _clock_configure(*args, **kwargs):
+            return ""
+
+        def _clock_name(*args, **kwargs):
+            return ""
+
+
+def _now():
+    """目标时区下的「现在」（naive，便于和原代码里 datetime 运算混用）。"""
+    return _clock_now()
+
 try:
     import astrbot.api.message_components as Comp
 except Exception:
@@ -605,9 +628,9 @@ SOLAR_TERMS = {
 def day_meta(day=None):
     """返回某天的节日、节气和是否休息日。"""
     try:
-        target = date.fromisoformat(str(day)) if day else date.today()
+        target = date.fromisoformat(str(day)) if day else _now().date()
     except Exception:
-        target = date.today()
+        target = _now().date()
     key = target.isoformat()
     holiday = CN_HOLIDAYS.get(key, "")
     term = SOLAR_TERMS.get(key, "")
@@ -640,11 +663,11 @@ def day_meta(day=None):
     }
 
 def today_str():
-    return date.today().isoformat()
+    return _now().date().isoformat()
 
 
 def weekday_cn():
-    return "一二三四五六日"[date.today().weekday()]
+    return "一二三四五六日"[_now().date().weekday()]
 
 
 def clamp(value, low=0.0, high=100.0):
@@ -699,7 +722,7 @@ def parse_hhmm(value, default=0):
 
 
 def minutes_now():
-    dt = datetime.now()
+    dt = _now()
     return dt.hour * 60 + dt.minute
 
 
@@ -1334,7 +1357,7 @@ def fetch_provider_balance(api_key, base_url, kind, timeout=8.0):
             hard_limit = None
         if hard_limit is None:
             return {"ok": False, "error": "返回里没有 hard_limit_usd"}
-        today = datetime.now()
+        today = _now()
         month_start = today.replace(day=1).strftime("%Y-%m-%d")
         end_date = (today + timedelta(days=1)).strftime("%Y-%m-%d")
         used_cents = 0.0
@@ -2275,7 +2298,7 @@ class AmoDB:
 
     def fade_schedules(self, days=7):
         """7~14 天前的日程去掉细节，只保留每小时骨架。"""
-        cutoff = (date.today() - timedelta(days=max(1, int(days)))).isoformat()
+        cutoff = (_now().date() - timedelta(days=max(1, int(days)))).isoformat()
         with self.lock:
             rows = self.conn.execute(
                 "SELECT day, items FROM schedule WHERE day < ?", (cutoff,)
@@ -2297,7 +2320,7 @@ class AmoDB:
             self.conn.commit()
 
     def purge_schedules(self, days=14):
-        cutoff = (date.today() - timedelta(days=max(1, int(days)))).isoformat()
+        cutoff = (_now().date() - timedelta(days=max(1, int(days)))).isoformat()
         with self.lock:
             self.conn.execute("DELETE FROM schedule WHERE day < ?", (cutoff,))
             self.conn.commit()
@@ -2343,7 +2366,7 @@ class AmoDB:
             self.conn.commit()
 
     def purge_diaries(self, days=30):
-        cutoff = (date.today() - timedelta(days=max(1, int(days)))).isoformat()
+        cutoff = (_now().date() - timedelta(days=max(1, int(days)))).isoformat()
         with self.lock:
             self.conn.execute("DELETE FROM schedule_diary WHERE day < ?", (cutoff,))
             self.conn.commit()
@@ -2378,7 +2401,7 @@ class HumanState:
                 self.db.kv_set("period_config_seen", config_start)
             except Exception:
                 pass
-        self.period_start = stored or (date.today() - timedelta(days=10)).isoformat()
+        self.period_start = stored or (_now().date() - timedelta(days=10)).isoformat()
         self.health = self.db.kv_get("health", {}) or {
             "status": "健康", "since": now_ts(), "until": 0, "note": ""
         }
@@ -2461,7 +2484,7 @@ class HumanState:
             self.nudge(郁闷=4, 疲惫=2)
         else:
             self.nudge(平静=1)
-        hour = datetime.now().hour
+        hour = _now().hour
         if 0 <= hour < 6:
             self.nudge(疲惫=3, 平静=2)
         elif 6 <= hour < 9:
@@ -2481,11 +2504,11 @@ class HumanState:
         try:
             start = date.fromisoformat(str(self.period_start))
         except Exception:
-            start = date.today() - timedelta(days=10)
+            start = _now().date() - timedelta(days=10)
             self.period_start = start.isoformat()
         cycle_days = max(10, self.p.cfg_int("period_cycle_days", 28))
         bleed_days = max(1, min(self.p.cfg_int("period_days", 5), cycle_days - 6))
-        day = (date.today() - start).days % cycle_days + 1
+        day = (_now().date() - start).days % cycle_days + 1
         ovulation_day = max(bleed_days + 1, min(cycle_days - 1, self.p.cfg_int("period_ovulation_day", 14)))
         ovulation_window = max(1, min(9, self.p.cfg_int("period_ovulation_window", 3)))
         ovulation_start = max(bleed_days + 1, ovulation_day - (ovulation_window - 1) // 2)
@@ -2525,7 +2548,7 @@ class HumanState:
             "reply_mult": reply_mult, "days_to_next": cycle_days - day + 1,
             "cycle_days": cycle_days, "bleed_days": bleed_days,
             "ovulation_day": ovulation_day, "ovulation_window": ovulation_window,
-            "next_start": (date.today() + timedelta(days=cycle_days - day + 1)).isoformat(),
+            "next_start": (_now().date() + timedelta(days=cycle_days - day + 1)).isoformat(),
         }
 
     def set_period_start(self, value):
@@ -2628,8 +2651,8 @@ class HumanState:
         return "cloud"
 
     def _simulate_weather(self):
-        month = date.today().month
-        rng = random.Random(md5_int(today_str() + str(datetime.now().hour)))
+        month = _now().date().month
+        rng = random.Random(md5_int(today_str() + str(_now().hour)))
         if month in (12, 1, 2):
             choices = [("晴", "clear"), ("多云", "cloud"), ("阴", "overcast"),
                        ("小雪", "snow"), ("小雨", "rain")]
@@ -3220,7 +3243,7 @@ class HumanState:
                 self.db.clear_diaries(today)
             except Exception:
                 pass
-        cutoff = (date.today() - timedelta(days=14)).isoformat()
+        cutoff = (_now().date() - timedelta(days=14)).isoformat()
         for day in list(self.schedule.keys()):
             if day < cutoff:
                 self.schedule.pop(day, None)
@@ -3287,7 +3310,7 @@ class HumanState:
                     until = int(trip.get("return_hour") or 12)
                     self.apply_return_overlay(city, until)
                     self._log_solo_day(city, today)
-                    if datetime.now().hour >= until:
+                    if _now().hour >= until:
                         his = str(self.db.kv_get("his_city", "") or "").strip() or _CITY_DEFAULT
                         hit = self.p._city_lookup(his)
                         if hit:
@@ -3357,7 +3380,7 @@ class HumanState:
                 if hour < start:
                     keep.append(item)
         items = _city_travel_to_events(
-            name, start, spots=spots, weekday=date.today().weekday() < 5, seed=today,
+            name, start, spots=spots, weekday=_now().date().weekday() < 5, seed=today,
         )
         if keep_past:
             items = [x for x in items if int(str(x.get("start") or "0")[:2]) >= start]
@@ -3447,7 +3470,7 @@ class HumanState:
         if not self.p.cfg_bool("city_travel_schedule", True):
             return False
         today = today_str()
-        from_hour = datetime.now().hour
+        from_hour = _now().hour
         home = name == _CITY_DEFAULT
         existing = self.schedule.get(today) or self.db.get_schedule(today) or []
         if not existing:
@@ -3470,7 +3493,7 @@ class HumanState:
             except Exception as exc:
                 logger.debug("[amo] 出行景点挑选失败: %s" % exc)
         merged = keep + _city_travel_events(
-            name, from_hour, home=home, weekday=date.today().weekday() < 5, spots=spots,
+            name, from_hour, home=home, weekday=_now().date().weekday() < 5, spots=spots,
         )
         if not merged:
             return False
@@ -3650,7 +3673,7 @@ class HumanState:
         for item in items:
             if in_minute_range(current, parse_hhmm(item.get("start")), parse_hhmm(item.get("end"))):
                 return dict(item)
-        hour = datetime.now().hour
+        hour = _now().hour
         if hour < 6:
             return {"start": "00:00", "end": "06:00", "activity": "睡觉", "place": "家", "category": "sleep"}
         if hour < 9:
@@ -3689,8 +3712,8 @@ class HumanState:
         return {
             "date": today_str(),
             "weekday": weekday_cn(),
-            "time": datetime.now().strftime("%H:%M"),
-            "datetime_text": "%s 星期%s %s" % (today_str(), weekday_cn(), datetime.now().strftime("%H:%M")),
+            "time": _now().strftime("%H:%M"),
+            "datetime_text": "%s 星期%s %s" % (today_str(), weekday_cn(), _now().strftime("%H:%M")),
             "mood": {key: round(value, 1) for key, value in self.mood.items()},
             "dominant": self.dominant_mood(),
             "mood_score": self.mood_score(),
@@ -3775,7 +3798,7 @@ class HumanState:
         ]
         if (self.weather or {}).get("tag") == "rain":
             events.append("下班的时候突然下雨，躲在便利店屋檐下")
-        index = md5_int(today_str() + str(datetime.now().hour)) % len(events)
+        index = md5_int(today_str() + str(_now().hour)) % len(events)
         return events[index]
 
     def daily_tick(self):
@@ -4185,7 +4208,7 @@ class ReplyGate:
         willingness += {"排卵期": 6, "卵泡期": 3, "黄体期": -6, "月经期": -10}.get(phase, 0)
         if snap["health"]["sick"]:
             willingness -= 15
-        hour = datetime.now().hour
+        hour = _now().hour
         if hour < 6:
             willingness -= 25
         last_reply = self.p._last_reply_at.get(umo, 0)
@@ -4298,7 +4321,7 @@ class ReplyGate:
         health_delta = 8 if snap["health"]["sick"] else 0
         phase = snap["period"]["phase"]
         period_delta = {"月经期": 6, "黄体期": 4, "排卵期": -3, "卵泡期": -1}.get(phase, 0)
-        time_delta = 10 if datetime.now().hour in (23, 0, 1, 2, 3, 4, 5) else 0
+        time_delta = 10 if _now().hour in (23, 0, 1, 2, 3, 4, 5) else 0
         weather_delta = 3 if snap["weather"].get("tag") in ("rain", "storm", "snow") else 0
 
         value = clamp(
@@ -4439,6 +4462,13 @@ class HumanCorePlugin(Star):
         self.plugin_dir = os.path.dirname(os.path.abspath(__file__))
         self._migrate_legacy_config()
         self.bot_name = self.cfg_str("bot_name", "") or "陪伴"
+        # 时区：服务器常在 UTC 跑，必须按用户时区算（否则北京时间早上 10 点会被当成凌晨 2 点）
+        try:
+            self.timezone_name = _clock_configure(self.cfg_str("timezone", "Asia/Shanghai"))
+            logger.info("[amo] 时区: %s（系统: %s）" % (self.timezone_name, _clock_name()))
+        except Exception as exc:
+            self.timezone_name = ""
+            logger.warning("[amo] 时区初始化失败: %s" % exc)
         self.persona_name = ""
         self._persona_name_cache = {}
         self._last_affect = {}
@@ -8232,7 +8262,7 @@ class HumanCorePlugin(Star):
             if created and any(w in body for w in rel_words):
                 try:
                     day = datetime.fromtimestamp(created)
-                    if day.strftime("%Y-%m-%d") != datetime.now().strftime("%Y-%m-%d"):
+                    if day.strftime("%Y-%m-%d") != _now().strftime("%Y-%m-%d"):
                         body = "（记于 %s）%s" % (day.strftime("%m-%d"), body)
                 except Exception:
                     pass
@@ -9310,7 +9340,7 @@ class HumanCorePlugin(Star):
                 except Exception:
                     travel_spots = []
                 travel_text = _city_travel_block(
-                    travel_city, weekday=date.today().weekday() < 5, spots=travel_spots,
+                    travel_city, weekday=_now().date().weekday() < 5, spots=travel_spots,
                 )
                 if travel_text:
                     parts.append(travel_text)
@@ -9923,7 +9953,7 @@ class HumanCorePlugin(Star):
             except Exception as exc:
                 logger.debug("[amo] 检查主动私聊回复失败: %s" % exc)
 
-        current_dt = datetime.now()
+        current_dt = _now()
         if current_dt.hour == 23 and current_dt.minute >= 59:
             save_key = today_str()
             if self._last_schedule_save != save_key:
@@ -9973,7 +10003,7 @@ class HumanCorePlugin(Star):
         """每天 diary_time（默认 10:00）给「昨天」写一篇日记。"""
         if not self.cfg_bool("diary_enabled", True) or not callable(_diary_write):
             return
-        now = datetime.now()
+        now = _now()
         hh, mm = self._diary_clock()
         if (now.hour, now.minute) < (hh, mm):
             return
@@ -10190,7 +10220,7 @@ class HumanCorePlugin(Star):
             if not _ms_should_archive(rows, every, min_messages):
                 continue
             body = _ms_transcript(rows)
-            label = datetime.now().strftime("%Y-%m-%d")
+            label = _now().strftime("%Y-%m-%d")
             system = "你是长期记忆整理器。只输出一段中文总结，不要标题、不要分点、不要时间戳。"
             prompt = _ms_build_prompt(label, body)
             try:
@@ -10215,7 +10245,7 @@ class HumanCorePlugin(Star):
         """每天上午把"昨天"的聊天压成一条长期记忆（阶段记忆）。"""
         if not self.cfg_bool("daily_digest_enabled", True):
             return
-        now = datetime.now()
+        now = _now()
         if now.hour < max(0, min(23, self.cfg_int("daily_digest_hour", 6))):
             return
         today = now.strftime("%Y-%m-%d")
@@ -10709,7 +10739,7 @@ class HumanCorePlugin(Star):
         if category in ("rest", "play"):
             return "slack"
         if category == "commute":
-            return "offwork" if datetime.now().hour >= 16 else "commute"
+            return "offwork" if _now().hour >= 16 else "commute"
         if relation in ("熟识", "相恋") and random.random() < self.cfg_float("proactive_share_prob", 0.35):
             return "share"
         return "greet"
@@ -10734,14 +10764,14 @@ class HumanCorePlugin(Star):
 
     def _forced_sent_this_hour(self, uid):
         """「日常关心」每小时只强制一次；存数据库，热重载/重启都不清空。"""
-        mark = today_str() + ":" + str(datetime.now().hour)
+        mark = today_str() + ":" + str(_now().hour)
         try:
             return str(self.db.kv_get(self._forced_hour_key(uid), "")) == mark
         except Exception:
             return self._last_proactive_activity.get(str(uid)) == mark
 
     def _mark_forced_hour(self, uid):
-        mark = today_str() + ":" + str(datetime.now().hour)
+        mark = today_str() + ":" + str(_now().hour)
         self._last_proactive_activity[str(uid)] = mark
         try:
             self.db.kv_set(self._forced_hour_key(uid), mark)
@@ -10970,7 +11000,7 @@ class HumanCorePlugin(Star):
         evening_min = parse_clock(target, 20, 0)
         morning_raw = str(self.cfg_str("weather_alert_morning_time", "08:00") or "").strip()
         morning_min = parse_clock(morning_raw, 8, 0) if morning_raw else None
-        now = datetime.now()
+        now = _now()
         today = today_str()
         if str(self.db.kv_get("weather_alert_sent", "") or "") == today:
             return
@@ -11067,7 +11097,7 @@ class HumanCorePlugin(Star):
                 relation == "相恋"
                 and count == 0
                 and self.cfg_bool("proactive_daily_guarantee", True)
-                and datetime.now().hour >= 8
+                and _now().hour >= 8
             )
             if quiet and not guaranteed:
                 continue
@@ -12057,7 +12087,7 @@ class HumanCorePlugin(Star):
             self.db.kv_set("follow_declined", {})
             return await self._start_follow_trip(uid, {
                 "city": city, "id": "",
-                "tomorrow": datetime.now().hour >= 22,
+                "tomorrow": _now().hour >= 22,
             })
         if offer.get("city"):
             if _wander_agree(text):
@@ -12082,7 +12112,7 @@ class HumanCorePlugin(Star):
             return ""
         # 到了新的城市：之前"被拒过"的标记作废，可以再问一次
         self.db.kv_set("follow_declined", {})
-        tomorrow = datetime.now().hour >= 22
+        tomorrow = _now().hour >= 22
         self.db.kv_set("he_city", name)
         self.db.kv_set("wander_offer", {})
         self.db.kv_set("follow_offer", {
@@ -12097,8 +12127,8 @@ class HumanCorePlugin(Star):
             self.db.kv_set("follow_offer", {})
             return ""
         tomorrow = bool(offer.get("tomorrow"))
-        start = (date.today() + timedelta(days=1)) if tomorrow else date.today()
-        start_hour = 9 if tomorrow else datetime.now().hour
+        start = (_now().date() + timedelta(days=1)) if tomorrow else _now().date()
+        start_hour = 9 if tomorrow else _now().hour
         spots = []
         try:
             spots = _city_pick_spots(self.scenic_spots(), city, start.isoformat())
@@ -12171,7 +12201,7 @@ class HumanCorePlugin(Star):
             log = self.db.kv_get("follow_reject_log", []) or []
             if not isinstance(log, list):
                 log = []
-            log.append({"day": today_str(), "hour": "%02d:00" % datetime.now().hour, "city": city})
+            log.append({"day": today_str(), "hour": "%02d:00" % _now().hour, "city": city})
             self.db.kv_set("follow_reject_log", log[-10:])
         except Exception:
             pass
@@ -12204,7 +12234,7 @@ class HumanCorePlugin(Star):
             log = self.db.kv_get("travel_log", []) or []
             if isinstance(log, list):
                 log.append({
-                    "day": today_str(), "hour": "%02d:00" % datetime.now().hour,
+                    "day": today_str(), "hour": "%02d:00" % _now().hour,
                     "city": city, "back": True,
                 })
                 self.db.kv_set("travel_log", log[-10:])
@@ -12320,7 +12350,7 @@ class HumanCorePlugin(Star):
             ret = str(trip.get("return_day") or start)
             if start and start <= today_str() <= ret:
                 try:
-                    day_no = (date.today() - date.fromisoformat(start)).days + 1
+                    day_no = (_now().date() - date.fromisoformat(start)).days + 1
                 except Exception:
                     day_no = 1
                 return _wander_solo_block(str(trip["city"]), trip.get("spots") or [], day_no=day_no)
@@ -12333,10 +12363,10 @@ class HumanCorePlugin(Star):
         if not city:
             self.db.kv_set("wander_offer", {})
             return ""
-        tomorrow = datetime.now().hour >= 22
-        start = (date.today() + timedelta(days=1)) if tomorrow else date.today()
+        tomorrow = _now().hour >= 22
+        start = (_now().date() + timedelta(days=1)) if tomorrow else _now().date()
         days = max(1, min(3, _wander_trip_days(random)))
-        if days == 1 and not tomorrow and datetime.now().hour >= 17:
+        if days == 1 and not tomorrow and _now().hour >= 17:
             days = 2  # 傍晚才走，别刚出门就回家
         return_day = start + timedelta(days=days - 1)
         return_hour = 21 if days == 1 else 12
@@ -12364,7 +12394,7 @@ class HumanCorePlugin(Star):
             if not isinstance(log, list):
                 log = []
             log.append({
-                "day": start.isoformat(), "hour": "%02d:00" % datetime.now().hour,
+                "day": start.isoformat(), "hour": "%02d:00" % _now().hour,
                 "city": city, "solo": True,
             })
             self.db.kv_set("travel_log", log[-10:])
@@ -12404,7 +12434,7 @@ class HumanCorePlugin(Star):
             hour = int(trip.get("return_hour") or 12)
         except (TypeError, ValueError):
             hour = 12
-        if datetime.now().hour < hour:
+        if _now().hour < hour:
             return
         city = str(trip["city"])
         his = str(self.db.kv_get("his_city", "") or "").strip() or _CITY_DEFAULT
@@ -12446,7 +12476,7 @@ class HumanCorePlugin(Star):
             log = self.db.kv_get("travel_log", []) or []
             if isinstance(log, list):
                 log.append({
-                    "day": today_str(), "hour": "%02d:00" % datetime.now().hour,
+                    "day": today_str(), "hour": "%02d:00" % _now().hour,
                     "city": city, "solo": True, "back": True,
                 })
                 self.db.kv_set("travel_log", log[-10:])
@@ -12474,7 +12504,7 @@ class HumanCorePlugin(Star):
             if not isinstance(log, list):
                 log = []
             log.append({
-                "day": today_str(), "hour": "%02d:00" % datetime.now().hour,
+                "day": today_str(), "hour": "%02d:00" % _now().hour,
                 "city": city, "solo": True, "back": True,
             })
             self.db.kv_set("travel_log", log[-10:])
@@ -12657,7 +12687,7 @@ class HumanCorePlugin(Star):
         return prices
 
     def _usage_start_of_today(self):
-        now = datetime.now()
+        now = _now()
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         return start.timestamp()
 
@@ -13126,7 +13156,7 @@ class HumanCorePlugin(Star):
         payload = await self._body()
         day = _diary_parse_day((payload or {}).get("date"))
         if not day:
-            day = (datetime.now() - timedelta(days=1)).date()
+            day = (_now() - timedelta(days=1)).date()
         text = await self._generate_daily_diary(day)
         if not text:
             return {"code": 1, "msg": "日记生成失败（没有素材或模型没返回）"}

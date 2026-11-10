@@ -1,5 +1,23 @@
 # Changelog
 
+## 6.6.8（时区修复：不再把早上十点说成「大晚上」）
+
+### 根因
+
+- AstrBot 容器 `TZ=UTC`，插件里有 35 处 `datetime.now()`、21 处 `date.today()` 直接取**服务器**
+  本地时间：北京时间 10:00 被算成了 02:00，于是她说「大晚上的」；
+- 同一原因，日志里 20:00 UTC（北京次日 04:00）也被打成了「天气提醒（晚上）」。
+
+### 改法
+
+- 新增 `clock.py`：`configure()` 设置进程 `TZ` 并调用 `time.tzset()`，这样 `datetime.now()`、
+  `.timestamp()`、`time.localtime()`、SQLite 的 `'localtime'` 会**一起**对齐，不会出现
+  「一半代码按北京、一半按 UTC」的错位；没有 `tzset` 的平台退回 `zoneinfo` 换算；
+- 插件启动时按配置项 `timezone`（默认 `Asia/Shanghai`）初始化，并在日志里打印实际生效的时区；
+- `main.py` 里取时间的地方统一走 `_now()`，`date.today()` 也不再直接依赖服务器时区；
+- 新增 `tests/test_clock.py`：模拟 `TZ=UTC` 容器，验证 8 小时偏移、`.timestamp()` 对齐、
+  SQL 偏移量，以及「源码里不许再有裸 `datetime.now()`」的守卫。
+
 ## 6.6.6（上架修复）
 
 ### 日记不再写到插件数据目录外（审核驳回项）

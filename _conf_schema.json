@@ -1,4 +1,10 @@
 {
+  "timezone": {
+    "type": "string",
+    "description": "时区",
+    "default": "Asia/Shanghai",
+    "hint": "问候时段、日记、天气、「现在几点」都按这个时区算。服务器跑在 UTC 时务必保持 Asia/Shanghai，否则会把早上算成凌晨（会出现「大晚上的」这类错话）。填 auto 表示跟随系统。"
+  },
   "weather_city_name": {
     "type": "string",
     "description": "城市显示名",

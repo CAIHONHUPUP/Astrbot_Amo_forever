@@ -4,6 +4,11 @@
 >
 > 反馈、Bug、建议请加 QQ 群：**1055679275**
 
+## 6.6.8 时区跟用户走
+
+- 服务器跑在 UTC 时，问候时段、日记、"现在几点"全部按配置的 `timezone`（默认 Asia/Shanghai）算，
+  不再出现"早上十点说大晚上的"。
+
 ## 6.6.4 logger 规范
 
 - `gift_engine.py` 不再回退内置 logging，统一从 `astrbot.api` 导入；
