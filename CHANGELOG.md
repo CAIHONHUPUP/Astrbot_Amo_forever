@@ -2,6 +2,20 @@
 
 ## 未发布（基于 6.6.8）
 
+### 测试：覆盖率 46% → 68%，新增 544 项行为测试
+
+- 新增 6 个测试文件（合计 544 个测试 / 约 7,300 行），全部只加测试、**源码零改动**：
+  - `tests/test_runtime_coverage.py`（133 项）：消息钩子、`_tick()` 单步、事件分发、
+    里程碑与每日总结；后台循环用假 `sleep` 只跑一圈；
+  - `tests/test_api_coverage.py`（79 项）：面板 HTTP 接口（状态/天气/日程/日记/记忆/画像/礼物）、
+    假 request 的正常、缺参、错误分支；
+  - `tests/test_social_coverage.py`（121 项）：关系网、称呼、社交互动；
+  - `tests/test_cmd_coverage.py`（92 项）：`/amo` 系列子命令与参数解析；
+  - `tests/test_schedule_coverage.py`（72 项）：日程生成与结构校验；`tests/test_travel_coverage.py`（47 项）：出行/地点；
+- 覆盖率 **46% → 68%**（测试 748 → 1292），`amo_runtime` 5% → 高覆盖、`amo_api` 17% → 高覆盖；
+- 全量 `pytest tests` 28 秒跑完（无 sleep / 无真实时钟依赖），mypy 45 个文件 0 错误、pyflakes 0；
+- `.coveragerc` 底线 **40% → 62%**（实测 68%，Windows 会跳过 7 项 `tzset` 测试，留余量）。
+
 ### 结构（第三轮）：main.py 只剩组装层，三个大类独立成模块
 
 - `main.py` 3,677 → **1,155 行**，只保留插件装配、`ReplyGate`、生命周期钩子：
