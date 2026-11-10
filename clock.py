@@ -66,6 +66,9 @@ def normalize(name):
 
 
 def _read_etc_timezone():
+    # Windows / 容器里没有这个文件是常态，不该把它算成"被吞的异常"
+    if not os.path.isfile("/etc/timezone"):
+        return ""
     try:
         with open("/etc/timezone", encoding="utf-8") as fp:
             return fp.read().strip()

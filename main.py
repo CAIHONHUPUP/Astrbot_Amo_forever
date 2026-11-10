@@ -640,12 +640,10 @@ class HumanCorePlugin(MemoryMixin, CommandMixin, ConfigMixin, MessageMixin, Soci
             self._migrate_delay_default()
             self._migrate_proactive_timing()
             self._migrate_typing_defaults()
-            self._migrate_memory_source_default()
             self._migrate_legacy_admin_default()
             self._migrate_scenic_kb_name()
             self._migrate_schedule_defaults()
             self._migrate_diary_continuity()
-            self._cleanup_legacy_memory_profiles()
             await asyncio.to_thread(self._merge_alias_profiles)
             self.state = HumanState(self)
             try:
