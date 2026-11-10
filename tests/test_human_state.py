@@ -113,7 +113,8 @@ class MoodTests(StateTestCase):
 
     def test_decay_noop_when_clock_not_moved(self) -> None:
         self.state.mood["开心"] = 90.0
-        self.state.mood_ts = now_ts()
+        # 时间戳在未来 → hours <= 0，直接 early return（不靠浮点误差判等）
+        self.state.mood_ts = now_ts() + 60
         before = dict(self.state.mood)
         self.state.decay_mood()
         self.assertEqual(before, self.state.mood)
