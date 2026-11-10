@@ -12,10 +12,15 @@
 """
 
 from __future__ import annotations
-try:
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
-except ImportError:  # 直接按文件加载时
-    from amo_observability import note as _note_swallowed
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
 
 import re
 import unicodedata
@@ -72,14 +77,17 @@ def near_duplicate(text, previous, threshold=DEDUPE_THRESHOLD):
     return None
 
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .clock import from_timestamp as _clock_from_ts
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from clock import from_timestamp as _clock_from_ts
+        from .clock import from_timestamp as _clock_from_ts
     except Exception:
-        def _clock_from_ts(ts, *args, **kwargs):
-            return datetime.fromtimestamp(float(ts or 0))
+        try:
+            from clock import from_timestamp as _clock_from_ts
+        except Exception:
+            def _clock_from_ts(ts, *args, **kwargs):
+                return datetime.fromtimestamp(float(ts or 0))
 
 
 def _clock(timestamp):

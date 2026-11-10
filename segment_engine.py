@@ -1,7 +1,12 @@
-try:
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
-except ImportError:  # 直接按文件加载时
-    from amo_observability import note as _note_swallowed
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
 import asyncio
 import random
 import time
@@ -15,10 +20,13 @@ from astrbot.api import logger
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.api.message_components import Plain, Reply
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from astrbot.core.platform.astr_message_event import MessageSession as MS
-except ImportError:  # pragma: no cover
-    from astrbot.core.platform.message_session import MessageSession as MS
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from astrbot.core.platform.astr_message_event import MessageSession as MS
+    except ImportError:  # 直接按文件加载时
+        from astrbot.core.platform.message_session import MessageSession as MS
 
 
 class SegmentEngine:

@@ -2,28 +2,44 @@
 """SocialMixin：从 main.py 拆出的 mixin，由 HumanCorePlugin 组合使用。"""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import json
 import os
 import random
 import re
 import time
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
-except ImportError:
-    from amo_observability import note as _note_swallowed
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_shared import (
         AstrMessageEvent, Comp, _rank_edges, clamp, lark_quote_kwargs, logger, merge_uid_alias_data, now_ts, parse_relations, plan_relation_edges, sentiment, to_float, to_int, truncate,
     )
-except ImportError:  # 直接按文件加载时
-    from amo_shared import (
-        AstrMessageEvent, Comp, _rank_edges, clamp, lark_quote_kwargs, logger, merge_uid_alias_data, now_ts, parse_relations, plan_relation_edges, sentiment, to_float, to_int, truncate,
-    )
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_shared import (
+            AstrMessageEvent, Comp, _rank_edges, clamp, lark_quote_kwargs, logger, merge_uid_alias_data, now_ts, parse_relations, plan_relation_edges, sentiment, to_float, to_int, truncate,
+        )
+    except ImportError:  # 直接按文件加载时
+        from amo_shared import (
+            AstrMessageEvent, Comp, _rank_edges, clamp, lark_quote_kwargs, logger, merge_uid_alias_data, now_ts, parse_relations, plan_relation_edges, sentiment, to_float, to_int, truncate,
+        )
 
 
-class SocialMixin:
+if TYPE_CHECKING:
+    from .amo_types import PluginLike as _MixinBase
+else:  # 运行时用 object：协议里的声明不能进 MRO，否则会挡掉别的 mixin 的真实实现
+    _MixinBase = object
+
+
+class SocialMixin(_MixinBase):
     def _uid_alias_mapping(self):
         """读映射表（配置优先，其次数据目录 uid_map.json）；按内容+mtime 缓存。"""
         cache_key = None

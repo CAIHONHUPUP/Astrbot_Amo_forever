@@ -1,13 +1,18 @@
+
+from typing import TYPE_CHECKING
 """
 心流插件 - 智能群聊主动回复系统 v4.27+
 支持动态阈值 / 评分模式 / 沉浸模式 / 防抖 / 群聊独立配置
 评分规则支持可视化配置（低分/高分情况分维度填写）
 *注：已移除大模型上下文注入，完全依赖 AstrBot 原生对话流*
 """
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
-except ImportError:  # 直接按文件加载时
-    from amo_observability import note as _note_swallowed
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
 
 import json
 import random
@@ -28,17 +33,20 @@ from astrbot.api.message_components import Plain, At, Reply
 from astrbot.api.provider import LLMResponse
 
 # 统一时区（只影响面板/日志里显示的时间，但别和 clock 配置打架）
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .clock import now as _hf_now, from_timestamp as _hf_ts
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from clock import now as _hf_now, from_timestamp as _hf_ts
+        from .clock import now as _hf_now, from_timestamp as _hf_ts
     except Exception:
-        def _hf_now(*args, **kwargs):
-            return datetime.datetime.now()
+        try:
+            from clock import now as _hf_now, from_timestamp as _hf_ts
+        except Exception:
+            def _hf_now(*args, **kwargs):
+                return datetime.datetime.now()
 
-        def _hf_ts(ts, *args, **kwargs):
-            return datetime.datetime.fromtimestamp(float(ts or 0))
+            def _hf_ts(ts, *args, **kwargs):
+                return datetime.datetime.fromtimestamp(float(ts or 0))
 
 # ============================================================
 # 正则
@@ -925,7 +933,7 @@ class HeartflowEngine:
         “回复的是哪条消息”都会丢失；只靠文本判断，群聊里很容易把“你……”
         误判成在对机器人说。
         """
-        meta = {
+        meta: dict[str, Any] = {
             "msg_id": str(getattr(msg_obj, "message_id", "") or ""),
             "at_ids": [],
             "reply_to_id": "",
@@ -1153,7 +1161,7 @@ class HeartflowEngine:
         每条带 `[HH:MM]` 时间；群友消息额外带 `→@xxx` / `→回复xxx`，
         让小模型能看见“上一条 @ 的是谁”，而不是只看到一句光秃秃的“你”。
         """
-        contexts = []
+        contexts: list[dict[str, str]] = []
         for msg in raw_msgs:
             content = self._clean_message_content(msg.content, 200)
             if not content:

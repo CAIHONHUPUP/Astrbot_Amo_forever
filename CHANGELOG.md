@@ -2,6 +2,45 @@
 
 ## 未发布（基于 6.6.8）
 
+### 结构（第三轮）：main.py 只剩组装层，三个大类独立成模块
+
+- `main.py` 3,677 → **1,167 行**，只保留插件装配、`ReplyGate`、生命周期钩子：
+  - `amo_db.py`（815 行）：`AmoDB` 存储层（kv/画像/关系网/消息/日程/日记）；
+  - `amo_human_state.py`（1,576 行）：`HumanState` 心情/生理期/健康/天气/日程/旅行覆盖层；
+  - `amo_llm_service.py`（409 行）：`LLMService` 人格读取/对话/润色/判定/事实提取；
+  - `main.py` 顶部保留再导出（`from .amo_db import AmoDB` 等），外部 `from main import ...` 不变。
+- 双模式导入（包内相对 / 按文件直接加载）改成 `if TYPE_CHECKING: ... else: try/except`，
+  mypy 在包模式下不再把兜底 import 当成重复定义（原先 342 个 `no-redef`）。
+
+### 类型：mypy 覆盖全部模块
+
+- 新增 `amo_types.py`：用 `Protocol` 声明 13 个 mixin **组合后**的公共接口
+  （`db` / `state` / `llm` / `_ensure_ready()` 等），mixin 条件继承协议、运行时继承 `object`，
+  不参与 MRO、不遮挡真实实现；78 个 `attr-defined` 全部归零；
+- 新增 `tools/mypy_check.py`：把插件目录当包（父目录进 `MYPYPATH`）跑 mypy，任何 cwd 都能用；
+- `mypy.ini` 从 5 个纯模块扩到**全部 20 个模块 + main.py**，0 错误；
+- `amo_shared.py` 的 40 个公开工具函数补了参数/返回标注，其余函数逐步补（`allow_untyped_defs` 还在）。
+
+### 测试与覆盖率
+
+- 单测 **470 → 733**（7 项 Windows 无 `tzset` 跳过），新增：
+  `test_shared_core`（工具/文本/用量）、`test_amo_db`（存储层）、`test_human_state`（状态机）、
+  `test_llm_service`（人格/润色/事实提取）、`test_reply_gate`（插话判定）、`test_state_events`（日程副作用）、
+  `test_uid_merge`（跨平台合并）、`test_config_helpers`（迁移/热重载）、`test_balance`、
+  `test_text_pipeline`、`test_social_message_helpers`、`test_plugin_glue`；
+- 覆盖率 **30% → 41%**（16,360 行语句，`.coveragerc` 底线 40%）。
+
+### 顺手修的 bug
+
+- `AmoDB.update_profile()` 没有任何可写字段时仍会写 `profile_updated_at`（返回 True，脏写同步时间）；
+- `clear_diaries_from()` 用 TEXT 比 `hour`，`"9" >= "10"` 成立 → 清 10 点会连 0–9 点一起删；
+- 跨平台合并时关系网两列分别 UPDATE 会产生反向重复（a→b 与 b→a 各一条），现按无序对去重再统一方向；
+- 日程里脏 `start`（如「坏数据」）被 `parse_hhmm` 当成 00:00，午夜凭空多一段活动；
+- `segment_text()` 对没有标点的超长块不做切分，`max_len` 实际不生效（链接/成对符号/代码块仍不切）；
+- `extract_persona_name()` 把「你是AI助手」里的「AI助手」当成人格名（大小写不匹配 blocked 表）；
+- `fetch_deepseek_balance()` 与 `fetch_provider_balance(kind="deepseek")` 逻辑重复，合并成一处。
+
+
 ### 结构：main.py 拆分 + 吞异常可观测
 
 - 13,982 行的 `main.py` 拆到 **3,677 行**：`amo_shared.py`（导入兜底 / 常量 / 工具 / 用量）

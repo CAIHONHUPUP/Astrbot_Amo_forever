@@ -14,9 +14,9 @@ import astrbot_stub  # noqa: E402
 
 astrbot_stub.install()
 
-import main  # noqa: E402
 from main import HumanCorePlugin  # noqa: E402
 import amo_proactive  # noqa: E402
+from amo_shared import SICK_STATUSES, now_ts  # noqa: E402
 
 LARK_UMO = "lark:FriendMessage:ou_cec66ea605ad17f62632fb044bc5f6ac"
 QQ_UMO = "大肥鱼:FriendMessage:302578963"
@@ -123,7 +123,7 @@ class PendingPlatformTests(unittest.TestCase):
     def test_followup_goes_back_to_the_same_platform(self):
         fake = FakePlugin(profiles=[{"uid": "302578963", "private_umo": QQ_UMO}])
         fake.db.kv[HumanCorePlugin._pending_key(fake, "302578963")] = {
-            "sent_at": main.now_ts() - 3600,
+            "sent_at": now_ts() - 3600,
             "kind": "meal",
             "text": "吃饭没",
             "umo": LARK_UMO,
@@ -144,40 +144,40 @@ class PendingPlatformTests(unittest.TestCase):
     def test_old_pending_without_umo_falls_back_to_home(self):
         fake = FakePlugin(profiles=[{"uid": "302578963", "private_umo": QQ_UMO}])
         fake.db.kv[HumanCorePlugin._pending_key(fake, "302578963")] = {
-            "sent_at": main.now_ts() - 3600,
+            "sent_at": now_ts() - 3600,
             "kind": "greet",
             "text": "在吗",
             "followup": False,
             "mood": False,
         }
-        original = main.quiet_now
-        main.quiet_now = lambda spec: False
+        original = amo_proactive.quiet_now
+        amo_proactive.quiet_now = lambda spec: False
         try:
             asyncio.run(HumanCorePlugin._check_proactive_pending(fake))
         finally:
-            main.quiet_now = original
+            amo_proactive.quiet_now = original
         self.assertEqual(fake.sent[0][0], QQ_UMO)
 
 
 class RitualSkipTests(unittest.TestCase):
     def test_her_own_line_does_not_eat_the_lunch_greeting(self):
         fake = FakePlugin(rows={QQ_UMO: [
-            {"role": "bot", "content": "饭吃了没？", "created_at": main.now_ts() - 3600},
+            {"role": "bot", "content": "饭吃了没？", "created_at": now_ts() - 3600},
         ]})
         self.assertTrue(HumanCorePlugin._ritual_should_send(fake, [QQ_UMO], "lunch"))
 
     def test_his_greeting_still_skips(self):
         fake = FakePlugin(rows={QQ_UMO: [
-            {"role": "user", "content": "我中午吃过啦", "created_at": main.now_ts() - 3600},
+            {"role": "user", "content": "我中午吃过啦", "created_at": now_ts() - 3600},
         ]})
         self.assertFalse(HumanCorePlugin._ritual_should_send(fake, [QQ_UMO], "lunch"))
 
 
 class SickStatusTests(unittest.TestCase):
     def test_tired_is_not_a_sickness(self):
-        self.assertNotIn("疲惫", main.SICK_STATUSES)
-        self.assertIn("感冒", main.SICK_STATUSES)
-        self.assertIn("低烧", main.SICK_STATUSES)
+        self.assertNotIn("疲惫", SICK_STATUSES)
+        self.assertIn("感冒", SICK_STATUSES)
+        self.assertIn("低烧", SICK_STATUSES)
 
 
 if __name__ == "__main__":

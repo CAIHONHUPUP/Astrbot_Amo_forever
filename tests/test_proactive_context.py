@@ -19,7 +19,8 @@ import astrbot_stub  # noqa: E402
 
 astrbot_stub.install()
 
-from main import LLMService, other_platform_bot_lines  # noqa: E402
+from main import LLMService  # noqa: E402
+from amo_shared import other_platform_bot_lines  # noqa: E402
 
 QQ_UMO = "大肥鱼:FriendMessage:302578963"
 LARK_UMO = "lark:FriendMessage:ou_cec66ea605ad17f62632fb044bc5f6ac"

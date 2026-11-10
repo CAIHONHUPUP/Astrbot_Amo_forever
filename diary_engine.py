@@ -14,16 +14,21 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import os
 import re
 import shutil
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .diary_lines import DIARY_ENDING_HINTS, pick_hints
-except Exception:
-    from diary_lines import DIARY_ENDING_HINTS, pick_hints
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .diary_lines import DIARY_ENDING_HINTS, pick_hints
+    except ImportError:  # 直接按文件加载时
+        from diary_lines import DIARY_ENDING_HINTS, pick_hints
 
 # 上架规范：持久化数据只能写在 data/plugin_data/<plugin_name> 下，
 # 所以默认目录不再写死作者本机路径，留空由 resolve_dir() 落到插件数据目录。

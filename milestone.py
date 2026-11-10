@@ -21,7 +21,11 @@ _MAX_LINE_CHARS = 120
 
 def count_turns(messages: Iterable[Dict[str, Any]]) -> int:
     """一轮 = 他说的一句；机器人自己说的不算。"""
-    return sum(1 for row in messages or [] if str(row.get("role") or "") != "bot")
+    count = 0
+    for row in messages or []:
+        if str(row.get("role") or "") != "bot":
+            count += 1
+    return count
 
 
 def transcript(messages: Iterable[Dict[str, Any]], max_lines: int = 160) -> str:

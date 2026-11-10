@@ -12,10 +12,15 @@ LocationList 生成，见 tools/gen_city_ids.py）。纯标准库、无 astrbot 
 """
 
 from __future__ import annotations
-try:
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
-except ImportError:  # 直接按文件加载时
-    from amo_observability import note as _note_swallowed
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
 
 import json
 import os
@@ -35,11 +40,11 @@ _SPLIT = re.compile(r"[\s·•\-_,，、/\\|]+")
 
 _lock = threading.Lock()
 _table = None      # 省 -> 市 -> 名 -> ID
-_rows = []         # [(省, 市, 名, ID, 级别)]
-_groups = {}       # (省stem, 市stem) -> {名stem: (省, 市, 名, ID)}
-_provinces = []    # [(省stem, 省)]
-_cities = {}       # 市stem -> [(省, 市, 名, ID)]（地级市那一行）
-_names = {}        # 名stem -> [(省, 市, 名, ID, 级别)]
+_rows: list[tuple] = []         # [(省, 市, 名, ID, 级别)]
+_groups: dict[tuple, dict] = {}       # (省stem, 市stem) -> {名stem: (省, 市, 名, ID)}
+_provinces: list[tuple] = []    # [(省stem, 省)]
+_cities: dict[str, list] = {}       # 市stem -> [(省, 市, 名, ID)]（地级市那一行）
+_names: dict[str, list] = {}        # 名stem -> [(省, 市, 名, ID, 级别)]
 
 
 def _norm(text) -> str:

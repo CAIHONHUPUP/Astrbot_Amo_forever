@@ -1,26 +1,42 @@
 # -*- coding: utf-8 -*-
 """ApiMixin：从 main.py 拆出的 mixin，由 HumanCorePlugin 组合使用。"""
 from __future__ import annotations
-try:
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
-except ImportError:  # 直接按文件加载时
-    from amo_observability import note as _note_swallowed
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
 
 import asyncio
 import os
 import re
 from datetime import timedelta
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_shared import (
         DIALECT_REGIONS, MOOD_KEYS, NETWORK_RELATIONS, PLUGIN_NAME, RELATIONS, _diary_import_folder, _diary_parse_day, _diary_read, _diary_tree, _diary_write, _now, clamp, day_meta, logger, now_ts, summarize_token_usage, to_float, to_int, today_str, uniq, usage_cost, web_request,
     )
-except ImportError:  # 直接按文件加载时
-    from amo_shared import (
-        DIALECT_REGIONS, MOOD_KEYS, NETWORK_RELATIONS, PLUGIN_NAME, RELATIONS, _diary_import_folder, _diary_parse_day, _diary_read, _diary_tree, _diary_write, _now, clamp, day_meta, logger, now_ts, summarize_token_usage, to_float, to_int, today_str, uniq, usage_cost, web_request,
-    )
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_shared import (
+            DIALECT_REGIONS, MOOD_KEYS, NETWORK_RELATIONS, PLUGIN_NAME, RELATIONS, _diary_import_folder, _diary_parse_day, _diary_read, _diary_tree, _diary_write, _now, clamp, day_meta, logger, now_ts, summarize_token_usage, to_float, to_int, today_str, uniq, usage_cost, web_request,
+        )
+    except ImportError:  # 直接按文件加载时
+        from amo_shared import (
+            DIALECT_REGIONS, MOOD_KEYS, NETWORK_RELATIONS, PLUGIN_NAME, RELATIONS, _diary_import_folder, _diary_parse_day, _diary_read, _diary_tree, _diary_write, _now, clamp, day_meta, logger, now_ts, summarize_token_usage, to_float, to_int, today_str, uniq, usage_cost, web_request,
+        )
 
 
-class ApiMixin:
+if TYPE_CHECKING:
+    from .amo_types import PluginLike as _MixinBase
+else:  # 运行时用 object：协议里的声明不能进 MRO，否则会挡掉别的 mixin 的真实实现
+    _MixinBase = object
+
+
+class ApiMixin(_MixinBase):
     def _register_web_apis(self):
         prefixes = uniq([
             getattr(self, "name", None),

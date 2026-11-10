@@ -2,27 +2,43 @@
 """RuntimeMixin：从 main.py 拆出的 mixin，由 HumanCorePlugin 组合使用。"""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import asyncio
 import re
 import inspect
 from datetime import timedelta
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
-except ImportError:
-    from amo_observability import note as _note_swallowed
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_shared import (
         AstrMessageEvent, Comp, DIALECT_SAMPLES, SCHEDULE_VERSION, STYLE_HINTS, _DIARY_SHOW, _DIARY_WRITTEN, _city_block, _city_pick_spots, _city_travel_block, _diary_pick_hints, _ms_build_content, _ms_build_prompt, _ms_should_archive, _ms_transcript, _now, attribution_leak, filter, first_person_experience, is_weather_query, leak_tokens, logger, looks_like_ai_admission, looks_like_defensive_reply, looks_like_model_leak, now_ts, render_recent_block, strip_brushoff, strip_chat_format, to_float, to_int, today_str, truncate,
     )
-except ImportError:  # 直接按文件加载时
-    from amo_shared import (
-        AstrMessageEvent, Comp, DIALECT_SAMPLES, SCHEDULE_VERSION, STYLE_HINTS, _DIARY_SHOW, _DIARY_WRITTEN, _city_block, _city_pick_spots, _city_travel_block, _diary_pick_hints, _ms_build_content, _ms_build_prompt, _ms_should_archive, _ms_transcript, _now, attribution_leak, filter, first_person_experience, is_weather_query, leak_tokens, logger, looks_like_ai_admission, looks_like_defensive_reply, looks_like_model_leak, now_ts, render_recent_block, strip_brushoff, strip_chat_format, to_float, to_int, today_str, truncate,
-    )
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_shared import (
+            AstrMessageEvent, Comp, DIALECT_SAMPLES, SCHEDULE_VERSION, STYLE_HINTS, _DIARY_SHOW, _DIARY_WRITTEN, _city_block, _city_pick_spots, _city_travel_block, _diary_pick_hints, _ms_build_content, _ms_build_prompt, _ms_should_archive, _ms_transcript, _now, attribution_leak, filter, first_person_experience, is_weather_query, leak_tokens, logger, looks_like_ai_admission, looks_like_defensive_reply, looks_like_model_leak, now_ts, render_recent_block, strip_brushoff, strip_chat_format, to_float, to_int, today_str, truncate,
+        )
+    except ImportError:  # 直接按文件加载时
+        from amo_shared import (
+            AstrMessageEvent, Comp, DIALECT_SAMPLES, SCHEDULE_VERSION, STYLE_HINTS, _DIARY_SHOW, _DIARY_WRITTEN, _city_block, _city_pick_spots, _city_travel_block, _diary_pick_hints, _ms_build_content, _ms_build_prompt, _ms_should_archive, _ms_transcript, _now, attribution_leak, filter, first_person_experience, is_weather_query, leak_tokens, logger, looks_like_ai_admission, looks_like_defensive_reply, looks_like_model_leak, now_ts, render_recent_block, strip_brushoff, strip_chat_format, to_float, to_int, today_str, truncate,
+        )
 
 
-class RuntimeMixin:
+if TYPE_CHECKING:
+    from .amo_types import PluginLike as _MixinBase
+else:  # 运行时用 object：协议里的声明不能进 MRO，否则会挡掉别的 mixin 的真实实现
+    _MixinBase = object
+
+
+class RuntimeMixin(_MixinBase):
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
         try:

@@ -5,10 +5,15 @@
 """
 
 from __future__ import annotations
-try:
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
-except ImportError:  # 直接按文件加载时
-    from amo_observability import note as _note_swallowed
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
 
 import re
 
@@ -106,7 +111,7 @@ def _stem(text) -> str:
 
 def pick_destination(all_spots, rng, exclude_city="", count: int = 2):
     """从真实景区库里挑一个有景点的城市，返回 (城市名, 景点列表)。"""
-    groups = {}
+    groups: dict[str, list] = {}
     for row in (all_spots or []):
         if not isinstance(row, dict):
             continue

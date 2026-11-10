@@ -17,7 +17,7 @@ jobs:
       - name: Version check
         run: python tools/check_version.py
       - name: Type check
-        run: python -m mypy
+        run: python tools/mypy_check.py
       - name: Run tests
         run: coverage run -m pytest tests -q
       - name: Coverage floor

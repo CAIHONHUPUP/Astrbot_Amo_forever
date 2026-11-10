@@ -12,3 +12,8 @@ venv/
 
 .DS_Store
 Thumbs.db
+.test-tmp/
+pytest-cache-files-*/
+.coverage
+.coverage.json
+htmlcov/

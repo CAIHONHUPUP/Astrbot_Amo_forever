@@ -2,26 +2,42 @@
 """ConfigMixin：从 main.py 拆出的 mixin，由 HumanCorePlugin 组合使用。"""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import json
 import os
 from datetime import date
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
-except ImportError:
-    from amo_observability import note as _note_swallowed
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_shared import (
         HeartflowEngine, LEGACY_DEFAULT_ADMIN, SegmentEngine, logger, to_float, to_int,
     )
-except ImportError:  # 直接按文件加载时
-    from amo_shared import (
-        HeartflowEngine, LEGACY_DEFAULT_ADMIN, SegmentEngine, logger, to_float, to_int,
-    )
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_shared import (
+            HeartflowEngine, LEGACY_DEFAULT_ADMIN, SegmentEngine, logger, to_float, to_int,
+        )
+    except ImportError:  # 直接按文件加载时
+        from amo_shared import (
+            HeartflowEngine, LEGACY_DEFAULT_ADMIN, SegmentEngine, logger, to_float, to_int,
+        )
 
 
-class ConfigMixin:
+if TYPE_CHECKING:
+    from .amo_types import PluginLike as _MixinBase
+else:  # 运行时用 object：协议里的声明不能进 MRO，否则会挡掉别的 mixin 的真实实现
+    _MixinBase = object
+
+
+class ConfigMixin(_MixinBase):
     def cfg(self, key, default=None):
         try:
             value = self.config.get(key, default)

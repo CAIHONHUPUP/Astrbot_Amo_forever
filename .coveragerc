@@ -4,9 +4,11 @@ omit =
     tests/*
     tools/*
     __pycache__/*
+    .test-tmp/*
+    pytest-cache-files-*
 
 [report]
-# 先用 30% 兜底，后续只许往上调；main.py 是组装层，靠行为测试覆盖。
-fail_under = 30
+# 只许往上调：第三轮把 30% 抬到 40%（实测 41%+，留一点抖动余量）。
+fail_under = 40
 show_missing = True
 skip_covered = True

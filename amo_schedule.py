@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
 """ScheduleMixin：从 main.py 拆出的 mixin，由 HumanCorePlugin 组合使用。"""
 from __future__ import annotations
-try:
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
-except ImportError:  # 直接按文件加载时
-    from amo_observability import note as _note_swallowed
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
 
 import asyncio
 import os
@@ -12,17 +17,28 @@ import random
 import re
 import time
 from datetime import date, datetime, timedelta
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_shared import (
         PLUGIN_NAME, _DIARY_DEFAULT_DIR, _diary_build_prompt, _diary_resolve_dir, _diary_write, _now, evaluate_weather_alert, forecast_brief, logger, next_check_slot, now_ts, parse_clock, slot_key, to_float, today_str,
     )
-except ImportError:  # 直接按文件加载时
-    from amo_shared import (
-        PLUGIN_NAME, _DIARY_DEFAULT_DIR, _diary_build_prompt, _diary_resolve_dir, _diary_write, _now, evaluate_weather_alert, forecast_brief, logger, next_check_slot, now_ts, parse_clock, slot_key, to_float, today_str,
-    )
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_shared import (
+            PLUGIN_NAME, _DIARY_DEFAULT_DIR, _diary_build_prompt, _diary_resolve_dir, _diary_write, _now, evaluate_weather_alert, forecast_brief, logger, next_check_slot, now_ts, parse_clock, slot_key, to_float, today_str,
+        )
+    except ImportError:  # 直接按文件加载时
+        from amo_shared import (
+            PLUGIN_NAME, _DIARY_DEFAULT_DIR, _diary_build_prompt, _diary_resolve_dir, _diary_write, _now, evaluate_weather_alert, forecast_brief, logger, next_check_slot, now_ts, parse_clock, slot_key, to_float, today_str,
+        )
 
 
-class ScheduleMixin:
+if TYPE_CHECKING:
+    from .amo_types import PluginLike as _MixinBase
+else:  # 运行时用 object：协议里的声明不能进 MRO，否则会挡掉别的 mixin 的真实实现
+    _MixinBase = object
+
+
+class ScheduleMixin(_MixinBase):
     def _migrate_schedule_defaults(self):
         """5.1.1：位置/资产改为“人格优先、缺失随机”，清掉 5.1.0 自动写入的固定默认值。"""
         try:

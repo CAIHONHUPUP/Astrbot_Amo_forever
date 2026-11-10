@@ -17,10 +17,15 @@
 """
 
 from __future__ import annotations
-try:
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
-except ImportError:  # 直接按文件加载时
-    from amo_observability import note as _note_swallowed
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
 
 import asyncio
 import hashlib
@@ -30,17 +35,20 @@ import re
 from datetime import date, datetime, timedelta
 
 # 统一时区：日程的 generated_at / 跨天日期按配置时区算，不吃服务器本地时区。
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .clock import now as _clock_now, today as _clock_today
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from clock import now as _clock_now, today as _clock_today
+        from .clock import now as _clock_now, today as _clock_today
     except Exception:
-        def _clock_now(*args, **kwargs):
-            return datetime.now()
+        try:
+            from clock import now as _clock_now, today as _clock_today
+        except Exception:
+            def _clock_now(*args, **kwargs):
+                return datetime.now()
 
-        def _clock_today(*args, **kwargs):
-            return date.today()
+            def _clock_today(*args, **kwargs):
+                return date.today()
 
 MOOD_KEYS = ("开心", "平静", "郁闷", "生气", "暴躁", "委屈", "疲惫", "焦虑", "兴奋", "依恋")
 MOOD_BASE = {

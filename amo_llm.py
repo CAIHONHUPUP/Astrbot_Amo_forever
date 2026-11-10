@@ -1,24 +1,40 @@
 # -*- coding: utf-8 -*-
 """LlmMixin：从 main.py 拆出的 mixin，由 HumanCorePlugin 组合使用。"""
 from __future__ import annotations
-try:
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
-except ImportError:  # 直接按文件加载时
-    from amo_observability import note as _note_swallowed
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
 
 import asyncio
 import re
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_shared import (
         AstrMessageEvent, DIALECT_SAMPLES, LEGACY_MEMORY_PLUGIN, MemoryHub, STYLE_HINTS, TextPart, extract_persona_name, filter, logger, now_ts, to_float, to_int, truncate,
     )
-except ImportError:  # 直接按文件加载时
-    from amo_shared import (
-        AstrMessageEvent, DIALECT_SAMPLES, LEGACY_MEMORY_PLUGIN, MemoryHub, STYLE_HINTS, TextPart, extract_persona_name, filter, logger, now_ts, to_float, to_int, truncate,
-    )
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_shared import (
+            AstrMessageEvent, DIALECT_SAMPLES, LEGACY_MEMORY_PLUGIN, MemoryHub, STYLE_HINTS, TextPart, extract_persona_name, filter, logger, now_ts, to_float, to_int, truncate,
+        )
+    except ImportError:  # 直接按文件加载时
+        from amo_shared import (
+            AstrMessageEvent, DIALECT_SAMPLES, LEGACY_MEMORY_PLUGIN, MemoryHub, STYLE_HINTS, TextPart, extract_persona_name, filter, logger, now_ts, to_float, to_int, truncate,
+        )
 
 
-class LlmMixin:
+if TYPE_CHECKING:
+    from .amo_types import PluginLike as _MixinBase
+else:  # 运行时用 object：协议里的声明不能进 MRO，否则会挡掉别的 mixin 的真实实现
+    _MixinBase = object
+
+
+class LlmMixin(_MixinBase):
     async def _persona_name_for(self, umo=""):
         """读取当前会话的人格名；读不到时返回空字符串。"""
         if not self.cfg_bool("use_persona_name", True):

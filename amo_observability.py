@@ -8,15 +8,20 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import threading
 import time
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from astrbot.api import logger
-except Exception:  # pragma: no cover - 纯单测环境
-    import logging
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from astrbot.api import logger
+    except Exception:  # pragma: no cover - 纯单测环境
+        import logging
 
-    logger = logging.getLogger("amo_observability")
+        logger = logging.getLogger("amo_observability")
 
 _lock = threading.Lock()
 _counts: dict[str, int] = {}

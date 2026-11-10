@@ -15,10 +15,15 @@
 """
 
 from __future__ import annotations
-try:
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
-except ImportError:  # 直接按文件加载时
-    from amo_observability import note as _note_swallowed
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
 
 import asyncio
 import re
@@ -109,7 +114,7 @@ def render_recent_block(rows, self_name="你", limit=8):
 
 # ---------------------------------------------------------------- 缓冲
 
-_WARN_AT = {}
+_WARN_AT: dict[str, float] = {}
 
 
 def _warn_once(logger, key, message, gap=600.0):
@@ -223,7 +228,7 @@ class MemoryProvider:
 
     name = "provider"
     priority = 50
-    caps = frozenset()
+    caps: frozenset = frozenset()
 
     def __init__(self, runtime):
         self.rt = runtime

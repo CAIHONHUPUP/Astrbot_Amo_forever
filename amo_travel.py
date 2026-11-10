@@ -2,26 +2,42 @@
 """TravelMixin：从 main.py 拆出的 mixin，由 HumanCorePlugin 组合使用。"""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import random
 import re
 from datetime import date, timedelta
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
-except ImportError:
-    from amo_observability import note as _note_swallowed
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_shared import (
         _CITY_DEFAULT, _city_detect, _city_pick_spots, _follow_block, _follow_invite, _follow_refuse, _now, _wander_agree, _wander_ask_limit, _wander_assess, _wander_follow_agree_text, _wander_offer_block, _wander_pick, _wander_plan_text, _wander_question, _wander_refuse, _wander_solo_agree_text, _wander_solo_block, _wander_solo_refuse_text, _wander_trip_days, _wander_want, logger, now_ts, to_float, today_str,
     )
-except ImportError:  # 直接按文件加载时
-    from amo_shared import (
-        _CITY_DEFAULT, _city_detect, _city_pick_spots, _follow_block, _follow_invite, _follow_refuse, _now, _wander_agree, _wander_ask_limit, _wander_assess, _wander_follow_agree_text, _wander_offer_block, _wander_pick, _wander_plan_text, _wander_question, _wander_refuse, _wander_solo_agree_text, _wander_solo_block, _wander_solo_refuse_text, _wander_trip_days, _wander_want, logger, now_ts, to_float, today_str,
-    )
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_shared import (
+            _CITY_DEFAULT, _city_detect, _city_pick_spots, _follow_block, _follow_invite, _follow_refuse, _now, _wander_agree, _wander_ask_limit, _wander_assess, _wander_follow_agree_text, _wander_offer_block, _wander_pick, _wander_plan_text, _wander_question, _wander_refuse, _wander_solo_agree_text, _wander_solo_block, _wander_solo_refuse_text, _wander_trip_days, _wander_want, logger, now_ts, to_float, today_str,
+        )
+    except ImportError:  # 直接按文件加载时
+        from amo_shared import (
+            _CITY_DEFAULT, _city_detect, _city_pick_spots, _follow_block, _follow_invite, _follow_refuse, _now, _wander_agree, _wander_ask_limit, _wander_assess, _wander_follow_agree_text, _wander_offer_block, _wander_pick, _wander_plan_text, _wander_question, _wander_refuse, _wander_solo_agree_text, _wander_solo_block, _wander_solo_refuse_text, _wander_trip_days, _wander_want, logger, now_ts, to_float, today_str,
+        )
 
 
-class TravelMixin:
+if TYPE_CHECKING:
+    from .amo_types import PluginLike as _MixinBase
+else:  # 运行时用 object：协议里的声明不能进 MRO，否则会挡掉别的 mixin 的真实实现
+    _MixinBase = object
+
+
+class TravelMixin(_MixinBase):
     def _city_module(self):
         """离线城市表模块（懒加载；缺失时返回 None，天气按原样走）。"""
         try:

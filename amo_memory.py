@@ -2,33 +2,52 @@
 """MemoryMixin：从 main.py 拆出的 mixin，由 HumanCorePlugin 组合使用。"""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import asyncio
 import json
 import os
 import re
 import sqlite3
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
-except ImportError:
-    from amo_observability import note as _note_swallowed
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .clock import from_timestamp as _clock_from_ts
-except ImportError:
-    from clock import from_timestamp as _clock_from_ts
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .clock import from_timestamp as _clock_from_ts
+    except ImportError:  # 直接按文件加载时
+        from clock import from_timestamp as _clock_from_ts
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_shared import (
         INTERNAL_RELATION_NODES, PLUGIN_NAME, _looks_like_time_query, _now, _render_time_block, logger, now_ts, overlap, to_float, to_int, tokens,
     )
-except ImportError:  # 直接按文件加载时
-    from amo_shared import (
-        INTERNAL_RELATION_NODES, PLUGIN_NAME, _looks_like_time_query, _now, _render_time_block, logger, now_ts, overlap, to_float, to_int, tokens,
-    )
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_shared import (
+            INTERNAL_RELATION_NODES, PLUGIN_NAME, _looks_like_time_query, _now, _render_time_block, logger, now_ts, overlap, to_float, to_int, tokens,
+        )
+    except ImportError:  # 直接按文件加载时
+        from amo_shared import (
+            INTERNAL_RELATION_NODES, PLUGIN_NAME, _looks_like_time_query, _now, _render_time_block, logger, now_ts, overlap, to_float, to_int, tokens,
+        )
 
 
-class MemoryMixin:
+if TYPE_CHECKING:
+    from .amo_types import PluginLike as _MixinBase
+else:  # 运行时用 object：协议里的声明不能进 MRO，否则会挡掉别的 mixin 的真实实现
+    _MixinBase = object
+
+
+class MemoryMixin(_MixinBase):
     @staticmethod
     def _memcomp_db_path(plugin):
         service = getattr(plugin, "service", None)

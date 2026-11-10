@@ -90,12 +90,8 @@ class WeatherMethodScopeTests(unittest.TestCase):
 
     def setUp(self) -> None:
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        with open(os.path.join(root, "main.py"), encoding="utf-8") as fh:
-            source = fh.read()
-        start = source.index("class HumanState:")
-        end = source.index("class LLMService:")
-        self.state_source = source[start:end]
-        self.plugin_source = source[end:]
+        with open(os.path.join(root, "amo_human_state.py"), encoding="utf-8") as fh:
+            self.state_source = fh.read()
 
     def test_state_does_not_call_plugin_only_resolvers(self) -> None:
         self.assertNotIn("self._city_lookup(", self.state_source)

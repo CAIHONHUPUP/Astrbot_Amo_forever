@@ -1,25 +1,41 @@
 # -*- coding: utf-8 -*-
 """ProactiveMixin：从 main.py 拆出的 mixin，由 HumanCorePlugin 组合使用。"""
 from __future__ import annotations
-try:
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
-except ImportError:  # 直接按文件加载时
-    from amo_observability import note as _note_swallowed
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
 
 import random
 import re
 from datetime import timedelta
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_shared import (
         _greeting_targets, _now, _within_minutes, in_minute_range, logger, minutes_now, now_ts, parse_hhmm, quiet_now, to_float, to_int, today_str,
     )
-except ImportError:  # 直接按文件加载时
-    from amo_shared import (
-        _greeting_targets, _now, _within_minutes, in_minute_range, logger, minutes_now, now_ts, parse_hhmm, quiet_now, to_float, to_int, today_str,
-    )
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_shared import (
+            _greeting_targets, _now, _within_minutes, in_minute_range, logger, minutes_now, now_ts, parse_hhmm, quiet_now, to_float, to_int, today_str,
+        )
+    except ImportError:  # 直接按文件加载时
+        from amo_shared import (
+            _greeting_targets, _now, _within_minutes, in_minute_range, logger, minutes_now, now_ts, parse_hhmm, quiet_now, to_float, to_int, today_str,
+        )
 
 
-class ProactiveMixin:
+if TYPE_CHECKING:
+    from .amo_types import PluginLike as _MixinBase
+else:  # 运行时用 object：协议里的声明不能进 MRO，否则会挡掉别的 mixin 的真实实现
+    _MixinBase = object
+
+
+class ProactiveMixin(_MixinBase):
     def _migrate_proactive_timing(self):
         try:
             if self.db.kv_get("proactive_timing_migrated", False):

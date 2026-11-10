@@ -4,10 +4,15 @@
 从 main.py 拆出来，main 与四个 mixin 都从这里取，避免循环 import。
 """
 from __future__ import annotations
-try:
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
-except ImportError:  # 直接按文件加载时
-    from amo_observability import note as _note_swallowed
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
 
 import hashlib
 import json
@@ -17,189 +22,236 @@ import re
 import sqlite3
 import time
 from datetime import date, datetime, timedelta, timezone
+from typing import Any, Iterable
 
 # 统一时区：容器/服务器常在 UTC 跑，直接取服务器本地时间会把北京时间 10 点算成凌晨 2 点
 # （「大晚上的」就是这么来的）。clock.now() 返回目标时区下的 naive 本地时间，
 # 和原来的用法完全兼容。
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .clock import (
         now as _clock_now,
         from_timestamp as _clock_from_ts,
         configure as _clock_configure,
         current_name as _clock_name,
     )
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from clock import (
+        from .clock import (
             now as _clock_now,
             from_timestamp as _clock_from_ts,
             configure as _clock_configure,
             current_name as _clock_name,
         )
     except Exception:
-        def _clock_now(*args, **kwargs):
-            return datetime.now()
+        try:
+            from clock import (
+                now as _clock_now,
+                from_timestamp as _clock_from_ts,
+                configure as _clock_configure,
+                current_name as _clock_name,
+            )
+        except Exception:
+            def _clock_now(*args, **kwargs):
+                return datetime.now()
 
-        def _clock_from_ts(ts, *args, **kwargs):
-            return datetime.fromtimestamp(float(ts or 0))
+            def _clock_from_ts(ts, *args, **kwargs):
+                return datetime.fromtimestamp(float(ts or 0))
 
-        def _clock_configure(*args, **kwargs):
-            return ""
+            def _clock_configure(*args, **kwargs):
+                return ""
 
-        def _clock_name(*args, **kwargs):
-            return ""
+            def _clock_name(*args, **kwargs):
+                return ""
 
 
 
-def _now():
+def _now() -> datetime:
     """目标时区下的「现在」（naive，便于和原代码里 datetime 运算混用）。"""
     return _clock_now()
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     import astrbot.api.message_components as Comp
-except Exception:
-    Comp = None
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        import astrbot.api.message_components as Comp
+    except Exception:
+        Comp = None
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from astrbot.api.event import MessageChain
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from astrbot.core.message.message_event_result import MessageChain
+        from astrbot.api.event import MessageChain
     except Exception:
-        MessageChain = None
+        try:
+            from astrbot.core.message.message_event_result import MessageChain
+        except Exception:
+            MessageChain = None
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from astrbot.api.web import request as web_request
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from quart import request as web_request
+        from astrbot.api.web import request as web_request
     except Exception:
-        web_request = None
+        try:
+            from quart import request as web_request
+        except Exception:
+            web_request = None
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from astrbot.core.agent.message import TextPart
-except Exception:
-    TextPart = None
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from astrbot.core.agent.message import TextPart
+    except Exception:
+        TextPart = None
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .heartflow_engine import HeartflowEngine
     from .segment_engine import SegmentEngine
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from heartflow_engine import HeartflowEngine
-        from segment_engine import SegmentEngine
+        from .heartflow_engine import HeartflowEngine
+        from .segment_engine import SegmentEngine
     except Exception:
-        HeartflowEngine = None
-        SegmentEngine = None
         try:
-            import importlib.util
-            _engine_dir = os.path.dirname(os.path.abspath(__file__))
-            def _load_engine(module_name, class_name):
-                _spec = importlib.util.spec_from_file_location(
-                    "amo_" + module_name,
-                    os.path.join(_engine_dir, module_name + ".py"),
-                )
-                _module = importlib.util.module_from_spec(_spec)
-                _spec.loader.exec_module(_module)
-                return getattr(_module, class_name)
-            HeartflowEngine = _load_engine("heartflow_engine", "HeartflowEngine")
-            SegmentEngine = _load_engine("segment_engine", "SegmentEngine")
-        except Exception as _engine_exc:
-            logger.error("[amo] 内置心流/分段模块加载失败: %s" % _engine_exc)
+            from heartflow_engine import HeartflowEngine
+            from segment_engine import SegmentEngine
+        except Exception:
+            HeartflowEngine = None
+            SegmentEngine = None
+            try:
+                import importlib.util
+                _engine_dir = os.path.dirname(os.path.abspath(__file__))
+                def _load_engine(module_name, class_name):
+                    _spec = importlib.util.spec_from_file_location(
+                        "amo_" + module_name,
+                        os.path.join(_engine_dir, module_name + ".py"),
+                    )
+                    _module = importlib.util.module_from_spec(_spec)
+                    _spec.loader.exec_module(_module)
+                    return getattr(_module, class_name)
+                HeartflowEngine = _load_engine("heartflow_engine", "HeartflowEngine")
+                SegmentEngine = _load_engine("segment_engine", "SegmentEngine")
+            except Exception as _engine_exc:
+                logger.error("[amo] 内置心流/分段模块加载失败: %s" % _engine_exc)
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .weather_alert import evaluate as evaluate_weather_alert, parse_daily as parse_weather_daily, next_check_slot, parse_clock, slot_key, is_weather_query, forecast_brief
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from weather_alert import evaluate as evaluate_weather_alert, parse_daily as parse_weather_daily, next_check_slot, parse_clock, slot_key, is_weather_query, forecast_brief
+        from .weather_alert import evaluate as evaluate_weather_alert, parse_daily as parse_weather_daily, next_check_slot, parse_clock, slot_key, is_weather_query, forecast_brief
     except Exception:
-        def evaluate_weather_alert(*args, **kwargs):
-            return ""
-        def parse_weather_daily(*args, **kwargs):
-            return []
-        def next_check_slot(*args, **kwargs):
-            return ""
-        def parse_clock(*args, **kwargs):
-            return 0
-        def slot_key(today, slot):
-            return "%s|%s" % (today, slot)
-        def is_weather_query(*args, **kwargs):
-            return False
-        def forecast_brief(*args, **kwargs):
-            return ""
+        try:
+            from weather_alert import evaluate as evaluate_weather_alert, parse_daily as parse_weather_daily, next_check_slot, parse_clock, slot_key, is_weather_query, forecast_brief
+        except Exception:
+            def evaluate_weather_alert(*args, **kwargs):
+                return ""
+            def parse_weather_daily(*args, **kwargs):
+                return []
+            def next_check_slot(*args, **kwargs):
+                return ""
+            def parse_clock(*args, **kwargs):
+                return 0
+            def slot_key(today, slot):
+                return "%s|%s" % (today, slot)
+            def is_weather_query(*args, **kwargs):
+                return False
+            def forecast_brief(*args, **kwargs):
+                return ""
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .gift_engine import GiftEngine
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from gift_engine import GiftEngine
+        from .gift_engine import GiftEngine
     except Exception:
-        GiftEngine = None
+        try:
+            from gift_engine import GiftEngine
+        except Exception:
+            GiftEngine = None
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .proactive_guard import analyze_rows as _pg_analyze_rows, compose_task as _pg_compose_task, near_duplicate as _pg_near_duplicate
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from proactive_guard import analyze_rows as _pg_analyze_rows, compose_task as _pg_compose_task, near_duplicate as _pg_near_duplicate
+        from .proactive_guard import analyze_rows as _pg_analyze_rows, compose_task as _pg_compose_task, near_duplicate as _pg_near_duplicate
     except Exception:
-        _pg_analyze_rows = _pg_compose_task = _pg_near_duplicate = None
+        try:
+            from proactive_guard import analyze_rows as _pg_analyze_rows, compose_task as _pg_compose_task, near_duplicate as _pg_near_duplicate
+        except Exception:
+            _pg_analyze_rows = _pg_compose_task = _pg_near_duplicate = None
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .time_recall import looks_like_time_query as _looks_like_time_query, render_time_block as _render_time_block
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from time_recall import looks_like_time_query as _looks_like_time_query, render_time_block as _render_time_block
+        from .time_recall import looks_like_time_query as _looks_like_time_query, render_time_block as _render_time_block
     except Exception:
-        def _looks_like_time_query(*args, **kwargs):
-            return False
+        try:
+            from time_recall import looks_like_time_query as _looks_like_time_query, render_time_block as _render_time_block
+        except Exception:
+            def _looks_like_time_query(*args, **kwargs):
+                return False
 
-        def _render_time_block(*args, **kwargs):
-            return ""
+            def _render_time_block(*args, **kwargs):
+                return ""
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .greet_route import greeting_targets as _greeting_targets, within_minutes as _within_minutes
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from greet_route import greeting_targets as _greeting_targets, within_minutes as _within_minutes
+        from .greet_route import greeting_targets as _greeting_targets, within_minutes as _within_minutes
     except Exception:
-        logger.warning("[amo] greet_route 载入失败，问候平台随机功能不可用")
+        try:
+            from greet_route import greeting_targets as _greeting_targets, within_minutes as _within_minutes
+        except Exception:
+            logger.warning("[amo] greet_route 载入失败，问候平台随机功能不可用")
 
-        def _greeting_targets(candidates, primary="", randomize=True, rng=None):
-            items = []
-            for umo in list(candidates or []) + [primary]:
-                value = str(umo or "")
-                if value and value not in items:
-                    items.append(value)
-            return items if randomize else ([primary] if primary else [])
+            def _greeting_targets(candidates, primary="", randomize=True, rng=None):
+                items = []
+                for umo in list(candidates or []) + [primary]:
+                    value = str(umo or "")
+                    if value and value not in items:
+                        items.append(value)
+                return items if randomize else ([primary] if primary else [])
 
-        def _within_minutes(last_ts, now, minutes):
-            return False
+            def _within_minutes(last_ts, now, minutes):
+                return False
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .diary_lines import (
         DIARY_WRITTEN_REPLIES as _DIARY_WRITTEN,
         DIARY_SHOW_REPLIES as _DIARY_SHOW,
         pick_hints as _diary_pick_hints,
     )
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from diary_lines import (
+        from .diary_lines import (
             DIARY_WRITTEN_REPLIES as _DIARY_WRITTEN,
             DIARY_SHOW_REPLIES as _DIARY_SHOW,
             pick_hints as _diary_pick_hints,
         )
     except Exception:
-        _DIARY_WRITTEN = ["写了", "写了，不给你看", "写了，秘密"]
-        _DIARY_SHOW = ["不行，你不能偷看我的日记哦", "那是我的日记，才不给你看", "你想得美"]
+        try:
+            from diary_lines import (
+                DIARY_WRITTEN_REPLIES as _DIARY_WRITTEN,
+                DIARY_SHOW_REPLIES as _DIARY_SHOW,
+                pick_hints as _diary_pick_hints,
+            )
+        except Exception:
+            _DIARY_WRITTEN = ["写了", "写了，不给你看", "写了，秘密"]
+            _DIARY_SHOW = ["不行，你不能偷看我的日记哦", "那是我的日记，才不给你看", "你想得美"]
 
-        def _diary_pick_hints(items, count=8, seed=""):
-            return list(items)[:count]
+            def _diary_pick_hints(items, count=8, seed=""):
+                return list(items)[:count]
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .diary_engine import (
         DEFAULT_DIR as _DIARY_DEFAULT_DIR,
         resolve_dir as _diary_resolve_dir,
@@ -210,9 +262,9 @@ try:
         read_diary as _diary_read,
         list_tree as _diary_tree,
     )
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from diary_engine import (
+        from .diary_engine import (
             DEFAULT_DIR as _DIARY_DEFAULT_DIR,
             resolve_dir as _diary_resolve_dir,
             parse_day as _diary_parse_day,
@@ -223,39 +275,59 @@ except Exception:
             list_tree as _diary_tree,
         )
     except Exception:
-        _DIARY_DEFAULT_DIR = ""
-        _diary_resolve_dir = None
-        _diary_parse_day = _diary_write = _diary_read = _diary_tree = _diary_import_folder = None
+        try:
+            from diary_engine import (
+                DEFAULT_DIR as _DIARY_DEFAULT_DIR,
+                resolve_dir as _diary_resolve_dir,
+                parse_day as _diary_parse_day,
+                build_prompt as _diary_build_prompt,
+                import_folder as _diary_import_folder,
+                write_diary as _diary_write,
+                read_diary as _diary_read,
+                list_tree as _diary_tree,
+            )
+        except Exception:
+            _DIARY_DEFAULT_DIR = ""
+            _diary_resolve_dir = None
+            _diary_parse_day = _diary_write = _diary_read = _diary_tree = _diary_import_folder = None
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .milestone import (
         should_archive as _ms_should_archive,
         transcript as _ms_transcript,
         build_prompt as _ms_build_prompt,
         build_content as _ms_build_content,
     )
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from milestone import (
+        from .milestone import (
             should_archive as _ms_should_archive,
             transcript as _ms_transcript,
             build_prompt as _ms_build_prompt,
             build_content as _ms_build_content,
         )
     except Exception:
-        def _ms_should_archive(*args, **kwargs):
-            return False
+        try:
+            from milestone import (
+                should_archive as _ms_should_archive,
+                transcript as _ms_transcript,
+                build_prompt as _ms_build_prompt,
+                build_content as _ms_build_content,
+            )
+        except Exception:
+            def _ms_should_archive(*args, **kwargs):
+                return False
 
-        def _ms_transcript(*args, **kwargs):
-            return ""
+            def _ms_transcript(*args, **kwargs):
+                return ""
 
-        def _ms_build_prompt(*args, **kwargs):
-            return ""
+            def _ms_build_prompt(*args, **kwargs):
+                return ""
 
-        def _ms_build_content(*args, **kwargs):
-            return ""
+            def _ms_build_content(*args, **kwargs):
+                return ""
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .wander import (
         assess as _wander_assess,
         ask_limit as _wander_ask_limit,
@@ -276,9 +348,9 @@ try:
         trip_days as _wander_trip_days,
         want_travel as _wander_want,
     )
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from wander import (
+        from .wander import (
             assess as _wander_assess,
             ask_limit as _wander_ask_limit,
             detect_agreement as _wander_agree,
@@ -299,94 +371,128 @@ except Exception:
             want_travel as _wander_want,
         )
     except Exception:
-        def _wander_assess(*args, **kwargs):
-            return (False, False)
+        try:
+            from wander import (
+                assess as _wander_assess,
+                ask_limit as _wander_ask_limit,
+                detect_agreement as _wander_agree,
+                detect_question as _wander_question,
+                detect_follow_invite as _follow_invite,
+                detect_follow_refuse as _follow_refuse,
+                detect_refusal as _wander_refuse,
+                follow_agree_text as _wander_follow_agree_text,
+                follow_block as _follow_block,
+                offer_block as _wander_offer_block,
+                offer_text as _wander_offer_text,
+                pick_destination as _wander_pick,
+                plan_text as _wander_plan_text,
+                solo_agree_text as _wander_solo_agree_text,
+                solo_block as _wander_solo_block,
+                solo_refuse_text as _wander_solo_refuse_text,
+                trip_days as _wander_trip_days,
+                want_travel as _wander_want,
+            )
+        except Exception:
+            def _wander_assess(*args, **kwargs):
+                return (False, False)
 
-        def _wander_agree(*args, **kwargs):
-            return False
+            def _wander_agree(*args, **kwargs):
+                return False
 
-        def _wander_question(*args, **kwargs):
-            return False
+            def _wander_question(*args, **kwargs):
+                return False
 
-        def _wander_refuse(*args, **kwargs):
-            return False
+            def _wander_refuse(*args, **kwargs):
+                return False
 
-        def _follow_block(*args, **kwargs):
-            return ""
+            def _follow_block(*args, **kwargs):
+                return ""
 
-        def _follow_invite(*args, **kwargs):
-            return False
+            def _follow_invite(*args, **kwargs):
+                return False
 
-        def _follow_refuse(*args, **kwargs):
-            return False
+            def _follow_refuse(*args, **kwargs):
+                return False
 
-        def _wander_follow_agree_text(*args, **kwargs):
-            return ""
+            def _wander_follow_agree_text(*args, **kwargs):
+                return ""
 
-        def _wander_offer_block(*args, **kwargs):
-            return ""
+            def _wander_offer_block(*args, **kwargs):
+                return ""
 
-        def _wander_offer_text(*args, **kwargs):
-            return ""
+            def _wander_offer_text(*args, **kwargs):
+                return ""
 
-        def _wander_pick(*args, **kwargs):
-            return ("", [])
+            def _wander_pick(*args, **kwargs):
+                return ("", [])
 
-        def _wander_plan_text(*args, **kwargs):
-            return ""
+            def _wander_plan_text(*args, **kwargs):
+                return ""
 
-        def _wander_ask_limit(*args, **kwargs):
-            return 1
+            def _wander_ask_limit(*args, **kwargs):
+                return 1
 
-        def _wander_solo_agree_text(*args, **kwargs):
-            return ""
+            def _wander_solo_agree_text(*args, **kwargs):
+                return ""
 
-        def _wander_solo_block(*args, **kwargs):
-            return ""
+            def _wander_solo_block(*args, **kwargs):
+                return ""
 
-        def _wander_solo_refuse_text(*args, **kwargs):
-            return ""
+            def _wander_solo_refuse_text(*args, **kwargs):
+                return ""
 
-        def _wander_trip_days(*args, **kwargs):
-            return 1
+            def _wander_trip_days(*args, **kwargs):
+                return 1
 
-        def _wander_want(*args, **kwargs):
-            return False
+            def _wander_want(*args, **kwargs):
+                return False
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .memory_hooks import MemoryHub, render_recent_block
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from memory_hooks import MemoryHub, render_recent_block
+        from .memory_hooks import MemoryHub, render_recent_block
     except Exception:
-        MemoryHub = None
-        render_recent_block = None
+        try:
+            from memory_hooks import MemoryHub, render_recent_block
+        except Exception:
+            MemoryHub = None
+            render_recent_block = None
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .attribution import first_person_experience, attribution_leak, leak_tokens
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from attribution import first_person_experience, attribution_leak, leak_tokens
+        from .attribution import first_person_experience, attribution_leak, leak_tokens
     except Exception:
-        first_person_experience = attribution_leak = leak_tokens = None
+        try:
+            from attribution import first_person_experience, attribution_leak, leak_tokens
+        except Exception:
+            first_person_experience = attribution_leak = leak_tokens = None
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .brushoff import strip_brushoff
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from brushoff import strip_brushoff
+        from .brushoff import strip_brushoff
     except Exception:
-        strip_brushoff = None
+        try:
+            from brushoff import strip_brushoff
+        except Exception:
+            strip_brushoff = None
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .relation_learn import parse_relations
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from relation_learn import parse_relations
+        from .relation_learn import parse_relations
     except Exception:
-        parse_relations = None
+        try:
+            from relation_learn import parse_relations
+        except Exception:
+            parse_relations = None
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .city_follow import (
         DEFAULT_CITY as _CITY_DEFAULT,
         detect_city as _city_detect,
@@ -397,9 +503,9 @@ try:
         travel_to_events as _city_travel_to_events,
         pick_spots as _city_pick_spots,
     )
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from city_follow import (
+        from .city_follow import (
             DEFAULT_CITY as _CITY_DEFAULT,
             detect_city as _city_detect,
             compose_block as _city_block,
@@ -410,62 +516,83 @@ except Exception:
             pick_spots as _city_pick_spots,
         )
     except Exception:
-        _CITY_DEFAULT = "东莞"
+        try:
+            from city_follow import (
+                DEFAULT_CITY as _CITY_DEFAULT,
+                detect_city as _city_detect,
+                compose_block as _city_block,
+                travel_block as _city_travel_block,
+                travel_events as _city_travel_events,
+                travel_action as _city_travel_action,
+                travel_to_events as _city_travel_to_events,
+                pick_spots as _city_pick_spots,
+            )
+        except Exception:
+            _CITY_DEFAULT = "东莞"
 
-        def _city_pick_spots(*args, **kwargs):
-            return []
+            def _city_pick_spots(*args, **kwargs):
+                return []
 
-        def _city_travel_to_events(*args, **kwargs):
-            return []
+            def _city_travel_to_events(*args, **kwargs):
+                return []
 
-        def _city_travel_action(*args, **kwargs):
-            return "none"
+            def _city_travel_action(*args, **kwargs):
+                return "none"
 
-        def _city_detect(*args, **kwargs):
-            return None
+            def _city_detect(*args, **kwargs):
+                return None
 
-        def _city_block(*args, **kwargs):
-            return ""
+            def _city_block(*args, **kwargs):
+                return ""
 
-        def _city_travel_block(*args, **kwargs):
-            return ""
+            def _city_travel_block(*args, **kwargs):
+                return ""
 
-        def _city_travel_events(*args, **kwargs):
-            return []
+            def _city_travel_events(*args, **kwargs):
+                return []
 
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .relation_graph import rank_edges as _rank_edges
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from relation_graph import rank_edges as _rank_edges
-    except Exception:
-        _rank_edges = None
-
-try:
-    from .relation_sediment import plan_edges as plan_relation_edges
-except Exception:
-    try:
-        from relation_sediment import plan_edges as plan_relation_edges
-    except Exception:
-        plan_relation_edges = None
-
-try:
-    from .schedule_engine import ScheduleEngine
-except Exception:
-    try:
-        from schedule_engine import ScheduleEngine
+        from .relation_graph import rank_edges as _rank_edges
     except Exception:
         try:
-            import importlib.util as _importlib_util
-            _schedule_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schedule_engine.py")
-            _schedule_spec = _importlib_util.spec_from_file_location("amo_schedule_engine", _schedule_path)
-            _schedule_module = _importlib_util.module_from_spec(_schedule_spec)
-            _schedule_spec.loader.exec_module(_schedule_module)
-            ScheduleEngine = getattr(_schedule_module, "ScheduleEngine")
-        except Exception as _schedule_exc:
-            ScheduleEngine = None
-            logger.error("[amo] 日程引擎加载失败: %s" % _schedule_exc)
+            from relation_graph import rank_edges as _rank_edges
+        except Exception:
+            _rank_edges = None
+
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
+    from .relation_sediment import plan_edges as plan_relation_edges
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .relation_sediment import plan_edges as plan_relation_edges
+    except Exception:
+        try:
+            from relation_sediment import plan_edges as plan_relation_edges
+        except Exception:
+            plan_relation_edges = None
+
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
+    from .schedule_engine import ScheduleEngine
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .schedule_engine import ScheduleEngine
+    except Exception:
+        try:
+            from schedule_engine import ScheduleEngine
+        except Exception:
+            try:
+                import importlib.util as _importlib_util
+                _schedule_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schedule_engine.py")
+                _schedule_spec = _importlib_util.spec_from_file_location("amo_schedule_engine", _schedule_path)
+                _schedule_module = _importlib_util.module_from_spec(_schedule_spec)
+                _schedule_spec.loader.exec_module(_schedule_module)
+                ScheduleEngine = getattr(_schedule_module, "ScheduleEngine")
+            except Exception as _schedule_exc:
+                ScheduleEngine = None
+                logger.error("[amo] 日程引擎加载失败: %s" % _schedule_exc)
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
@@ -497,7 +624,7 @@ CITY_DIALECT_RULES = (
 )
 
 
-def dialect_for_city(city):
+def dialect_for_city(city: Any) -> str:
     text = str(city or "")
     if not text:
         return ""
@@ -590,7 +717,7 @@ INTERNAL_RELATION_NODES = ("bot", "self")
 # 基础工具
 # ---------------------------------------------------------------------------
 
-def now_ts():
+def now_ts() -> float:
     return time.time()
 
 
@@ -637,7 +764,7 @@ SOLAR_TERMS = {
 }
 
 
-def day_meta(day=None):
+def day_meta(day: Any = None) -> dict:
     """返回某天的节日、节气和是否休息日。"""
     try:
         target = date.fromisoformat(str(day)) if day else _now().date()
@@ -675,7 +802,7 @@ def day_meta(day=None):
         "label": label,
     }
 
-def lark_quote_kwargs(is_private, message_id, sender_id, chat_id, quote):
+def lark_quote_kwargs(is_private: bool, message_id: Any, sender_id: Any, chat_id: Any, quote: Any) -> dict:
     """飞书发送参数：决定走「引用回复」还是普通发送。
 
     AstrBot 的飞书适配器在 `LarkMessageEvent.send()` 里固定传
@@ -706,11 +833,11 @@ def lark_quote_kwargs(is_private, message_id, sender_id, chat_id, quote):
     return {}
 
 
-def today_str():
+def today_str() -> str:
     return _now().date().isoformat()
 
 
-def other_platform_bot_lines(rows, umo, limit=3, platform=""):
+def other_platform_bot_lines(rows: Any, umo: Any, limit: int = 3, platform: str = "") -> list:
     """从跨平台近聊里挑出「她自己说的、且不是当前会话」的几句话。
 
     主动消息以前只看当前会话的最近 12 句：QQ 上 08:48 说「等散会了跟你说」，
@@ -742,31 +869,33 @@ def other_platform_bot_lines(rows, umo, limit=3, platform=""):
 _CATEGORY_MOOD_CACHE = None
 
 
-def schedule_category_mood():
+def schedule_category_mood() -> dict:
     """日程类别 → 每小时心情增量（复用 schedule_engine.CATEGORY_MOOD）。"""
     global _CATEGORY_MOOD_CACHE
     if _CATEGORY_MOOD_CACHE is not None:
         return _CATEGORY_MOOD_CACHE
-    table = {}
+    table: dict = {}
     try:
-        from .schedule_engine import CATEGORY_MOOD as table
+        from .schedule_engine import CATEGORY_MOOD as _category_mood
+        table = dict(_category_mood or {})
     except Exception as _amo_exc:
         _note_swallowed("amo_shared.schedule_category_mood", _amo_exc)
         try:
-            from schedule_engine import CATEGORY_MOOD as table
+            from schedule_engine import CATEGORY_MOOD as _category_mood_abs
+            table = dict(_category_mood_abs or {})
         except Exception as _amo_exc:
             _note_swallowed("amo_shared.schedule_category_mood", _amo_exc)
             table = {}
-    _CATEGORY_MOOD_CACHE = dict(table or {})
+    _CATEGORY_MOOD_CACHE = dict(table)
     return _CATEGORY_MOOD_CACHE
 
 
 
-def weekday_cn():
+def weekday_cn() -> str:
     return "一二三四五六日"[_now().date().weekday()]
 
 
-def clamp(value, low=0.0, high=100.0):
+def clamp(value: Any, low: float = 0.0, high: float = 100.0) -> float:
     try:
         value = float(value)
     except Exception as _amo_exc:
@@ -775,7 +904,7 @@ def clamp(value, low=0.0, high=100.0):
     return max(float(low), min(float(high), value))
 
 
-def to_int(value, default=0):
+def to_int(value: Any, default: int = 0) -> int:
     try:
         return int(float(value))
     except Exception as _amo_exc:
@@ -783,7 +912,7 @@ def to_int(value, default=0):
         return default
 
 
-def to_float(value, default=0.0):
+def to_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
     except Exception as _amo_exc:
@@ -791,18 +920,18 @@ def to_float(value, default=0.0):
         return default
 
 
-def truncate(text, limit=120):
+def truncate(text: Any, limit: int = 120) -> str:
     text = str(text or "").replace("\n", " ").strip()
     if len(text) <= limit:
         return text
     return text[:limit] + "…"
 
 
-def md5_int(text):
+def md5_int(text: Any) -> int:
     return int(hashlib.md5(str(text).encode("utf-8")).hexdigest()[:8], 16)
 
 
-def uniq(items):
+def uniq(items: Iterable[Any]) -> list:
     out = []
     seen = set()
     for item in items:
@@ -812,7 +941,7 @@ def uniq(items):
     return out
 
 
-def parse_hhmm(value, default=0):
+def parse_hhmm(value: Any, default: int = 0) -> int:
     try:
         parts = str(value).strip().split(":")
         return int(parts[0]) * 60 + int(parts[1])
@@ -821,12 +950,12 @@ def parse_hhmm(value, default=0):
         return default
 
 
-def minutes_now():
+def minutes_now() -> int:
     dt = _now()
     return dt.hour * 60 + dt.minute
 
 
-def in_minute_range(cur, start, end):
+def in_minute_range(cur: int, start: int, end: int) -> bool:
     if start == end:
         return True
     if start < end:
@@ -834,7 +963,7 @@ def in_minute_range(cur, start, end):
     return cur >= start or cur < end
 
 
-def quiet_now(spec):
+def quiet_now(spec: Any) -> bool:
     try:
         start, end = str(spec).split("-", 1)
         return in_minute_range(minutes_now(), parse_hhmm(start), parse_hhmm(end))
@@ -843,12 +972,12 @@ def quiet_now(spec):
         return False
 
 
-def looks_like_plain_command(text):
+def looks_like_plain_command(text: Any) -> bool:
     text = (text or "").strip()
     return text.startswith("/") or text.startswith("／")
 
 
-def has_question(text):
+def has_question(text: Any) -> bool:
     if "?" in text or "？" in text:
         return True
     return any(word in text for word in (
@@ -857,7 +986,7 @@ def has_question(text):
     ))
 
 
-def sentiment(text):
+def sentiment(text: Any) -> dict:
     text = text or ""
     pos = sum(1 for word in POS_WORDS if word in text)
     neg = sum(1 for word in NEG_WORDS if word in text)
@@ -877,7 +1006,7 @@ _WORD_RE = re.compile(r"[a-zA-Z0-9_]{2,}")
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
 
 
-def tokens(text):
+def tokens(text: Any) -> set:
     text = (text or "").lower()
     out = set()
     for word in _WORD_RE.findall(text):
@@ -892,13 +1021,13 @@ def tokens(text):
     return out
 
 
-def overlap(a, b):
+def overlap(a: set, b: set) -> float:
     if not a or not b:
         return 0.0
     return len(a & b) / float(max(1, min(len(a), len(b))))
 
 
-def json_extract_list(text):
+def json_extract_list(text: Any) -> list:
     """给“要一个数组”的场景用：json_extract 会先匹配 "{"，
     遇到 `[{...},{...}]` 只返回第一个对象，导致 extract_facts 永远拿到 dict → 返回 []。
     """
@@ -924,7 +1053,7 @@ def json_extract_list(text):
     return []
 
 
-def json_extract(text):
+def json_extract(text: Any) -> Any:
     if not text:
         return None
     raw = str(text).strip()
@@ -973,7 +1102,7 @@ CHAT_FORMAT_NOISE = re.compile(
 )
 
 
-def strip_chat_format(text):
+def strip_chat_format(text: Any) -> str:
     """去掉模型复述的 @昵称(QQ号)、QQ号等后台格式，保留自然称呼。"""
     value = str(text or "")
     value = CHAT_FORMAT_NOISE.sub(lambda m: (m.group(1) or m.group(2) or "").strip(), value)
@@ -982,7 +1111,7 @@ def strip_chat_format(text):
     return value.strip()
 
 
-def clean_reply(text, limit=300):
+def clean_reply(text: Any, limit: int = 300) -> str:
     if not text:
         return ""
     text = strip_chat_format(str(text).strip())
@@ -1164,7 +1293,15 @@ def segment_text(text, keep_punc=True, min_len=6, max_len=42, max_segments=4,
             normalized.extend(_cut(part, sub_mask, _WEAK, min_keep=max(4, max_len // 2)))
         else:
             normalized.append(part)
-    pieces = normalized
+    # 没有可断标点的超长块（长英文/数字串）按长度硬切，保证 max_len 真的生效；
+    # 链接、成对符号、代码块内部不切，宁可超长也不打断。
+    capped = []
+    for part in normalized:
+        if len(part) <= max_len or (protect_pairs and _protected_ranges(part)):
+            capped.append(part)
+            continue
+        capped.extend(part[start:start + max_len] for start in range(0, len(part), max_len))
+    pieces = capped
 
     segments = []
     for part in pieces:
@@ -1213,7 +1350,7 @@ AI_ADMISSION_RE = re.compile(
 )
 
 
-def looks_like_ai_admission(text):
+def looks_like_ai_admission(text: Any) -> bool:
     return bool(AI_ADMISSION_RE.search(str(text or "")))
 
 
@@ -1234,12 +1371,12 @@ DEFENSIVE_REPLY_RE = re.compile(
 )
 
 
-def looks_like_defensive_reply(text):
+def looks_like_defensive_reply(text: Any) -> bool:
     """是不是在跟人争“我不是人机”——技术讨论里这种话很突兀。"""
     return bool(DEFENSIVE_REPLY_RE.search(str(text or "")))
 
 
-def looks_like_model_leak(text):
+def looks_like_model_leak(text: Any) -> bool:
     """回复里有没有把模型名/厂商/插件/API 这类后台信息说出来。"""
     raw = str(text or "")
     if not raw:
@@ -1252,7 +1389,7 @@ def looks_like_model_leak(text):
     return True
 
 
-def typing_delay_ms(text, base=700, per_char=400, cap=20000):
+def typing_delay_ms(text: Any, base: int = 700, per_char: int = 400, cap: int = 20000) -> int:
     """按回复字数模拟打字时间，越长的回复停顿越久；标点再补一点。"""
     clean = re.sub(r"\s+", "", str(text or ""))
     chars = len(clean)
@@ -1261,8 +1398,8 @@ def typing_delay_ms(text, base=700, per_char=400, cap=20000):
         + clean.count("!") + clean.count("?") + clean.count("…")
     )
     commas = clean.count("，") + clean.count(",") + clean.count("、")
-    value = base + chars * per_char + pauses * 70 + commas * 35
-    value = min(value, cap)
+    value: float = float(base + chars * per_char + pauses * 70 + commas * 35)
+    value = min(value, float(cap))
     value = max(200, value * random.uniform(0.85, 1.2))
     return int(value)
 
@@ -1281,7 +1418,7 @@ USAGE_DEFAULT_PRICES = {
 }
 
 
-def usage_is_peak(ts):
+def usage_is_peak(ts: float) -> bool:
     """北京时间工作日 9-12、14-18 为高峰；周末全天算空闲（法定节假日未处理）。"""
     try:
         # 不能写死 +8：时区是可配的（clock.configure），服务器跑 UTC 时 +8 只是碰巧对
@@ -1315,7 +1452,7 @@ def _empty_bucket():
     return {"calls": 0, "input_miss": 0, "input_cached": 0, "output": 0}
 
 
-def summarize_token_usage(db_path, start_ts=None, end_ts=None, model_filter=None):
+def summarize_token_usage(db_path: Any, start_ts: Any = None, end_ts: Any = None, model_filter: Any = None) -> dict:
     """按 provider_stats 汇总 token。start_ts/end_ts 为 epoch 秒，None 表示不限。"""
     usage = _empty_bucket()
     usage.update({"cache_rate": 0.0, "peak": _empty_bucket(), "idle": _empty_bucket(), "by_model": {}})
@@ -1376,7 +1513,7 @@ def summarize_token_usage(db_path, start_ts=None, end_ts=None, model_filter=None
     return usage
 
 
-def usage_cost(usage, prices=None):
+def usage_cost(usage: dict, prices: Any = None) -> float:
     """按空闲/高峰两档单价（元/百万 token）估算花费。"""
     table = dict(USAGE_DEFAULT_PRICES)
     if isinstance(prices, dict):
@@ -1393,7 +1530,7 @@ def usage_cost(usage, prices=None):
     return round(cost, 6)
 
 
-def fetch_provider_balance(api_key, base_url, kind, timeout=8.0):
+def fetch_provider_balance(api_key: str, base_url: str, kind: str, timeout: float = 8.0) -> dict:
     """尽力查询供应商余额；查不到就返回 {ok: False, error}，不抛异常。
 
     支持：DeepSeek（/user/balance）、SiliconFlow（/v1/user/info）、
@@ -1447,8 +1584,11 @@ def fetch_provider_balance(api_key, base_url, kind, timeout=8.0):
             data = payload.get("data") or {}
             amount = None
             for field in ("balance", "totalBalance"):
+                raw = data.get(field)
+                if raw is None:
+                    continue
                 try:
-                    amount = round(float(data.get(field)), 2)
+                    amount = round(float(raw), 2)
                     break
                 except (TypeError, ValueError):
                     continue
@@ -1489,50 +1629,21 @@ def fetch_provider_balance(api_key, base_url, kind, timeout=8.0):
         return {"ok": False, "error": str(exc)[:120]}
 
 
-def fetch_deepseek_balance(api_key, base_url="https://api.deepseek.com", timeout=8.0):
-    """查 DeepSeek 余额；失败返回 {ok: False, error}，不抛异常。"""
+def fetch_deepseek_balance(api_key: str, base_url: str = "https://api.deepseek.com", timeout: float = 8.0) -> dict:
+    """查 DeepSeek 余额；失败返回 {ok: False, error}，不抛异常。
+
+    解析逻辑和 ``fetch_provider_balance(kind="deepseek")`` 完全一致，这里只保留
+    一个"没配 key 就直说"的前置判断，避免两处各写一份、改一处漏一处。
+    """
     api_key = str(api_key or "").strip()
     if not api_key:
         return {"ok": False, "error": "未配置 API Key"}
-    import urllib.request
-    url = str(base_url or "https://api.deepseek.com").rstrip("/") + "/user/balance"
-    request = urllib.request.Request(url, headers={
-        "Authorization": "Bearer " + api_key,
-        "Accept": "application/json",
-    })
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except Exception as exc:
-        _note_swallowed("amo_shared.fetch_deepseek_balance", exc)
-        return {"ok": False, "error": str(exc)[:120]}
-    infos = payload.get("balance_infos") or []
-    chosen = None
-    for item in infos:
-        if str(item.get("currency") or "").upper() == "CNY":
-            chosen = item
-            break
-    if chosen is None and infos:
-        chosen = infos[0]
-    if not isinstance(chosen, dict):
-        return {"ok": False, "error": "返回里没有余额信息"}
+    return fetch_provider_balance(
+        api_key, base_url or "https://api.deepseek.com", "deepseek", timeout
+    )
 
-    def money(value):
-        try:
-            return round(float(value), 2)
-        except (TypeError, ValueError):
-            return None
 
-    return {
-        "ok": True,
-        "available": bool(payload.get("is_available")),
-        "currency": str(chosen.get("currency") or "CNY"),
-        "amount": money(chosen.get("total_balance")),
-        "granted": money(chosen.get("granted_balance")),
-        "topped_up": money(chosen.get("topped_up_balance")),
-    }
-
-def merge_uid_alias_data(conn, alias_map):
+def merge_uid_alias_data(conn: Any, alias_map: Any) -> dict:
     """把别名 uid 的档案/记忆/消息/关系/称呼并进主 uid（一次性、幂等）。
 
     返回统计 dict，调用方负责记 kv 标记，避免每次启动重复跑。
@@ -1664,6 +1775,14 @@ def merge_uid_alias_data(conn, alias_map):
             cur.execute("UPDATE OR IGNORE relation_network SET b_uid=? WHERE b_uid=?", (canon_uid, alias_uid))
             # OR IGNORE 遇到已存在的同一对关系会跳过，残留的别名行要显式删掉
             cur.execute("DELETE FROM relation_network WHERE a_uid=? OR b_uid=?", (alias_uid, alias_uid))
+            # 两列各自 UPDATE 会把「a=friend,b=别名」变成「a=friend,b=主uid」，
+            # 与另一条「a=主uid,b=friend」方向相反 → 同一条关系留两份。
+            # 先按「无序对」去重（换方向时会撞唯一索引，必须先去重再换），再统一方向。
+            cur.execute(
+                "DELETE FROM relation_network WHERE rowid NOT IN (SELECT MIN(rowid) FROM relation_network "
+                "GROUP BY MIN(a_uid, b_uid), MAX(a_uid, b_uid))"
+            )
+            cur.execute("UPDATE OR IGNORE relation_network SET a_uid=b_uid, b_uid=a_uid WHERE a_uid > b_uid")
             cur.execute("DELETE FROM relation_network WHERE a_uid=b_uid")
             cur.execute(
                 "DELETE FROM relation_network WHERE rowid NOT IN "
@@ -1730,7 +1849,7 @@ def merge_uid_alias_data(conn, alias_map):
 
 
 
-def extract_persona_name(persona):
+def extract_persona_name(persona: Any) -> str:
     """从 AstrBot Personality 的 name / system prompt 中取角色名。"""
     if not persona:
         return ""
@@ -1753,12 +1872,13 @@ def extract_persona_name(persona):
         r"名为\s*[「“\"']?([\u4e00-\u9fa5A-Za-z0-9_·]{1,16})",
         r"你是\s*[「“\"']?([\u4e00-\u9fa5A-Za-z0-9_·]{1,16})",
     )
-    blocked = {"一个", "一名", "一位", "个人", "人", "你", "我", "他", "她", "这个", "那个"}
+    blocked = {"一个", "一名", "一位", "个人", "人", "你", "我", "他", "她", "这个", "那个",
+               "ai助手", "助手", "机器人", "人工智能", "ai"}
     for pattern in patterns:
         for match in re.finditer(pattern, prompt):
             candidate = str(match.group(1) or "").strip("「」“”\"' ")
             if (
-                candidate and candidate not in blocked
+                candidate and candidate.lower() not in blocked
                 and not candidate.startswith(("一个", "一名", "一位", "个", "人"))
             ):
                 return candidate[:30]

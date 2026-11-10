@@ -13,10 +13,15 @@
 """
 
 from __future__ import annotations
-try:
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
-except ImportError:  # 直接按文件加载时
-    from amo_observability import note as _note_swallowed
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
 
 import asyncio
 import json
@@ -34,17 +39,20 @@ from astrbot.api import logger
 # 不能用 time.localtime()（那是服务器本地时区）。
 from datetime import datetime as _dt
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .clock import from_timestamp as _clock_from_ts, now as _clock_now
-except Exception:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from clock import from_timestamp as _clock_from_ts, now as _clock_now
+        from .clock import from_timestamp as _clock_from_ts, now as _clock_now
     except Exception:
-        def _clock_from_ts(ts, *args, **kwargs):
-            return _dt.fromtimestamp(float(ts or 0))
+        try:
+            from clock import from_timestamp as _clock_from_ts, now as _clock_now
+        except Exception:
+            def _clock_from_ts(ts, *args, **kwargs):
+                return _dt.fromtimestamp(float(ts or 0))
 
-        def _clock_now(*args, **kwargs):
-            return _dt.now()
+            def _clock_now(*args, **kwargs):
+                return _dt.now()
 
 MAX_WISHES = 400
 MAX_GIFTS = 400
