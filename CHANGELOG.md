@@ -15,6 +15,17 @@
 - 新增 `tests/test_relation_sync.py` 7 项，含本机真实形状（本地 3 条含 2 条 bot 边、
   远端 1 条真人边）：不再报警、不删边；条数相等时终端删除能落到本地；空/不可用远端不动本地。
 
+### 天气城市预览：补回归测试（功能本体已随 6.6.0 进 main）
+
+- 面板预览、`HumanState._location_of()`、坐标直填（`113.75,23.02`）、
+  「模拟数据」标注、报错带接口名这些行为，在 #31 合并时已经进入 main；
+  这个 PR 现在只剩**回归测试**，防止以后重构又把它们改坏：
+- `HumanState` 不许调插件的私有方法 `_city_lookup` / `_weather_location` / `_city_module`；
+- `amo_city_index.city_location()`：中文换 LocationID、数字原样、坐标清空格、未知输入原样返回；
+- 面板 `views/dashboard/index.html`：调 `weather/brief`、渲染温度/湿度、`simulate` 标注、
+  错误信息里带接口名；
+- `tests/test_city_lookup.py` 新增 11 项。
+
 ## 6.6.4
 
 ### 上架规范：logger 只从 astrbot.api 导入
