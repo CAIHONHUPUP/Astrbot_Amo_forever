@@ -664,6 +664,37 @@ def day_meta(day=None):
         "label": label,
     }
 
+def lark_quote_kwargs(is_private, message_id, sender_id, chat_id, quote):
+    """飞书发送参数：决定走「引用回复」还是普通发送。
+
+    AstrBot 的飞书适配器在 `LarkMessageEvent.send()` 里固定传
+    `reply_message_id=self.message_obj.message_id`，所以不管私聊群聊、也不管
+    `platform_settings.reply_with_quote`，每条消息都会变成飞书里的「回复」，
+    私聊看起来就是一直在引用他上一条。
+
+    - 私聊：普通发送（receive_id = 他的 open_id），不引用；
+    - 群聊且按概率判定要引用：reply；
+    - 群聊但不引用：普通发送（receive_id = 会话 chat_id）；
+    - 拿不到 open_id / chat_id 时退回原来的 reply，宁可引用也别发不出去。
+    """
+    message_id = str(message_id or "")
+    sender_id = str(sender_id or "")
+    chat_id = str(chat_id or "")
+    if is_private and sender_id:
+        return {
+            "receive_id": sender_id,
+            "receive_id_type": "open_id",
+            "fallback_chat_id": chat_id or None,
+        }
+    if quote and message_id:
+        return {"reply_message_id": message_id}
+    if chat_id:
+        return {"receive_id": chat_id, "receive_id_type": "chat_id"}
+    if message_id:
+        return {"reply_message_id": message_id}
+    return {}
+
+
 def today_str():
     return _now().date().isoformat()
 
@@ -4571,6 +4602,11 @@ class HumanCorePlugin(Star):
                 self.segment_engine = SegmentEngine(self.context, seg_config, plugin=self)
         except Exception as exc:
             logger.error("[amo] 心流/分段引擎初始化失败: %s" % exc)
+        # 飞书适配器默认把每条回复都发成「引用回复」；私聊不该引用（群聊按概率）
+        try:
+            self._install_lark_quote_guard()
+        except Exception as exc:
+            logger.debug("[amo] 飞书引用守卫安装失败: %s" % exc)
         self._ready = False
         self._init_lock = asyncio.Lock()
         self._running = True
@@ -6046,6 +6082,53 @@ class HumanCorePlugin(Star):
             return random.random() < prob
         except Exception:
             return False
+
+    def _install_lark_quote_guard(self):
+        """飞书私聊不要引用：适配器把每条消息都发成「回复」。
+
+        只装在飞书环境；装一次就够（类上留标记，热重载不会套娃）。
+        群聊仍然按 `_should_quote_group()` 的概率决定引用，私聊一律普通发送。
+        """
+        try:
+            from astrbot.core.platform.sources.lark.lark_event import LarkMessageEvent
+        except Exception:
+            return
+        if getattr(LarkMessageEvent, "_amo_quote_guard", False):
+            return
+        plugin = self
+
+        async def send(ev, message):
+            try:
+                is_private = bool(ev.is_private_chat())
+            except Exception:
+                is_private = False
+            quote = False
+            if not is_private:
+                try:
+                    quote = bool(plugin._should_quote_group(ev.unified_msg_origin))
+                except Exception:
+                    quote = False
+            kwargs = lark_quote_kwargs(
+                is_private,
+                getattr(ev.message_obj, "message_id", ""),
+                ev.get_sender_id(),
+                ev.get_group_id(),
+                quote,
+            )
+            try:
+                await LarkMessageEvent.send_message_chain(
+                    message,
+                    ev.bot,
+                    message_type=getattr(ev.message_obj.type, "value", ""),
+                    **kwargs,
+                )
+            finally:
+                # 父类只做 metrics 记录，不能少
+                await AstrMessageEvent.send(ev, message)
+
+        LarkMessageEvent.send = send
+        LarkMessageEvent._amo_quote_guard = True
+        logger.info("[amo] 飞书引用守卫已安装：私聊不引用，群聊按概率")
 
     @staticmethod
     def _is_memory_companion(plugin):

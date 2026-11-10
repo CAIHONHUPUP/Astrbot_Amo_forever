@@ -224,7 +224,7 @@ class SegmentEngine:
                 if i > 0:
                     await self._wait_segment(event, segment, segments[i - 1], last_sent_at)
                 chain = MessageChain()
-                if i == 0 and quote_id is not None:
+                if i == 0 and quote_id is not None and group:
                     try:
                         chain.chain.append(Reply(id=quote_id))
                     except Exception:

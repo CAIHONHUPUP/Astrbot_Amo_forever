@@ -74,6 +74,18 @@
 - 写死的贵阳/贵州地名和食物（观山湖区、黔灵山路、肠旺面、折耳根、黔灵山公园兜底）
   换成不绑城市的写法，非贵阳用户不会在日程/日记里看到它们。
 
+### 飞书私聊不再引用回复，群聊才按概率引用（11-10）
+
+- **根因不在插件**：AstrBot 的飞书适配器 `LarkMessageEvent.send()` 固定传
+  `reply_message_id=self.message_obj.message_id`，所以私聊里她每一句都会变成飞书的「回复」，
+  看起来就是一直在引用他上一条；`platform_settings.reply_with_quote` 对飞书也不生效。
+- 新增 `lark_quote_kwargs()`：私聊改成普通发送（`receive_id` = 他的 open_id，拿不到就退回 chat_id），
+  群聊按 `_should_quote_group()`（人数阈值 + `quote_group_probability` 概率）决定要不要引用，
+  不引用时同样走普通发送；两个 ID 都拿不到才退回原来的 reply，避免消息发不出去。
+- 新增 `_install_lark_quote_guard()`：插件加载时给 `LarkMessageEvent.send` 打一次守卫
+  （类上留标记，热重载不会套娃），只在飞书环境生效。
+- `segment_engine` 加 `group` 守卫：私聊即使误传了 `quote_id` 也不会拼 `Reply` 段。
+
 ### 其它
 
 - `PLUGIN_VERSION` 从 6.6.4 补到 6.6.8，和 `metadata.yaml` / CHANGELOG / README 对齐
