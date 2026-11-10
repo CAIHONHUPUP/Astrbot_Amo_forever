@@ -477,7 +477,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.8.0"
+PLUGIN_VERSION = "6.8.2"
 
 # 这些开关是面板/主链路的底座：隐藏开关并强制开启，避免误关后整块功能消失。
 FORCED_ON_CONFIG_KEYS = frozenset({
@@ -7128,6 +7128,23 @@ class HumanCorePlugin(Star):
             str(relation or "朋友"), str(note or ""),
         )
 
+    async def _sync_profile_relation_edge(self, uid, relation, note="画像：关系字段"):
+        """画像里手动设的关系，同步成一条 bot↔对方 的关系边。
+
+        关系图是从 relation_network 渲染的；不写这条边，就会出现「画像设成恋人、
+        图上还是自动沉淀的熟人」。
+        """
+        uid = str(uid or "").strip()
+        relation = str(relation or "").strip()
+        if not uid or not relation or relation in ("普通",):
+            return
+        if uid in INTERNAL_RELATION_NODES or relation not in NETWORK_RELATIONS:
+            return
+        try:
+            self.db.upsert_relation("bot", uid, relation, note)
+        except Exception as exc:
+            logger.debug("[amo] 画像关系写进关系网失败: %s" % exc)
+
     async def _data_mem_list(self, uid, keyword="", limit=50):
         """面板记忆页：直接列出记忆终端里的条目。"""
         mem = self._data_mem()
@@ -11592,6 +11609,7 @@ class HumanCorePlugin(Star):
             self.db.update_profile(target, relation=relation)
             if relation == "相恋":
                 self._register_lover(target)
+            await self._sync_profile_relation_edge(target, relation)
             self._external_memory_write(target, "与角色的关系是" + relation, "relation", 2)
             return "✅ 已将 " + target + " 的关系设为「" + relation + "」"
 
@@ -13193,6 +13211,32 @@ class HumanCorePlugin(Star):
             row["a_name"] = names.get(str(row.get("a_uid")), row.get("a_uid"))
             row["b_name"] = names.get(str(row.get("b_uid")), row.get("b_uid"))
             edges.append(row)
+        # 画像里显式设过的关系要压过自动沉淀：否则把对方设成「恋人」，
+        # 关系图还停在 relation_sediment 自动算出来的「熟人」。
+        by_pair = {}
+        for row in edges:
+            key = tuple(sorted([str(row.get("a_uid") or ""), str(row.get("b_uid") or "")]))
+            by_pair[key] = row
+        for profile in profiles:
+            uid = str(profile.get("uid") or "").strip()
+            relation = str(profile.get("relation") or "").strip()
+            if not uid or not relation or uid in INTERNAL_RELATION_NODES:
+                continue
+            if relation in ("普通", ""):
+                continue
+            key = tuple(sorted(["bot", uid]))
+            row = by_pair.get(key)
+            if row is None:
+                row = {
+                    "a_uid": "bot", "b_uid": uid, "relation": relation,
+                    "note": "画像：关系字段", "updated_at": 0,
+                    "a_name": names.get("bot", "你"), "b_name": names.get(uid, uid),
+                }
+                edges.append(row)
+                by_pair[key] = row
+            elif str(row.get("relation") or "") != relation:
+                row["relation"] = relation
+                row["note"] = "画像：关系字段"
         return {"code": 0, "data": {"edges": edges, "profiles": profiles, "relations": list(NETWORK_RELATIONS)}}
 
     async def api_profile_links(self):
@@ -13564,6 +13608,8 @@ class HumanCorePlugin(Star):
         self.db.update_profile(uid, **fields)
         if fields.get("relation") == "相恋":
             self._register_lover(uid)
+        if fields.get("relation"):
+            await self._sync_profile_relation_edge(uid, fields["relation"])
         try:
             await self._push_profile_to_data(uid, self.db.get_profile(uid))
         except Exception as exc:
