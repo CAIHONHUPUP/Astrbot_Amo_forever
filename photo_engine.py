@@ -530,8 +530,14 @@ class PhotoEngine:
             where = place or "家附近"
         # 视角：她本人出镜 → 自拍视角（前置摄像头、手臂伸出、人物占主体）
         light = self._time_light() if hasattr(self, "_time_light") else "自然光"
-        return "自拍，穿着%s，衣服就这一套、不要换成别的，在%s，%s，%s，生活感，%s" % (
-            self.outfit_today(), where, act or "随手拍", light, VIEW_SELFIE
+        # 自拍最容易出的问题是两只手都入镜、手腕错位；动作里要用手时也让另一只手自然放好
+        if any(word in act for word in ("扎", "摸", "揉", "拿", "吃", "喝", "抱", "捧", "举",
+                                        "抓", "捏", "擦", "洗", "穿", "脱", "整理", "拨", "翻",
+                                        "打字", "梳")):
+            act = "刚换好衣服，随手拍"
+        hand_line = "只有一只手举手机，另一只手自然垂下、不要出现在镜头前，不要多手或手腕错位"
+        return "自拍，穿着%s，衣服就这一套、不要换成别的，在%s，%s，%s，%s，生活感，%s" % (
+            self.outfit_today(), where, act or "随手拍", hand_line, light, VIEW_SELFIE
         )
 
     def _find_omni(self):
