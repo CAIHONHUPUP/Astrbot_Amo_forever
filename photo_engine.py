@@ -659,7 +659,7 @@ class PhotoEngine:
             logger.warning("[amo] 照片发送失败: %s" % exc)
             return False
 
-    async def _share(self, kind, scene, profile):
+    async def _share(self, kind, scene, profile, target_umo=""):
         activity = self._activity()
         omni = self._find_omni()
         if omni is None:
@@ -686,7 +686,7 @@ class PhotoEngine:
             item = localized
         logger.info("[amo] 照片耗时 %.1fs（生成+本地化，%s）" % (
             time.monotonic() - started, "自拍" if selfie else "街景"))
-        umo = self._target_umo(profile)
+        umo = str(target_umo or "") or self._target_umo(profile)
         if not await self._send(umo, item):
             self._stats["failed"] += 1
             return False
@@ -695,7 +695,7 @@ class PhotoEngine:
         logger.info("[amo] 照片已分享（%s/%s）：%s" % (kind, "自拍" if selfie else "街景", prompt))
         return True
 
-    async def share_now(self, kind="daily"):
+    async def share_now(self, kind="daily", umo=""):
         """面板「测试」/``/amo photo test``：无视概率，立刻按类别发一张。"""
         if not self.enabled:
             return "照片功能没开（photo_enable=false）。"
@@ -716,7 +716,7 @@ class PhotoEngine:
             return "🧪 dry-run：%s" % prompt
         self._busy = True
         try:
-            ok = await self._share(kind, scene, random.choice(profiles))
+            ok = await self._share(kind, scene, random.choice(profiles), target_umo=umo)
         finally:
             self._busy = False
         return "✅ 发了一张（%s）" % kind if ok else "❌ 没发出去，看日志"

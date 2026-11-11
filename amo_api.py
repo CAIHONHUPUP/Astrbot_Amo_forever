@@ -1343,12 +1343,13 @@ class ApiMixin(_MixinBase):
         data = await self._body()
         data = data if isinstance(data, dict) else {}
         kind = str(data.get("category") or "daily").strip().lower() or "daily"
+        target_umo = str(data.get("umo") or "").strip()
         engine = getattr(self, "photo", None)
         if engine is None:
             return {"code": 1, "msg": "照片引擎未加载"}
 
         async def build():
-            message = await engine.share_now(kind)
+            message = await engine.share_now(kind, umo=target_umo)
             return {"msg": message}
 
         return {"code": 0, "data": {"job": self._photo_job_start("test", build())}}
