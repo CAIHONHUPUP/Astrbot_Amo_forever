@@ -301,6 +301,37 @@ class ProactiveMixin(_MixinBase):
                 continue
             home_umo = str(profile.get("private_umo") or "")
             name = str(profile.get("alias") or profile.get("name") or "宝").strip() or "宝"
+            try:
+                birthday = str(profile.get("birthday") or "").strip()[-5:]
+                today_md = _now().strftime("%m-%d")
+            except Exception:
+                birthday, today_md = "", ""
+            if birthday and birthday == today_md and self.cfg_bool("birthday_greet_enabled", True):
+                year_key = "birthday_greet:" + uid + ":" + str(_now().year)
+                if not self.db.kv_get(year_key, False):
+                    targets = _greeting_targets(
+                        umos, home_umo,
+                        randomize=self.cfg_bool("ritual_random_platform", True),
+                    )
+                    text = ""
+                    if targets:
+                        try:
+                            text = await self.llm.gen_proactive(targets[0], profile, snap, "birthday")
+                        except Exception as exc:
+                            logger.debug("[amo] 生日祝福生成失败: %s" % exc)
+                    if not text:
+                        text = name + "，生日快乐！"
+                    sent_umo = ""
+                    for candidate in targets:
+                        if await self._send_to_umo(candidate, text):
+                            sent_umo = candidate
+                            break
+                    if sent_umo:
+                        self._mark_bot_initiated(sent_umo)
+                        self.db.kv_set(year_key, True)
+                        self.db.log_proactive(uid, "birthday", text)
+                        logger.info("[amo] 生日祝福 -> %s: %s" % (name, text[:120]))
+                        continue
             for kind, enabled_key, window_key, default_window in self.RITUAL_SPECS:
                 if not self.cfg_bool(enabled_key, True):
                     continue

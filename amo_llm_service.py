@@ -319,6 +319,9 @@ class LLMService:
             _note_swallowed("amo_llm_service.LLMService.gen_proactive", _amo_exc)
 
         def build_task(duplicate_hint=""):
+            if kind == "birthday":
+                return ("今天是他生日，用你平时对他的称呼自然地祝他生日快乐，"
+                        "语气符合你的人设，不要提 AI/模型/日程。")
             if _pg_compose_task is None:
                 return "你突然想起" + name + "，想主动发一条消息。"
             event_text = ""

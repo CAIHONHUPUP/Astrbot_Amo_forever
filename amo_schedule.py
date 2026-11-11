@@ -138,6 +138,9 @@ class ScheduleMixin(_MixinBase):
             self.state.schedule[key] = new_items
             self.db.kv_set("schedule", self.state.schedule)
             self.db.save_schedule(key, new_items)
+            # 特殊情况回家：回家/请假/生病回家后，衣服直接换成睡衣
+            if str(change.get("place") or "") == "家":
+                self.db.kv_set("home_early:" + key, True)
             logger.info("[amo] 按用户的话改了日程: %s" % change.get("activity"))
         except Exception as _amo_exc:
             _note_swallowed("amo_schedule._apply_user_schedule_change", _amo_exc)

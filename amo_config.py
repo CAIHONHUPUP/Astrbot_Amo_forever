@@ -365,7 +365,7 @@ class ConfigMixin(_MixinBase):
                 group = "分段"
             elif key.startswith("companion_") or key.startswith("memory_") or key in ("admin_uids",):
                 group = "记忆"
-            elif key.startswith("proactive_") or key.startswith("delay_") or key.startswith("disturb_") or key in ("quiet_hours", "auto_active_msg"):
+            elif key.startswith("proactive_") or key.startswith("delay_") or key.startswith("disturb_") or key.startswith("birthday_") or key in ("quiet_hours", "auto_active_msg"):
                 group = "私聊"
             elif key.startswith("period_") or key.startswith("enable_period") or key.startswith("enable_sick"):
                 group = "状态"

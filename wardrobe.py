@@ -1151,7 +1151,15 @@ class Wardrobe:
             at_home = self._at_home()
         if at_hotel is None:
             at_hotel = self._at_hotel()
+        home_early = False
+        try:
+            home_early = bool(self.plugin.db.kv_get("home_early:" + day, False))
+        except Exception as _amo_exc:
+            _note_swallowed("wardrobe.Wardrobe.current", _amo_exc)
+            home_early = False
         night = hour >= SLEEP_HOUR_FROM or hour < SLEEP_HOUR_TO
+        if home_early and at_home is True:
+            night = True
         if night and (at_hotel or at_home is not False):
             result = self.night(day, hour=hour, hotel=at_hotel)
             if result.get("pending"):

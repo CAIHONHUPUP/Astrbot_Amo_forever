@@ -22,6 +22,13 @@ from wardrobe import Wardrobe, classify_item  # noqa: E402
 class FakeDB:
     def __init__(self, root):
         self.path = os.path.join(root, "plugin_data", "Astrbot_Amo_forever", "amo_forever.db")
+        self.kv = {}
+
+    def kv_get(self, key, default=None):
+        return self.kv.get(key, default)
+
+    def kv_set(self, key, value):
+        self.kv[key] = value
 
 
 class FakeState:
@@ -569,6 +576,19 @@ class WorkOutfitTests(unittest.TestCase):
                          for key in ("coat", "top", "bottom", "skirt", "shoes"))
         self.assertTrue(names)
         self.assertFalse(any("泳衣" in name for name in names))
+
+
+class HomeEarlyTests(unittest.TestCase):
+    def test_home_early_switches_to_pajamas(self):
+        wardrobe, _ = make_wardrobe(place="家")
+        wardrobe.plugin.db.kv_set("home_early:2026-11-11", True)
+        current = wardrobe.current("2026-11-11", hour=15)
+        self.assertTrue(current.get("sleep"))
+
+    def test_without_home_early_keeps_day_outfit(self):
+        wardrobe, _ = make_wardrobe(place="家")
+        current = wardrobe.current("2026-11-11", hour=15)
+        self.assertFalse(current.get("sleep"))
 
 
 class WeatherTests(unittest.TestCase):
