@@ -129,36 +129,59 @@ class OutfitEngine:
         return outfit
 
     CHANGE_WORDS = ("换衣", "换装", "换上", "换一身", "洗澡")
+    # 只有这种「不得不换」才算数；普通换衣服不换造型
+    EMERGENCY_WORDS = ("淋湿", "打湿", "湿透", "弄脏", "洒了", "糊了", "摔倒",
+                       "泥", "雨太大", "淋雨", "脏了")
+
+    def day_scene(self, items):
+        """今天的主场景：上班日按上班，出去玩按出门，其余日常。"""
+        scenes = []
+        for item in items or []:
+            scene = self.scene_of(item)
+            if scene not in ("sleep",):
+                scenes.append(scene)
+        for scene in ("work", "formal", "sport", "out", "commute"):
+            if scene in scenes:
+                return scene
+        if scenes and all(scene == "home" for scene in scenes):
+            return "home"
+        return "casual" if scenes else "home"
 
     def assign(self, items, day, persona=""):
-        """给每一段日程写 `outfit`；返回同一个列表（原地改）。
+        """给日程写 `outfit`：一天一套，从起床穿到睡觉。
 
-        小时展开后的活动文案每小时都不同（「过接口清单」「回消息」「掰扯需求」），
-        所以选衣服只看「场景 + 地点」，不看具体文案；只有「换衣服/洗澡」才换下一套。
+        - 同一天不换衣服（上午下午一样），只有「淋湿/弄脏 + 回家换衣服」才换一套；
+        - 睡觉时段单独穿睡衣；
+        - 海边/泳池那几个小时单独穿泳装，其余时间还是当天那套。
         """
         if not isinstance(items, list):
             return items
         if not self.enabled():
             return items
         gender = self.gender(persona)
-        current = {}
-        variants = {}
+        base_scene = self.day_scene(items)
+        pair = self._pick(gender, base_scene, day, "day")
+        backup = self._pick(gender, base_scene, day, "day-2")
+        variant = 0
+        sleepwear = self._pick(gender, "sleep", day, "sleep")
         for item in items:
             if not isinstance(item, dict):
                 continue
             activity = str(item.get("activity") or "")
             scene = self.scene_of(item)
-            if any(word in activity for word in self.CHANGE_WORDS):
-                variants[scene] = variants.get(scene, 0) + 1
-                current.pop(scene, None)
-            key = "%s|%s|%s" % (item.get("place") or "", scene, variants.get(scene, 0))
-            outfit = current.get(scene)
-            if not outfit:
-                outfit = self._safe(self._pick(gender, scene, day, key), scene)
-                if not outfit:
-                    outfit = self._pick(gender, "casual", day, key)
-                current[scene] = outfit
-            item["outfit"] = outfit
+            if scene == "sleep":
+                item["outfit"] = sleepwear
+                continue
+            if scene == "beach":
+                # 海边/泳池那几小时可以换泳装，但只在那个场景
+                item["outfit"] = self._safe(self._pick(gender, "beach", day, "beach"), "beach") \
+                    or self._pick(gender, "beach", day, "beach")
+                continue
+            if (any(word in activity for word in self.EMERGENCY_WORDS)
+                    and any(word in activity for word in self.CHANGE_WORDS)):
+                variant += 1
+            outfit = pair if variant == 0 else backup
+            item["outfit"] = self._safe(outfit, base_scene) or self._pick(gender, "casual", day, "day")
         return items
 
     def for_activity(self, activity, day, persona=""):

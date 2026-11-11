@@ -1208,15 +1208,6 @@
         summary.appendChild(time);
         summary.appendChild(label);
         summary.appendChild(place);
-        const hoursOfBlock = block.children || [];
-        const shown = hoursOfBlock.find((hour) => hour.current && hour.outfit)
-          || hoursOfBlock.find((hour) => hour.outfit);
-        if (shown && shown.outfit) {
-          const outfit = document.createElement("span");
-          outfit.className = "place";
-          outfit.textContent = " · 穿 " + shown.outfit;
-          summary.appendChild(outfit);
-        }
         details.appendChild(summary);
         (block.children || []).forEach((hour) => {
           const hourBox = document.createElement("div");

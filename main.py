@@ -498,7 +498,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.13.2"
+PLUGIN_VERSION = "6.13.3"
 
 # 这些开关是面板/主链路的底座：隐藏开关并强制开启，避免误关后整块功能消失。
 FORCED_ON_CONFIG_KEYS = frozenset({
@@ -590,7 +590,7 @@ DIALECT_REGIONS = {
     "上海话": "上海",
 }
 SCHEDULE_VERSION = "backbone-v6"
-OUTFIT_VERSION = "outfit-v3"  # 穿搭规则变了就改这里，旧日程会自动重配
+OUTFIT_VERSION = "outfit-v4"  # 穿搭规则变了就改这里，旧日程会自动重配
 DIARY_WARM_VERSION = "diary-v2"  # 小日记规则变了就改这里，会重新预生成
 NETWORK_RELATIONS = ("家人", "恋人", "朋友", "同事", "同学", "熟人", "陌生人", "仇人")
 MOOD_KEYS = ("开心", "平静", "郁闷", "生气", "暴躁", "委屈", "疲惫", "焦虑", "兴奋", "依恋")
