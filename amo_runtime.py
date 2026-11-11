@@ -240,6 +240,28 @@ class RuntimeMixin(_MixinBase):
             "【人格】保持上面的人格设定，不要变成通用助手或客服；即使回答咨询也要用自己的口吻。",
         ]
         try:
+            now_text = _now().strftime("%H:%M")
+            agenda = []
+            for item in (self.state.schedule.get(today_str()) or []):
+                end = str(item.get("end") or "")
+                if end and end <= now_text:
+                    continue
+                if len(agenda) >= 6:
+                    break
+                agenda.append("%s-%s %s（%s）" % (
+                    item.get("start", ""), end,
+                    item.get("activity", "休息"),
+                    self._short_place(item.get("place", "家")),
+                ))
+            if agenda:
+                parts.append("【今日安排】" + "；".join(agenda))
+                parts.append(
+                    "【日程为准】今天的安排只能按【今日安排】说：不要编造会议、出差、约会、聚餐等"
+                    "日程里没有的事；之前说错了就自然改口（“我看错时间了/记岔了”），不要硬圆。"
+                )
+        except Exception as _amo_exc:
+            _note_swallowed("amo_runtime.HumanCorePlugin._dynamic_context", _amo_exc)
+        try:
             city_block = _city_block(self.db.kv_get("his_city", "") or "")
         except Exception as _amo_exc:
             _note_swallowed("amo_runtime.HumanCorePlugin._dynamic_context", _amo_exc)
@@ -599,6 +621,13 @@ class RuntimeMixin(_MixinBase):
                 logger.info("[amo] 拦截后台信息泄漏: %s" % text[:60])
                 text = "秘密，不告诉你。"
                 result.chain = [Comp.Plain(text=text)]
+            # 先判断要不要补图：表情包/图片回复会被后面的非 Plain 检查提前 return，
+            # 所以放在这里，保证「拍给我看看」即使她只回表情也能触发
+            if self.draw is not None:
+                try:
+                    self.draw.maybe_after_reply(event, text)
+                except Exception as exc:
+                    logger.warning("[amo] 画图判断失败: %s" % exc)
             if not text.strip():
                 return
             group = not event.is_private_chat()
@@ -700,6 +729,11 @@ class RuntimeMixin(_MixinBase):
     async def _tick(self):
         if not self._ready or self.state is None:
             return
+        if self.photo is not None:
+            try:
+                await self.photo.tick()
+            except Exception as exc:
+                logger.debug("[amo] 照片任务失败: %s" % exc)
         # 数据插件可能在陪伴之后才装：每 5 分钟重新探测一次，装上就自动接管/迁移
         if (self._data_mem() is None and self._data_store() is None
                 and now_ts() - to_float(getattr(self, "_last_data_probe", 0), 0) > 300):

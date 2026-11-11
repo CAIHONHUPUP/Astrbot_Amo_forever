@@ -202,6 +202,7 @@ class CommandMixin(_MixinBase):
                 "/amo weather 天气｜/amo worldview 世界观｜/amo threshold 阈值\n"
                 "管理员：/amo rel @人 关系｜/amo set @人 字段 值｜/amo memo @人 内容 [0/1/2]（写入记忆插件）\n"
                 "/amo period set YYYY-MM-DD｜/amo health set 状态\n"
+                "/amo draw 描述（测试画图）｜/amo photo（照片概率/状态）\n"
                 "/amo schedule regen｜/amo worldview regen｜/amo say 内容｜/amo clean"
             )
 
@@ -224,6 +225,24 @@ class CommandMixin(_MixinBase):
             if not segments:
                 lines.append("（没有可发送的片段）")
             return "\n".join(lines)
+
+        if sub in ("draw", "画图"):
+            engine = getattr(self, "draw", None)
+            if engine is None:
+                return "画图引擎未加载"
+            text = " ".join(args[1:]).strip()
+            return engine.manual(event, text)
+
+        if sub in ("photo", "照片"):
+            engine = getattr(self, "photo", None)
+            if engine is None:
+                return "照片引擎未加载"
+            tail = " ".join(args[1:]).strip().lower()
+            if tail in ("test", "测试", "share"):
+                return "照片测试：" + await engine.share_now("daily")
+            if tail in ("travel", "shopping", "weekend", "daily", "outfit"):
+                return "照片测试：" + await engine.share_now(tail)
+            return engine.status_text()
 
         if sub == "status" or sub == "状态":
             return self._format_status(await self._status_data())
