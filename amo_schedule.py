@@ -149,6 +149,11 @@ class ScheduleMixin(_MixinBase):
             if not self._schedule_change_allowed(event):
                 return
             key = today_str()
+            # 当天第一句话还没生成日程时，先把骨架补出来，否则「我回家了」会被直接忽略
+            try:
+                await self.state.ensure_schedule(str(getattr(event, "unified_msg_origin", "") or ""))
+            except Exception as _amo_exc:
+                _note_swallowed("amo_schedule._apply_user_schedule_change", _amo_exc)
             # schedule 挂在 HumanState 上（self.state.schedule），插件本身没有这个属性
             items = self.state.schedule.get(key) or self.db.get_schedule(key) or []
             if not items:
