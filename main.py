@@ -477,7 +477,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.10.0"
+PLUGIN_VERSION = "6.11.0"
 
 # 这些开关是面板/主链路的底座：隐藏开关并强制开启，避免误关后整块功能消失。
 FORCED_ON_CONFIG_KEYS = frozenset({
@@ -6618,22 +6618,40 @@ class HumanCorePlugin(Star):
             return False, used
         return True, used
 
-    async def _send_image_to_umo(self, umo, data, text=""):
-        """在后台把图发到会话；用 context.send_message，不依赖已经结束的事件。"""
+    async def _send_image_to_umo(self, umo, data, text="", quote_id=""):
+        """在后台把图发到会话；用 context.send_message，不依赖已经结束的事件。
+
+        带 `quote_id` 时把图挂在那条消息下面，用户一眼知道这张图接的是哪句话。
+        Reply 个别平台不认，发失败会去掉引用再发一次，不影响出图。
+        """
         if Comp is None or MessageChain is None or not umo:
             return False
-        chain = []
-        if str(text or "").strip():
-            chain.append(Comp.Plain(str(text)))
-        try:
+        question = str(text or "").strip()
+
+        def build(with_quote):
+            chain = []
+            if with_quote and quote_id:
+                chain.append(Comp.Reply(id=str(quote_id)))
+            if question:
+                chain.append(Comp.Plain(question))
             chain.append(Comp.Image.fromBytes(data))
+            return MessageChain(chain)
+
+        try:
+            chain = build(bool(quote_id))
         except Exception:
             return False
         try:
-            await self.context.send_message(umo, MessageChain(chain))
+            await self.context.send_message(umo, chain)
         except Exception as exc:
-            logger.error("[amo] 主动发图失败: %s" % exc)
-            return False
+            if not quote_id:
+                logger.error("[amo] 主动发图失败: %s" % exc)
+                return False
+            try:
+                await self.context.send_message(umo, build(False))
+            except Exception as retry_exc:
+                logger.error("[amo] 主动发图失败: %s" % retry_exc)
+                return False
         return True
 
     async def _share_decision(self, event):
@@ -6656,11 +6674,15 @@ class HumanCorePlugin(Star):
         plugin = self._image_plugin()
         if plugin is None:
             return None
+        quote = ""
+        if self.cfg_bool("image_share_quote", True):
+            quote = str(getattr(getattr(event, "message_obj", None), "message_id", "") or "")
         return {
             "plugin": plugin,
             "umo": str(event.unified_msg_origin),
             "uid": str(event.get_sender_id() or ""),
             "prompt": self._image_share_prompt(),
+            "quote": quote,
             "now": now,
             "used": used,
         }
@@ -6679,7 +6701,9 @@ class HumanCorePlugin(Star):
             )
             if not data:
                 return
-            if not await self._send_image_to_umo(umo, data, self.cfg_str("image_share_prefix", "")):
+            prefix = self.cfg_str("image_share_prefix", "")
+            quote = str(decision.get("quote") or "")
+            if not await self._send_image_to_umo(umo, data, prefix, quote):
                 return
             self.db.kv_set("image_share_last", now_ts())
             self.db.kv_set("image_share_day", {"date": today_str(), "count": used + 1})

@@ -1451,6 +1451,12 @@
     "default": true,
     "hint": "关掉后群里也会发，容易刷屏，通常保持开启。"
   },
+  "image_share_quote": {
+    "type": "bool",
+    "description": "发图时引用刚才那条消息",
+    "default": true,
+    "hint": "把补发的图挂在触发它的那条消息下面，聊天里能看出图对应哪句话；个别平台不认引用会自动去掉再发。"
+  },
   "image_share_prompt_template": {
     "type": "string",
     "description": "分享照片的提示词模板",

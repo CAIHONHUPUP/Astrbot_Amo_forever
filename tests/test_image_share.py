@@ -4,6 +4,7 @@
 import asyncio
 import os
 import sys
+import types
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -34,9 +35,10 @@ class FakeState:
 
 
 class FakeEvent:
-    def __init__(self, private=True):
+    def __init__(self, private=True, message_id="mid-1"):
         self.unified_msg_origin = "umo"
         self._private = private
+        self.message_obj = types.SimpleNamespace(message_id=message_id)
 
     def is_private_chat(self):
         return self._private
@@ -72,9 +74,11 @@ def make(**cfg):
     plugin.image = FakeImage()
     plugin._image_plugin = lambda: plugin.image
     plugin.sent = []
+    plugin.sent_quotes = []
 
-    async def fake_send(umo, data, text=""):
+    async def fake_send(umo, data, text="", quote_id=""):
         plugin.sent.append(data)
+        plugin.sent_quotes.append(quote_id)
         return True
 
     plugin._send_image_to_umo = fake_send
@@ -118,6 +122,16 @@ class ShareDecisionTests(unittest.TestCase):
         self.assertIn("在家看书", decision["prompt"])
         self.assertEqual(decision["umo"], "umo")
 
+    def test_decision_carries_quote_id(self):
+        p = make()
+        decision = run(p._share_decision(FakeEvent(message_id="mid-9")))
+        self.assertEqual(decision["quote"], "mid-9")
+
+    def test_decision_quote_can_be_disabled(self):
+        p = make(image_share_quote=False)
+        decision = run(p._share_decision(FakeEvent()))
+        self.assertEqual(decision["quote"], "")
+
 
 class ShareTaskTests(unittest.TestCase):
     def test_task_draws_sends_and_records(self):
@@ -143,6 +157,12 @@ class ShareTaskTests(unittest.TestCase):
         run(p._share_image_task(decision))
         self.assertEqual(p.sent, [])
 
+    def test_task_passes_quote_to_sender(self):
+        p = make()
+        decision = run(p._share_decision(FakeEvent(message_id="mid-7")))
+        run(p._share_image_task(decision))
+        self.assertEqual(p.sent_quotes, ["mid-7"])
+
     def test_maybe_share_does_not_block(self):
         """入口只做判断：出图慢也不能卡住调用方。"""
         p = make()
@@ -158,6 +178,39 @@ class ShareTaskTests(unittest.TestCase):
 
         elapsed = asyncio.run(scenario())
         self.assertLess(elapsed, 1.0)
+
+
+class SendImageTests(unittest.TestCase):
+    def make_plugin(self):
+        plugin = object.__new__(amo_main.HumanCorePlugin)
+        plugin.config = {"image_share_prefix": "给你看看"}
+        sent = []
+        fail_first = {"value": False}
+
+        class Ctx:
+            async def send_message(self, umo, chain):
+                if fail_first["value"]:
+                    fail_first["value"] = False
+                    raise RuntimeError("平台不认引用")
+                sent.append(chain)
+
+        plugin.context = Ctx()
+        return plugin, sent, fail_first
+
+    def test_reply_component_added_when_quote_given(self):
+        plugin, sent, _ = self.make_plugin()
+        ok = run(plugin._send_image_to_umo("umo", b"IMG", "看", "mid-3"))
+        self.assertTrue(ok)
+        kinds = [type(comp).__name__ for comp in sent[0].chain]
+        self.assertEqual(kinds, ["Reply", "Plain", "Image"])
+        self.assertEqual(sent[0].chain[0].id, "mid-3")
+
+    def test_send_retries_without_reply(self):
+        plugin, sent, fail_first = self.make_plugin()
+        fail_first["value"] = True
+        ok = run(plugin._send_image_to_umo("umo", b"IMG", "", "mid-3"))
+        self.assertTrue(ok)
+        self.assertEqual([type(comp).__name__ for comp in sent[0].chain], ["Image"])
 
 
 if __name__ == "__main__":

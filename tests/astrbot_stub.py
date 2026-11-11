@@ -89,12 +89,21 @@ def install():
         def __init__(self, id=None):
             self.id = id
 
+    class Image:
+        def __init__(self, file=None):
+            self.file = file
+
+        @staticmethod
+        def fromBytes(data):
+            return Image("bytes:" + str(data))
+
     class At:
         def __init__(self, qq=""):
             self.qq = qq
 
     components.Plain = Plain
     components.Reply = Reply
+    components.Image = Image
     components.At = At
 
     provider = types.ModuleType("astrbot.api.provider")
@@ -113,8 +122,8 @@ def install():
     result_mod = types.ModuleType("astrbot.core.message.message_event_result")
 
     class MessageChain:
-        def __init__(self):
-            self.chain = []
+        def __init__(self, chain=None):
+            self.chain = list(chain or [])
 
         def clear(self):
             self.chain.clear()
