@@ -494,9 +494,16 @@ class RegistrationTests(ApiTestBase):
         self.plugin.context = _BoomRegistryContext()
         self.plugin._register_web_apis()
         # 取不到 router 里的旧路由也不影响注册；前缀个数随插件目录名变
-        # （CI 检出目录叫 Astrbot_Amo_forever 是 3 个，本地叫 build4 会多一个），所以只验「成整倍、不少于 3 组」
-        self.assertEqual(len(self.plugin.context.routes) % 59, 0)
-        self.assertGreaterEqual(len(self.plugin.context.routes), 3 * 59)
+        # （CI 检出目录叫 Astrbot_Amo_forever 是 3 个，本地叫 build4 会多一个）。
+        # 接口条数会随功能增长（照片功能后 59→72），所以验「每个前缀条数一致 + 不少于 59」，
+        # 不要再写死 % 59。
+        by_prefix = {}
+        for item in self.plugin.context.routes:
+            prefix = str(item[0]).split("/")[1]
+            by_prefix[prefix] = by_prefix.get(prefix, 0) + 1
+        self.assertGreaterEqual(len(by_prefix), 3)
+        self.assertEqual(len(set(by_prefix.values())), 1, by_prefix)
+        self.assertGreaterEqual(min(by_prefix.values()), 59)
 
 
 class WebGuardTests(ApiTestBase):

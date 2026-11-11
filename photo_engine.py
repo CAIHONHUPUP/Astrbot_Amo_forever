@@ -25,40 +25,45 @@ import random
 import time
 import urllib.request
 
-try:
-    from .amo_observability import note as _note_swallowed
-except ImportError:  # 直接按文件加载时
-    from amo_observability import note as _note_swallowed
-
 from astrbot.api import logger
 
-try:  # 用插件统一时区（服务器常在 UTC 跑）
-    from .clock import now as _clock_now
-except Exception:  # pragma: no cover
-    try:
-        from clock import now as _clock_now
-    except Exception:
-        from datetime import datetime as _dt
+from typing import TYPE_CHECKING
 
-        def _clock_now(*args, **kwargs):
-            return _dt.now()
-
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
+    from .amo_observability import note as _note_swallowed
     from .amo_shared import now_ts, quiet_now, today_str
-except Exception:  # pragma: no cover
+    from .clock import now as _clock_now
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from amo_shared import now_ts, quiet_now, today_str
-    except Exception:
-        import time as _time
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
+    try:  # 用插件统一时区（服务器常在 UTC 跑）
+        from .clock import now as _clock_now
+    except Exception:  # pragma: no cover
+        try:
+            from clock import now as _clock_now
+        except Exception:
+            from datetime import datetime as _dt
 
-        def now_ts():
-            return _time.time()
+            def _clock_now(*args, **kwargs):
+                return _dt.now()
+    try:
+        from .amo_shared import now_ts, quiet_now, today_str
+    except Exception:  # pragma: no cover
+        try:
+            from amo_shared import now_ts, quiet_now, today_str
+        except Exception:
+            import time as _time
 
-        def today_str():
-            return _clock_now().date().isoformat()
+            def now_ts():
+                return _time.time()
 
-        def quiet_now(_spec):
-            return False
+            def today_str():
+                return _clock_now().date().isoformat()
+
+            def quiet_now(_spec):
+                return False
 
 try:
     from astrbot.api.message_components import Image
@@ -90,17 +95,6 @@ OUTFIT_POOL = (
     "燕麦色毛衣配深色半裙",
     "条纹长袖配浅色牛仔裤",
 )
-
-try:  # 用插件统一时区（服务器常在 UTC 跑）
-    from .clock import now as _clock_now
-except Exception:  # pragma: no cover
-    try:
-        from clock import now as _clock_now
-    except Exception:
-        from datetime import datetime as _dt
-
-        def _clock_now(*args, **kwargs):
-            return _dt.now()
 
 
 def _int_in(value, low, high, default):

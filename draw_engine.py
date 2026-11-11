@@ -27,28 +27,33 @@ import os
 import re
 import time
 
-try:
-    from .amo_observability import note as _note_swallowed
-except ImportError:  # 直接按文件加载时
-    from amo_observability import note as _note_swallowed
-
 from astrbot.api import logger
 
-try:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
+    from .amo_observability import note as _note_swallowed
+    from .amo_shared import logger as _amo_logger
     from .amo_shared import today_str as _today_str
-except Exception:  # pragma: no cover
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from amo_shared import today_str as _today_str
-    except Exception:
-        import datetime as _dt
+        from .amo_observability import note as _note_swallowed
+    except ImportError:  # 直接按文件加载时
+        from amo_observability import note as _note_swallowed
+    try:
+        from .amo_shared import today_str as _today_str
+    except Exception:  # pragma: no cover
+        try:
+            from amo_shared import today_str as _today_str
+        except Exception:
+            import datetime as _dt
 
-        def _today_str():
-            return _dt.datetime.now().date().isoformat()
-
-try:  # 正常包模式
-    from .amo_shared import logger as _amo_logger  # noqa: F401  (保持和主模块同一 logger)
-except Exception:  # pragma: no cover - 只在极端导入方式下走到
-    _amo_logger = logger
+            def _today_str():
+                return _dt.datetime.now().date().isoformat()
+    try:  # 正常包模式
+        from .amo_shared import logger as _amo_logger  # noqa: F401  (保持和主模块同一 logger)
+    except Exception:  # pragma: no cover - 只在极端导入方式下走到
+        _amo_logger = logger
 
 try:
     from astrbot.api.message_components import Image

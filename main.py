@@ -160,16 +160,20 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
         from amo_llm_service import LLMService
 
 # ---- 画图 / 照片分享（本地功能，接万象画卷 OmniDraw）----
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .draw_engine import DrawEngine
     from .photo_engine import PhotoEngine
-except ImportError:  # 直接按文件加载时
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from draw_engine import DrawEngine
-        from photo_engine import PhotoEngine
-    except Exception:  # 没装/导入失败时不影响主脑启动
-        DrawEngine = None
-        PhotoEngine = None
+        from .draw_engine import DrawEngine
+        from .photo_engine import PhotoEngine
+    except ImportError:  # 直接按文件加载时
+        try:
+            from draw_engine import DrawEngine
+            from photo_engine import PhotoEngine
+        except Exception:  # 没装/导入失败时不影响主脑启动
+            DrawEngine = None  # type: ignore[assignment,misc]
+            PhotoEngine = None  # type: ignore[assignment,misc]
 
 
 

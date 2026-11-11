@@ -27,6 +27,8 @@ class PluginLike(Protocol):
     state: Any
     llm: Any
     gift: Any
+    draw: Any
+    photo: Any
     heartflow: Any
     segment_engine: Any
     _ready: bool
