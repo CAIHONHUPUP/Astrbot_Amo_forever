@@ -654,6 +654,7 @@ class HumanCorePlugin(MemoryMixin, CommandMixin, ConfigMixin, MessageMixin, Soci
         self._config_mtime = 0.0
         self._register_web_apis()
         logger.info("[amo] 我想永远陪伴你 %s loaded; stale web routes purged" % PLUGIN_VERSION)
+        self._spawn(self._log_omni_handshake())
         self._boot_task = self._spawn(self._ensure_ready())
 
     # ---------- 配置 ----------
@@ -792,7 +793,7 @@ class HumanCorePlugin(MemoryMixin, CommandMixin, ConfigMixin, MessageMixin, Soci
                 return
             omni = None
             for attempt in range(8):
-                omni = find_omni(engine, engine, "main._log_omni_handshake", force=True)
+                omni = find_omni(self, engine, "main._log_omni_handshake", force=True)
                 if omni is not None:
                     break
                 await asyncio.sleep(2)

@@ -106,7 +106,8 @@ def spawn(plugin, coro, scope="amo_image_common.spawn"):
         return None
 
 
-def find_omni(plugin, holder, scope="amo_image_common.find_omni", ttl=OMNI_CACHE_SECONDS):
+def find_omni(plugin, holder, scope="amo_image_common.find_omni", ttl=OMNI_CACHE_SECONDS,
+              force=False):
     """拿万象画卷插件实例（没装/没启用返回 None），结果缓存在 holder 上。
 
     holder 需要 ``_omni`` / ``_omni_checked`` 两个属性——就是两个引擎自己的字段，
