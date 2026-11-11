@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import os
 import re
 import shutil
@@ -115,6 +116,24 @@ def _decode_item(item):
     return b""
 
 
+def _as_png(data):
+    """万象画卷有时返回 JPEG 却按 .png 保存；转成真正的 PNG，避免参考图校验失败。"""
+    if not data:
+        return b""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return data
+    try:
+        from PIL import Image
+        image = Image.open(io.BytesIO(data))
+        image.load()
+        out = io.BytesIO()
+        image.convert("RGB").save(out, "PNG")
+        return out.getvalue()
+    except Exception as exc:
+        logger.debug("[amo] 参考图转 PNG 失败: %s" % exc)
+        return b""
+
+
 async def _download(url, session=None):
     if not url:
         return b""
@@ -177,6 +196,7 @@ async def ensure_item_ref(plugin, item, session=None, force=False):
     data = _decode_item(images[0])
     if not data:
         data = await _download(str(images[0].get("url") or images[0].get("image_url") or ""), session)
+    data = _as_png(data)
     if not data:
         return ""
     tmp = path + ".tmp"

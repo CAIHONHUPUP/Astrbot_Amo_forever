@@ -16,6 +16,9 @@ PNG_1PX = (
 )
 
 
+from outfit_refs import _as_png  # noqa: E402
+
+
 class FakeDB:
     def __init__(self, root):
         self.path = os.path.join(root, "x.db")
@@ -73,6 +76,16 @@ class OutfitRefTests(unittest.TestCase):
         plugin = FakePlugin(root)
         item = {"name": "没有生成过的外套", "category": "coat"}
         self.assertEqual(len(outfit_refs.pending_items(plugin, [item])), 1)
+
+class PngConvertTests(unittest.TestCase):
+    def test_jpeg_converted_to_png(self):
+        from io import BytesIO
+        from PIL import Image
+        buf = BytesIO()
+        Image.new("RGB", (2, 2), (255, 0, 0)).save(buf, "JPEG")
+        data = _as_png(buf.getvalue())
+        self.assertTrue(data.startswith(b"\x89PNG"))
+
 
 if __name__ == "__main__":
     unittest.main()
