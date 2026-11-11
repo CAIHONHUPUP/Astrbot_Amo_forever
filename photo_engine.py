@@ -555,7 +555,8 @@ class PhotoEngine:
             return False
 
     def _pick_selfie(self, kind):
-        if kind == "outfit":
+        # outfit/selfie 是明确要她出镜；不要走概率抽到街景
+        if kind in ("outfit", "selfie"):
             return True
         ratio = self._prob("photo_selfie_ratio", 50)
         return random.random() * 100 < ratio

@@ -246,6 +246,11 @@ class PhotoTests(unittest.TestCase):
         mapped = engine._template_map()
         self.assertEqual(set(mapped), {"front", "side", "full"})
 
+    def test_selfie_kind_forces_selfie(self):
+        engine, _ = engine_for()
+        self.assertTrue(engine._pick_selfie("selfie"))
+        self.assertTrue(engine._pick_selfie("outfit"))
+
     def test_adopt_local_template(self):
         engine, _ = engine_for()
         source = os.path.join(engine.template_dir(), "source.png")
