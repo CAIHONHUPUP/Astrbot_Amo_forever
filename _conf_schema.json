@@ -1420,5 +1420,47 @@
         }
       }
     }
+  },
+  "image_share_enable": {
+    "type": "bool",
+    "description": "主动分享照片",
+    "default": false,
+    "hint": "开启后，回复完偶尔会补一张「我拍了张照」。默认关，开了也受下面三个限制约束；生图插件没装会自动跳过。"
+  },
+  "image_share_probability": {
+    "type": "float",
+    "description": "每次触发的概率",
+    "default": 0.06,
+    "hint": "每条回复后按这个概率决定要不要发图。0.06≈平均十几条回复才一张；1=每条都发（不建议）。"
+  },
+  "image_share_cooldown_minutes": {
+    "type": "int",
+    "description": "两次之间至少间隔（分钟）",
+    "default": 180,
+    "hint": "硬冷却，不管概率多大都不越过。0=不限制（不建议）。"
+  },
+  "image_share_daily_limit": {
+    "type": "int",
+    "description": "每天最多几张",
+    "default": 2,
+    "hint": "按自然日算，超过当天不再发；0=不限。"
+  },
+  "image_share_private_only": {
+    "type": "bool",
+    "description": "只在私聊分享",
+    "default": true,
+    "hint": "关掉后群里也会发，容易刷屏，通常保持开启。"
+  },
+  "image_share_prompt_template": {
+    "type": "string",
+    "description": "分享照片的提示词模板",
+    "default": "自拍，{activity}，{place}，自然光，看向镜头",
+    "hint": "{activity} 和 {place} 会替换成她此刻在做什么、在哪；留空用默认自拍。"
+  },
+  "image_share_prefix": {
+    "type": "string",
+    "description": "发图前的一句话",
+    "default": "",
+    "hint": "留空就只发图，不配文字。"
   }
 }

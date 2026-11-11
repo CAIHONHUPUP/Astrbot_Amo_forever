@@ -1,5 +1,21 @@
 # Changelog
 
+## 6.9.0（主动分享照片）
+
+回复之后，偶尔补一张「我拍了张照」——低频、可关、有硬限制。
+
+- 钩子挂在已有的 `on_after_message_sent` 上，**没碰心流的评分与判定**；
+- 调用生图插件新开的公开接口 `draw_for(umo, uid, prompt)`，拿不到图就静默跳过；
+- 提示词按她此刻在干嘛拼：`{activity}` / `{place}` 从日程状态里取，模板可改；
+- 四道闸：总开关（默认关）、概率（默认 0.06）、硬冷却（默认 180 分钟）、每日上限（默认 2 张）；
+- 只在私聊分享（可配），避免群里刷屏；
+- 生图插件没装、被禁用、后端报错、额度不足，一律静默跳过，不抛异常。
+
+新增配置：`image_share_enable` / `_probability` / `_cooldown_minutes` / `_daily_limit` /
+`_private_only` / `_prompt_template` / `_prefix`。
+
+测试 483 passed（新增 8 条分享用例）。
+
 ## 6.8.21
 
 - 版本号规则改了，写进 README 和 `tools/check_version.py`：

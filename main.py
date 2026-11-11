@@ -477,7 +477,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.8.21"
+PLUGIN_VERSION = "6.9.0"
 
 # 这些开关是面板/主链路的底座：隐藏开关并强制开启，避免误关后整块功能消失。
 FORCED_ON_CONFIG_KEYS = frozenset({
@@ -6542,6 +6542,138 @@ class HumanCorePlugin(Star):
                 return value
         return None
 
+    # ---------- 生图联动：主动分享（低频） ----------
+
+    IMAGE_PLUGIN_NAMES = ("Astrbot_Amo_Image", "astrbot_plugin_amo_image", "amo_image")
+
+    def _image_plugin(self):
+        """找生图插件实例；没装/没启用就返回 None。"""
+        for name in self.IMAGE_PLUGIN_NAMES:
+            try:
+                meta = self.context.get_registered_star(name)
+            except Exception:
+                meta = None
+            star = self._image_instance(meta)
+            if star is not None:
+                return star
+        try:
+            for meta in self.context.get_all_stars():
+                marker = (getattr(meta, "name", "") or "") + " " + (getattr(meta, "module_path", "") or "")
+                if "amo_image" not in marker.lower():
+                    continue
+                star = self._image_instance(meta)
+                if star is not None:
+                    return star
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _image_instance(meta):
+        if meta is None:
+            return None
+        for attr in ("star_cls", "instance", "star", "plugin"):
+            value = getattr(meta, attr, None)
+            if value is None or isinstance(value, type):
+                continue
+            if callable(getattr(value, "draw_for", None)):
+                return value
+        return None
+
+    def _image_share_prompt(self):
+        """按她此刻在干嘛拼提示词；拿不到状态就用一句通用的自拍。"""
+        activity = ""
+        place = ""
+        try:
+            current = self.state.current_activity() or {}
+            activity = str(current.get("activity") or "").strip()
+            place = str(current.get("place") or "").strip()
+        except Exception:
+            pass
+        template = self.cfg_str(
+            "image_share_prompt_template",
+            "自拍，{activity}，{place}，自然光，看向镜头",
+        )
+        text = template.replace("{activity}", activity).replace("{place}", place)
+        text = re.sub(r"[，,]{2,}", "，", text).strip("，, ")
+        return text or "自拍，日常光线，看向镜头"
+
+    def _image_share_quota(self, now):
+        """返回 (能不能发, 今天已发张数)。冷却按分钟、日限按自然日，都存在 kv 里。"""
+        cooldown = max(0, self.cfg_int("image_share_cooldown_minutes", 180)) * 60
+        try:
+            last = to_float(self.db.kv_get("image_share_last", 0), 0)
+        except Exception:
+            last = 0
+        if cooldown and last and now - last < cooldown:
+            return False, 0
+        day = today_str()
+        try:
+            record = self.db.kv_get("image_share_day", {}) or {}
+        except Exception:
+            record = {}
+        used = int(record.get("count", 0)) if record.get("date") == day else 0
+        limit = max(0, self.cfg_int("image_share_daily_limit", 2))
+        if limit and used >= limit:
+            return False, used
+        return True, used
+
+    async def _send_image_now(self, event, data, text=""):
+        """直接把图发给当前会话（绕过分段引擎）。"""
+        if Comp is None or MessageChain is None:
+            return False
+        chain = []
+        if str(text or "").strip():
+            chain.append(Comp.Plain(str(text)))
+        try:
+            chain.append(Comp.Image.fromBytes(data))
+        except Exception:
+            return False
+        try:
+            await event.send(MessageChain(chain))
+        except Exception as exc:
+            logger.error("[amo] 主动发图失败: %s" % exc)
+            return False
+        try:
+            self._last_reply_at[event.unified_msg_origin] = now_ts()
+        except Exception:
+            pass
+        return True
+
+    async def _maybe_share_image(self, event):
+        """回复之后，按概率补一张「我拍了张照」——低频，宁可少发。"""
+        try:
+            if not self.cfg_bool("image_share_enable", False):
+                return
+            if event is None:
+                return
+            if self.cfg_bool("image_share_private_only", True) and not event.is_private_chat():
+                return
+            prob = max(0.0, min(1.0, self.cfg_float("image_share_probability", 0.06)))
+            if prob <= 0 or random.random() >= prob:
+                return
+            now = now_ts()
+            allowed, used = self._image_share_quota(now)
+            if not allowed:
+                return
+            plugin = self._image_plugin()
+            if plugin is None:
+                return
+            data = await plugin.draw_for(
+                str(event.unified_msg_origin),
+                str(event.get_sender_id() or ""),
+                self._image_share_prompt(),
+            )
+            if not data:
+                return
+            if not await self._send_image_now(event, data, self.cfg_str("image_share_prefix", "")):
+                return
+            self.db.kv_set("image_share_last", now)
+            self.db.kv_set("image_share_day", {"date": today_str(), "count": used + 1})
+            logger.info("[amo] 主动分享了一张图（今日第 %d 张）" % (used + 1))
+        except Exception as exc:
+            logger.debug("[amo] 主动分享失败（跳过）: %s" % exc)
+
     def _data_plugin(self):
         """找「我想永远记住你」插件实例；没装就返回 None。"""
         try:
@@ -9755,6 +9887,10 @@ class HumanCorePlugin(Star):
             await self.heartflow.on_after_message_sent(event)
         except Exception as exc:
             logger.debug("[amo] 心流发送后状态更新失败: %s" % exc)
+        try:
+            await self._maybe_share_image(event)
+        except Exception as exc:
+            logger.debug("[amo] 主动分享入口异常: %s" % exc)
 
     @filter.llm_tool(name="schedule_view")
     async def schedule_view(self, event, day: str = "today") -> str:
