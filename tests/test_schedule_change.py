@@ -5,7 +5,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from schedule_change import detect_schedule_change  # noqa: E402
+from schedule_change import detect_schedule_change, should_switch_to_pajamas  # noqa: E402
 
 
 class ScheduleChangeTests(unittest.TestCase):
@@ -27,6 +27,21 @@ class ScheduleChangeTests(unittest.TestCase):
 
     def test_negated_go_home_ignored(self):
         self.assertIsNone(detect_schedule_change("别回家休息"))
+
+    def test_sick_home_switches_pajamas(self):
+        change = detect_schedule_change("你生病了，回家休息吧")
+        self.assertTrue(should_switch_to_pajamas(change, "你生病了，回家休息吧"))
+
+    def test_travel_departure_keeps_day_outfit(self):
+        change = detect_schedule_change("你请假回家休息吧，然后出发去旅游")
+        self.assertTrue(change)
+        self.assertFalse(should_switch_to_pajamas(
+            change, "你请假回家休息吧，然后出发去旅游"))
+
+    def test_early_home_rest_does_not_switch(self):
+        change = detect_schedule_change("早点回家")
+        self.assertTrue(change)
+        self.assertFalse(should_switch_to_pajamas(change, "早点回家"))
 
     def test_other_day_ignored(self):
         self.assertIsNone(detect_schedule_change("明天去医院"))

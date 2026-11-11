@@ -5,15 +5,32 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
-    from .schedule_change import apply_change as apply_sched_change, detect_schedule_change
+    from .schedule_change import (
+        TRAVEL_WORDS,
+        apply_change as apply_sched_change,
+        detect_schedule_change,
+        should_switch_to_pajamas,
+    )
 else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from .schedule_change import apply_change as apply_sched_change, detect_schedule_change
+        from .schedule_change import (
+        TRAVEL_WORDS,
+        apply_change as apply_sched_change,
+        detect_schedule_change,
+        should_switch_to_pajamas,
+    )
     except ImportError:  # 直接按文件加载时
         try:
-            from schedule_change import apply_change as apply_sched_change, detect_schedule_change
+            from schedule_change import (
+                TRAVEL_WORDS,
+                apply_change as apply_sched_change,
+                detect_schedule_change,
+                should_switch_to_pajamas,
+            )
         except ImportError:
             detect_schedule_change = None  # type: ignore[assignment]
+            should_switch_to_pajamas = None  # type: ignore[assignment]
+            TRAVEL_WORDS = ()  # type: ignore[assignment]
             apply_sched_change = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
@@ -123,7 +140,11 @@ class ScheduleMixin(_MixinBase):
             # 先做便宜的关键词识别，命中再查主人（is_owner 会读一次画像库，
             # 放前面等于每条私聊都多一次 DB 查询）。
             change = detect_schedule_change(user_text)
+            travel = any(word in str(user_text or "") for word in TRAVEL_WORDS)
             if not change:
+                if travel:
+                    # 直接出发去旅游/出差：把之前可能设置的「回家换睡衣」清掉
+                    self.db.kv_set("home_early:" + today_str(), False)
                 return
             if not self._schedule_change_allowed(event):
                 return
@@ -138,9 +159,11 @@ class ScheduleMixin(_MixinBase):
             self.state.schedule[key] = new_items
             self.db.kv_set("schedule", self.state.schedule)
             self.db.save_schedule(key, new_items)
-            # 特殊情况回家：回家/请假/生病回家后，衣服直接换成睡衣
-            if str(change.get("place") or "") == "家":
+            # 生病/请假长期呆家才换睡衣；旅游/出差直接出发不换
+            if should_switch_to_pajamas is not None and should_switch_to_pajamas(change, user_text):
                 self.db.kv_set("home_early:" + key, True)
+            elif travel:
+                self.db.kv_set("home_early:" + key, False)
             logger.info("[amo] 按用户的话改了日程: %s" % change.get("activity"))
         except Exception as _amo_exc:
             _note_swallowed("amo_schedule._apply_user_schedule_change", _amo_exc)

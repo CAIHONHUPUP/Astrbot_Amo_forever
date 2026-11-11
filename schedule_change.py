@@ -108,6 +108,9 @@ _RULES: list[Rule] = [
 ]
 
 _NEGATION_TOKENS = ("别", "不", "没", "甭", "勿")
+#: 这些词出现时是「直接出发」，不算长期呆家，不换睡衣
+TRAVEL_WORDS = ("旅游", "旅行", "出发", "出门", "机场", "车站", "高铁", "动车",
+                "赶车", "去玩", "度假", "酒店", "住店", "出差")
 # 「不早了」「别太晚」「差不多了」是关心/口癖，不是否定关键词
 _SOFTENERS = ("不早", "不晚", "别太", "不太", "不久", "不多", "没多", "差不")
 _NEGATION_WINDOW = 4
@@ -127,6 +130,25 @@ def _negated(raw: str, pos: int) -> bool:
     if window.startswith(_SOFTENERS):
         return False
     return any(token in window for token in _NEGATION_TOKENS)
+
+
+def should_switch_to_pajamas(change, text: str) -> bool:
+    """这次改日程之后要不要换成睡衣。
+
+    只有「生病/请假回家养病、需要长期待在家」才换；如果是旅游/出差要直接出发，
+    即使说了请假/回家也不换，保持出门那套。
+    """
+    if not change:
+        return False
+    raw = str(text or "")
+    if any(word in raw for word in TRAVEL_WORDS):
+        return False
+    if str(change.get("place") or "") != "家":
+        return False
+    if str(change.get("category") or "") == "health":
+        return True
+    activity = str(change.get("activity") or "")
+    return any(word in activity for word in ("养病", "休息", "躺着", "睡觉"))
 
 
 def detect_schedule_change(text: str) -> dict[str, Any] | None:
