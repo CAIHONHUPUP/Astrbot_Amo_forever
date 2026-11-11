@@ -1131,6 +1131,23 @@
     "hint": "车/房/奢侈品都能写（可留空）：留空就从人格提示词里提取，没有就自动随机一辆车；送礼系统收到的大件也会自动替换这里。",
     "default": ""
   },
+  "outfit_enable": {
+    "type": "bool",
+    "description": "日程配穿搭",
+    "default": true,
+    "hint": "按性别和场景给每段日程配一套衣服，写进日程的「今天穿」；生图会直接读它。"
+  },
+  "outfit_gender": {
+    "type": "string",
+    "description": "穿搭性别",
+    "default": "自动",
+    "options": [
+      "自动",
+      "女",
+      "男"
+    ],
+    "hint": "自动=按人格判断（默认女）；泳装只在海边/泳池出现，睡衣不会穿出门。"
+  },
   "schedule_event_prob": {
     "type": "float",
     "description": "突发事件概率",

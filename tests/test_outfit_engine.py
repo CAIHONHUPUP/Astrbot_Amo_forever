@@ -1,0 +1,100 @@
+# -*- coding: utf-8 -*-
+"""日程穿搭：性别、场景、硬约束（不穿泳装出门）。"""
+
+import os
+import sys
+import unittest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import astrbot_stub  # noqa: E402
+
+astrbot_stub.install()
+
+import main as amo_main  # noqa: E402
+import outfit_engine  # noqa: E402
+
+
+class FakePlugin:
+    def __init__(self, gender="自动", enable=True):
+        self.conf = {"outfit_gender": gender, "outfit_enable": enable}
+
+    def cfg_bool(self, name, default=False):
+        return bool(self.conf.get(name, default))
+
+    def cfg_str(self, name, default=""):
+        return str(self.conf.get(name, default))
+
+
+def engine(gender="自动"):
+    return outfit_engine.OutfitEngine(FakePlugin(gender))
+
+
+DAY = "2026-11-11"
+
+
+class GenderTests(unittest.TestCase):
+    def test_gender_from_persona(self):
+        self.assertEqual(engine().gender("她是一个女孩，妻子"), "女")
+        self.assertEqual(engine().gender("他是一个男生，少年"), "男")
+
+    def test_gender_override(self):
+        self.assertEqual(engine("男").gender("她是女孩"), "男")
+
+
+class SceneTests(unittest.TestCase):
+    def test_work_outfit_is_not_swim_or_pyjamas(self):
+        items = [{"activity": "上班", "place": "公司", "category": "work"}]
+        outfit = engine().assign(items, DAY)[0]["outfit"]
+        self.assertNotIn("泳", outfit)
+        self.assertNotIn("睡衣", outfit)
+        self.assertNotIn("家居服", outfit)
+
+    def test_beach_allows_swim(self):
+        items = [{"activity": "游泳", "place": "海边", "category": "play"}]
+        outfit = engine().assign(items, DAY)[0]["outfit"]
+        self.assertIn("泳", outfit)
+
+    def test_swim_never_outside_beach(self):
+        self.assertEqual(engine()._safe("泳装外搭防晒衫", "work"), "")
+        self.assertEqual(engine()._safe("纯棉睡衣", "out"), "")
+
+    def test_male_pool_has_no_swimsuit_ashore(self):
+        items = [{"activity": "上班", "place": "公司", "category": "work"}]
+        outfit = engine("男").assign(items, DAY)[0]["outfit"]
+        self.assertNotIn("裙", outfit)
+        self.assertNotIn("泳", outfit)
+
+
+class StabilityTests(unittest.TestCase):
+    def test_same_segment_same_outfit(self):
+        first = engine().assign(
+            [{"activity": "上班", "place": "公司", "category": "work"}], DAY)[0]["outfit"]
+        second = engine().assign(
+            [{"activity": "上班", "place": "公司", "category": "work"}], DAY)[0]["outfit"]
+        self.assertEqual(first, second)
+
+    def test_hourly_schedule_keeps_outfit(self):
+        items = [
+            {"start": "09:00", "end": "18:00", "activity": "上班", "place": "公司",
+             "category": "work"},
+            {"start": "20:00", "end": "22:00", "activity": "在家追剧", "place": "家",
+             "category": "rest"},
+        ]
+        engine().assign(items, DAY)
+        hourly = amo_main.HumanState._hourly_schedule(items)
+        work_hours = [item for item in hourly if item["activity"] == "上班"]
+        self.assertTrue(work_hours)
+        self.assertTrue(all(item.get("outfit") for item in work_hours))
+        self.assertEqual(len({item["outfit"] for item in work_hours}), 1)
+
+    def test_disabled_engine_leaves_items_alone(self):
+        items = [{"activity": "上班", "place": "公司", "category": "work"}]
+        outfit_engine.OutfitEngine(FakePlugin(enable=False)).assign(items, DAY)
+        self.assertNotIn("outfit", items[0])
+
+
+if __name__ == "__main__":
+    unittest.main()

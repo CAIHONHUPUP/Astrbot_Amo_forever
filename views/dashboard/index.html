@@ -1230,7 +1230,7 @@
             tag.textContent = eventTagText(hour.event);
             activity.appendChild(tag);
           }
-          const metaText = [hour.place || "", hour.vehicle ? "开车" : "", hour.current ? "现在" : ""].filter(Boolean).join(" · ");
+          const metaText = [hour.place || "", hour.outfit ? "穿 " + hour.outfit : "", hour.vehicle ? "开车" : "", hour.current ? "现在" : ""].filter(Boolean).join(" · ");
           const metaLine = document.createElement("span");
           metaLine.className = "meta";
           metaLine.textContent = metaText;

@@ -54,6 +54,14 @@ from astrbot.api import logger
 
 # ---- 画图 / 照片分享（本地功能，接万象画卷 OmniDraw）----
 try:
+    from .outfit_engine import OutfitEngine
+except Exception:  # 直接按文件加载时
+    try:
+        from outfit_engine import OutfitEngine  # type: ignore
+    except Exception:
+        OutfitEngine = None
+
+try:
     from .draw_engine import DrawEngine
     from .photo_engine import PhotoEngine
 except ImportError:  # 直接按文件加载时
@@ -490,7 +498,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.12.0"
+PLUGIN_VERSION = "6.13.0"
 
 # 这些开关是面板/主链路的底座：隐藏开关并强制开启，避免误关后整块功能消失。
 FORCED_ON_CONFIG_KEYS = frozenset({
@@ -3138,7 +3146,7 @@ class HumanState:
                     "category": found.get("category", "rest"),
                 })
                 for key in ("zone", "transit", "vehicle", "detail", "spot",
-                            "event", "mood", "mood_valence"):
+                            "event", "mood", "mood_valence", "outfit"):
                     if found.get(key) not in (None, "", 0):
                         entry[key] = found.get(key)
                 if isinstance(found.get("effects"), dict):
@@ -3188,6 +3196,7 @@ class HumanState:
                     "detail": item.get("detail", ""),
                     "event": item.get("event", ""),
                     "mood": item.get("mood", ""),
+                    "outfit": item.get("outfit", ""),
                     "current": bool(is_today and start <= now_min < end),
                 }
                 children.append(hour)
@@ -3331,6 +3340,14 @@ class HumanState:
         day_type = self._today_day_type(today)
         if existing and version_ok and not force:
             hourly = self._hourly_schedule(existing)
+            # 老日程没有 outfit：补一次并落盘，不用等第二天重新生成
+            if getattr(self.p, "outfits", None) is not None and any(
+                    isinstance(item, dict) and not item.get("outfit") for item in hourly):
+                try:
+                    persona_text = await self.p.llm.persona(umo) if self.p.llm else ""
+                except Exception:
+                    persona_text = ""
+                hourly = self.p.outfits.assign(hourly, today, persona_text)
             if hourly != existing:
                 self.schedule[today] = hourly
                 self.db.kv_set("schedule", self.schedule)
@@ -3402,6 +3419,11 @@ class HumanState:
                 "yesterday": self.engine.yesterday_summary(today) if self.engine is not None else {},
             }
             items = self._emergency_schedule()
+        if getattr(self, "outfits", None) is not None:
+            try:
+                items = self.outfits.assign(items, today, persona)
+            except Exception as exc:
+                logger.debug("[amo] 日程配装失败: %s" % exc)
         items = self._hourly_schedule(items)
         self.schedule[today] = items
         if context:
@@ -3934,9 +3956,11 @@ class HumanState:
         ]
         if with_activity:
             # 只有被问到「你在干嘛/在哪」时才给活动，避免她张口就报行程
+            outfit = str(activity.get("outfit") or "").strip()
             lines.append(
-                "（内在状态，仅供自洽，不是话题）你此刻在%s（%s）。"
-                % (activity.get("activity", "休息"), activity.get("place", "家"))
+                "（内在状态，仅供自洽，不是话题）你此刻在%s（%s）%s。"
+                % (activity.get("activity", "休息"), activity.get("place", "家"),
+                   ("，穿着" + outfit) if outfit else "")
             )
         return "\n".join(lines)
 
@@ -4730,6 +4754,12 @@ class HumanCorePlugin(Star):
                 self.gift = GiftEngine(self)
             except Exception as exc:
                 logger.warning("[amo] 礼物引擎初始化失败: %s" % exc)
+        self.outfits = None
+        if OutfitEngine is not None:
+            try:
+                self.outfits = OutfitEngine(self)
+            except Exception as exc:
+                logger.warning("[amo] 穿搭引擎初始化失败: %s" % exc)
         self.draw = None
         if DrawEngine is not None:
             try:
@@ -10025,8 +10055,11 @@ class HumanCorePlugin(Star):
                 place = str(it.get("place") or "").strip()
                 if not act:
                     continue
-                lines.append("%s-%s %s%s" % (
-                    start, end, act, ("（%s）" % place) if place else ""))
+                outfit = str(it.get("outfit") or "").strip()
+                lines.append("%s-%s %s%s%s" % (
+                    start, end, act,
+                    ("（%s）" % place) if place else "",
+                    ("，穿" + outfit) if outfit else ""))
             return "\n".join(lines[:24]) or "那天还没有安排。"
         except Exception as exc:
             logger.debug("[amo] schedule_view 失败: %s" % exc)
@@ -10066,6 +10099,14 @@ class HumanCorePlugin(Star):
             hit["activity"] = str(activity or "").strip()[:60] or hit.get("activity")
             if str(place or "").strip():
                 hit["place"] = str(place).strip()[:30]
+            # 改了活动/地点就重新配衣服，避免「在家穿通勤装」这种对不上
+            outfits = getattr(self, "outfits", None)
+            if outfits is not None:
+                try:
+                    persona = await self.llm.persona(event.unified_msg_origin) if self.llm else ""
+                except Exception:
+                    persona = ""
+                hit["outfit"] = outfits.for_activity(hit, key, persona)
             self.state.schedule[key] = items
             self.db.kv_set("schedule", self.state.schedule)
             self.db.save_schedule(key, items)

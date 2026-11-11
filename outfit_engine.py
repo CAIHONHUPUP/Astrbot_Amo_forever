@@ -1,0 +1,157 @@
+# -*- coding: utf-8 -*-
+"""日程穿搭：给每一段日程配一套衣服。
+
+规则很短：
+
+- 按角色性别挑衣服（`outfit_gender`：自动 / 女 / 男，自动时从人格判断）；
+- 按场景挑：睡觉/居家/上班/通勤/出门/运动/正式/海边；
+- 同一段日程+同一天结果固定（crc32），重启不变，不会一小时换三套；
+- **硬约束**：泳装只在海边/泳池/温泉出现，睡衣/家居服不出门；
+  场景和服装对不上时退回日常装，宁可普通也不穿泳装去公司。
+
+生成完写进日程条目的 `outfit` 字段，面板、`schedule_view`、生图插件都读它。
+"""
+
+from __future__ import annotations
+
+import zlib
+
+FEMALE_POOLS = {
+    "sleep": ("纯棉睡衣", "宽松家居服", "睡裙"),
+    "home": ("家居卫衣配棉裤", "针织开衫配家居裤", "宽松T恤配短裤"),
+    "work": ("白衬衫配西裤", "针织衫配半身裙", "西装外套配直筒裤", "雪纺衬衫配包臀裙"),
+    "commute": ("风衣配牛仔裤", "针织开衫配长裤", "衬衫配休闲裤"),
+    "casual": ("卫衣配牛仔裤", "T恤配半身裙", "牛仔外套配长裤"),
+    "out": ("碎花连衣裙外搭薄开衫", "衬衫配半裙", "卫衣配阔腿裤", "T恤配牛仔裤"),
+    "sport": ("运动T恤配速干裤", "运动套装配跑鞋"),
+    "formal": ("黑色小礼服", "衬衫配西装裤", "针织连衣裙"),
+    "beach": ("泳装外搭防晒衫", "连体泳衣配沙滩裙", "泳装配沙滩裤"),
+}
+
+MALE_POOLS = {
+    "sleep": ("纯棉睡衣", "宽松家居服"),
+    "home": ("家居卫衣配棉裤", "宽松T恤配短裤"),
+    "work": ("白衬衫配西裤", "针织衫配休闲裤", "西装外套配直筒裤"),
+    "commute": ("夹克配牛仔裤", "针织开衫配长裤", "衬衫配休闲裤"),
+    "casual": ("卫衣配牛仔裤", "T恤配工装裤", "牛仔外套配长裤"),
+    "out": ("衬衫配休闲裤", "卫衣配阔腿裤", "T恤配牛仔裤"),
+    "sport": ("运动T恤配速干裤", "运动套装配跑鞋"),
+    "formal": ("西装套装", "衬衫配西装裤", "针织衫配西裤"),
+    "beach": ("泳裤配防晒衫", "泳裤配沙滩裤"),
+}
+
+SWIM_WORDS = ("泳装", "泳衣", "泳裤", "比基尼")
+HOME_WEAR_WORDS = ("睡衣", "家居服", "睡裙")
+BEACH_PLACES = ("海边", "沙滩", "泳池", "游泳馆", "温泉", "海滩", "水上乐园")
+BEACH_ACTIVITIES = ("游泳", "泡温泉", "玩水", "潜水", "冲浪")
+
+
+class OutfitEngine:
+    """按性别 + 场景 + 日期给日程配衣服。"""
+
+    def __init__(self, plugin):
+        self.plugin = plugin
+
+    # ---------- 性别 ----------
+
+    def enabled(self):
+        try:
+            return bool(self.plugin.cfg_bool("outfit_enable", True))
+        except Exception:
+            return True
+
+    def gender(self, persona=""):
+        value = ""
+        try:
+            value = str(self.plugin.cfg_str("outfit_gender", "自动") or "自动").strip()
+        except Exception:
+            value = "自动"
+        if value in ("女", "女生", "female"):
+            return "女"
+        if value in ("男", "男生", "male"):
+            return "男"
+        return self._guess_gender(persona)
+
+    @staticmethod
+    def _guess_gender(text):
+        raw = str(text or "")
+        female = sum(raw.count(word) for word in
+                     ("女孩", "女生", "少女", "女性", "姑娘", "妻子", "老婆", "她"))
+        male = sum(raw.count(word) for word in ("男孩", "男生", "少年", "男性"))
+        return "男" if male > female else "女"
+
+    # ---------- 场景 ----------
+
+    @staticmethod
+    def scene_of(item):
+        activity = str(item.get("activity") or "")
+        place = str(item.get("place") or "")
+        category = str(item.get("category") or "")
+        text = activity + place
+        if category == "sleep" or "睡觉" in activity:
+            return "sleep"
+        if (any(word in place for word in BEACH_PLACES)
+                or any(word in activity for word in BEACH_ACTIVITIES)):
+            return "beach"
+        if category == "sport" or any(word in text for word in ("健身", "跑步", "运动", "瑜伽")):
+            return "sport"
+        if category == "work" or any(word in text for word in ("上班", "公司", "开会", "办公")):
+            return "work"
+        if any(word in text for word in ("婚礼", "宴会", "年会", "正式", "面试")):
+            return "formal"
+        if category in ("play", "social") or any(
+                word in text for word in ("逛街", "商场", "旅", "景点", "咖啡", "公园", "约会")):
+            return "out"
+        if category == "commute" or any(word in text for word in ("通勤", "地铁", "开车去", "回家路上")):
+            return "commute"
+        if place in ("家", "") or "家" in place:
+            return "home"
+        return "casual"
+
+    def _pool(self, gender, scene):
+        pools = FEMALE_POOLS if gender == "女" else MALE_POOLS
+        return pools.get(scene) or pools["casual"]
+
+    def _pick(self, gender, scene, day, key=""):
+        """同一段（同场景+同活动+同地点）在同一天固定穿同一套，小时展开不会一小时一换。"""
+        pool = self._pool(gender, scene)
+        seed = ("%s|%s|%s|%s" % (day, scene, key, gender)).encode("utf-8")
+        return pool[zlib.crc32(seed) % len(pool)]
+
+    @staticmethod
+    def _safe(outfit, scene):
+        """硬约束：泳装只下海，睡衣不出门。"""
+        if any(word in outfit for word in SWIM_WORDS) and scene != "beach":
+            return ""
+        if any(word in outfit for word in HOME_WEAR_WORDS) and scene not in ("sleep", "home"):
+            return ""
+        return outfit
+
+    def assign(self, items, day, persona=""):
+        """给每一段日程写 `outfit`；返回同一个列表（原地改）。"""
+        if not isinstance(items, list):
+            return items
+        if not self.enabled():
+            return items
+        gender = self.gender(persona)
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            scene = self.scene_of(item)
+            key = "%s|%s" % (item.get("activity") or "", item.get("place") or "")
+            outfit = self._safe(self._pick(gender, scene, day, key), scene)
+            if not outfit:
+                outfit = self._pick(gender, "casual", day, key)
+            item["outfit"] = outfit
+        return items
+
+    def for_activity(self, activity, day, persona=""):
+        """给单条活动算一套（current_activity 兜底、面板试算用）。"""
+        if not isinstance(activity, dict) or not activity:
+            return ""
+        if not self.enabled():
+            return str(activity.get("outfit") or "")
+        scene = self.scene_of(activity)
+        key = "%s|%s" % (activity.get("activity") or "", activity.get("place") or "")
+        outfit = self._safe(self._pick(self.gender(persona), scene, day, key), scene)
+        return outfit or self._pick(self.gender(persona), "casual", day, key)
