@@ -3856,6 +3856,7 @@ class HumanState:
         except Exception:
             persona = ""
         hours = [item for item in (items or []) if str(item.get("start") or "")]
+        logger.info("[amo] 开始批量生成小日记 %s（%d 条）" % (day, len(hours)))
         total = 0
         previous = ""
         for begin in range(0, len(hours), 6):
@@ -3891,6 +3892,9 @@ class HumanState:
             except Exception:
                 continue
             rows = json_extract_list(raw)
+            logger.info("[amo] 日记批次 %d-%d：raw=%d 字，解析 %s 条" % (
+                begin, min(begin + 6, len(hours)), len(str(raw or "")),
+                len(rows) if isinstance(rows, list) else -1))
             if not isinstance(rows, list):
                 continue
             for row in rows:
