@@ -116,8 +116,10 @@ def find_omni(plugin, holder, scope="amo_image_common.find_omni", ttl=OMNI_CACHE
     now = time.monotonic()
     checked = getattr(holder, "_omni_checked", 0.0)
     cached = getattr(holder, "_omni", None)
-    if not force and cached is not None and now - checked < ttl:
-        return cached
+    if not force and now - checked < ttl:
+        # 命中缓存；没找到时只缓存 10 秒，后装/后启用万象画卷能很快被发现
+        if cached is not None or now - checked < 10:
+            return cached
     holder._omni_checked = now
     holder._omni = None
     try:
