@@ -153,10 +153,11 @@
     .grow { flex: 1; min-width: 0; }
     .input {
       border: 1px solid var(--line); background: var(--card); color: var(--text);
-      border-radius: 10px; padding: 9px 10px; font-size: 13px; width: 100%;
+      border-radius: 10px; padding: 12px 12px; font-size: 13.5px; width: 100%;
       max-width: 100%; min-width: 0; font-family: inherit;
     }
     .input:focus { outline: 2px solid rgba(232, 72, 154, 0.18); border-color: var(--pink); }
+    select.input { height: 38px; padding: 6px 10px; max-width: 360px; }
     textarea.input { resize: vertical; min-height: 48px; }
     .form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin: 10px 0; min-width: 0; }
     .form-grid label, .block { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); min-width: 0; }
@@ -245,7 +246,7 @@
     .settings-list { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
     .settings-group { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: var(--card); min-width: 0; }
     .settings-group summary { cursor: pointer; font-weight: 600; font-size: 13px; }
-    .setting-row { display: grid; grid-template-columns: minmax(0, 1fr) 25%; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); min-width: 0; }
+    .setting-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 55%); gap: 10px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line); min-width: 0; }
     .setting-row > div { min-width: 0; }
     .setting-row:first-of-type { border-top: 0; }
     .setting-row .name { font-size: 12.5px; }
@@ -261,13 +262,18 @@
     .setting-row.wide { grid-template-columns: 1fr; }
     .setting-row.wide .control { justify-content: flex-start; }
     .setting-row .control input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--pink); }
-    .setting-row .control .input { max-width: 100%; }
+    .setting-row .control .input { max-width: 100%; width: 100%; }
     .ghost { background: transparent; border-color: var(--line); }
     .group-link { color: var(--pink); text-decoration: none; font-size: 12.5px; line-height: 1.6; word-break: break-all; }
     .group-link:hover { text-decoration: underline; }
     .feedback-card { margin-top: 2px; }
     .card, .schedule li, .threshold, .memory-list { min-width: 0; }
     .profile-item .meta, .setting-row .hint, .sub { overflow-wrap: anywhere; }
+    @media (max-width: 700px) {
+      .setting-row { grid-template-columns: 1fr; }
+      .setting-row .control { justify-content: stretch; }
+      .setting-row .control .input { width: 100%; }
+    }
     @media (max-width: 520px) {
       .form-grid { grid-template-columns: 1fr; }
       .setting-row .control { justify-content: flex-start; }
@@ -351,6 +357,7 @@
       <button class="tab" data-tab="actions">操作</button>
       <button class="tab" data-tab="profiles">用户</button>
       <button class="tab" data-tab="gift">礼物</button>
+      <button class="tab" data-tab="photo">照片</button>
       <button class="tab" data-tab="settings" data-group="基础">基础</button>
       <button class="tab" data-tab="settings" data-group="状态">参数</button>
       <button class="tab" data-tab="settings" data-group="记忆">记忆</button>
@@ -486,6 +493,76 @@
       </section>
     </div>
 
+    <div id="tab-photo" class="tab-panel" hidden>
+      <section class="card">
+        <div class="row between">
+          <div>
+            <div class="label">照片分享</div>
+            <div class="sub" id="photoSub">旅游、逛街、周末、日常按概率发街景或自拍；早上出门发穿搭自拍</div>
+          </div>
+          <button class="tab" id="photoRefresh" type="button">刷新</button>
+        </div>
+        <div id="photoSettings" class="settings-list"><div class="sub">加载中…</div></div>
+        <div class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap;align-items:center">
+          <button id="photoSave" type="button">保存</button>
+          <select id="photoTestKind" class="input">
+            <option value="outfit">穿搭自拍</option>
+            <option value="travel">旅游</option>
+            <option value="shopping">逛街</option>
+            <option value="weekend">周末</option>
+            <option value="daily" selected>日常</option>
+          </select>
+          <button id="photoTest" type="button">现在发一张</button>
+          <span class="sub" id="photoStatus"></span>
+        </div>
+      </section>
+
+      <section class="card" style="margin-top:14px">
+        <div class="label">按提示词生成</div>
+        <div class="sub">自动加上「照片提示词前缀」和今天的穿搭；勾选「同时发到聊天」才会发出去</div>
+        <textarea id="photoPrompt" class="input" rows="2" placeholder="例如：在咖啡馆窗边自拍，穿着米色针织衫" style="width:100%;margin-top:8px;resize:vertical"></textarea>
+        <div class="row" style="margin-top:8px;gap:8px;align-items:center">
+          <button id="photoGen" type="button">生成</button>
+          <button id="photoPromptSave" type="button">保存</button>
+          <button id="photoPromptClear" type="button">清空</button>
+          <label class="sub" style="display:flex;align-items:center;gap:4px;margin:0">
+            <input type="checkbox" id="photoPromptSend"> 同时发到聊天
+          </label>
+          <span class="sub" id="photoGenStatus"></span>
+        </div>
+        <div id="photoGenPreview" style="margin-top:10px"></div>
+      </section>
+
+      <section class="card" style="margin-top:14px">
+        <div class="label">角色三视图</div>
+        <div class="sub">每个视角独立：生成预览里勾选一张保存为模板；模板预览里勾选表示启用</div>
+        <div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap;align-items:center">
+          <button data-photo-view="front" type="button">正面</button>
+          <button data-photo-view="side" type="button">侧面</button>
+          <button data-photo-view="full" type="button">全身</button>
+          <span class="sub" id="photoSheetStatus"></span>
+        </div>
+        <div id="photoViews" style="margin-top:10px"></div>
+        <div class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap;align-items:center">
+          <input id="photoTemplateDir" class="input grow" placeholder="模板保存文件夹（留空 = 插件目录/templates）">
+          <button id="photoTemplateSave" type="button">保存位置</button>
+          <button id="photoTemplateOpen" type="button">打开文件夹</button>
+        </div>
+        <div class="sub" id="photoTemplateRoot"></div>
+      </section>
+
+      <section class="card" style="margin-top:14px">
+        <div class="sub" style="line-height:1.7;font-size:14px;margin-top:0">
+          <strong style="color:#d94a86">注意</strong><br>
+          · 每个视角独立保存一张模板；在「生成预览」里勾选候选图再点「保存勾选的模板」<br>
+          · 模板预览右上角勾选 = 启用该视角；三个都勾选就三张一起作为参考图<br>
+          · 删除按钮在每个视角的模板预览下面，只删该视角<br>
+          · 默认在插件目录 <code>templates/</code>，会跟着插件一起备份，换电脑整包搬走即可<br>
+          · 改到插件目录外就不会跟插件备份，记得自己留一份
+        </div>
+      </section>
+    </div>
+
     <div id="tab-diary" class="tab-panel" hidden>
       <section class="card">
         <div class="row between" style="align-items:center">
@@ -511,7 +588,7 @@
         <pre id="diaryText" style="white-space:pre-wrap;line-height:1.8;margin:0;font-family:inherit">从上面的年 / 月 / 日里点一天，就能读那天的日记。</pre>
       </section>
       <section class="card">
-        <div class="sub" style="line-height:1.7;margin-top:0">
+        <div class="sub" style="line-height:1.7;font-size:14px;margin-top:0">
           <strong style="color:#d94a86">注意</strong><br>
           · 按 <code>年/月/日</code> 存放，文件「我的日记YYYY年MM月DD日.txt」<br>
           · <strong style="color:#d94a86">换电脑</strong>：整个「日记」文件夹放回 <code>diary_dir</code>
@@ -888,7 +965,7 @@
       "schedule_regen", "kb_regen", "scenic_kb_regen", "worldview_regen",
       "mood_update", "config_save", "profile_save", "profile_delete",
       "relation_save", "relation_delete", "memory_add", "memory_delete",
-      "say", "city_set", "profiles_sync", "diary/open", "diary/write",
+      "say", "city_set", "profiles_sync", "diary/open", "diary/write", "photo/test",
     ]);
 
     async function call(action, payload) {
@@ -1770,6 +1847,539 @@
       }
     }
 
+    // ---------- 照片 ----------
+    let photoItems = [];
+    const PHOTO_PROB_KEYS = new Set([
+      "photo_outfit_prob", "photo_travel_prob", "photo_shopping_prob",
+      "photo_weekend_prob", "photo_daily_prob", "photo_selfie_ratio",
+    ]);
+
+    function photoControl(item) {
+      const wrap = document.createElement("div");
+      wrap.className = "control";
+      wrap.style.display = "flex";
+      wrap.style.alignItems = "center";
+      wrap.style.gap = "8px";
+      const type = item.type || "string";
+      const key = item.key;
+      if (type === "bool") {
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.dataset.key = key;
+        input.dataset.type = "bool";
+        input.checked = !!item.value;
+        wrap.appendChild(input);
+        return wrap;
+      }
+      if (Array.isArray(item.options) && item.options.length) {
+        const select = document.createElement("select");
+        select.className = "input";
+        select.dataset.key = key;
+        select.dataset.type = "string";
+        const labels = { topic: "话题触发", explicit: "明确要图", both: "话题+明确" };
+        item.options.forEach((opt) => {
+          const option = document.createElement("option");
+          option.value = opt;
+          option.textContent = labels[opt] || opt;
+          select.appendChild(option);
+        });
+        select.value = item.value === undefined || item.value === null ? "" : item.value;
+        wrap.appendChild(select);
+        return wrap;
+      }
+      if (PHOTO_PROB_KEYS.has(key)) {
+        const range = document.createElement("input");
+        range.type = "range";
+        range.min = "0";
+        range.max = "100";
+        range.step = "5";
+        range.value = Number(item.value) || 0;
+        range.style.width = "150px";
+        range.dataset.key = key;
+        range.dataset.type = "int";
+        const out = document.createElement("span");
+        out.className = "sub";
+        out.textContent = range.value + "%";
+        range.addEventListener("input", () => { out.textContent = range.value + "%"; });
+        wrap.appendChild(range);
+        wrap.appendChild(out);
+        return wrap;
+      }
+      const input = document.createElement("input");
+      input.className = "input";
+      input.style.width = "110px";
+      input.dataset.key = key;
+      input.dataset.type = (type === "int" || type === "float") ? type : "string";
+      input.value = item.value === undefined || item.value === null ? "" : item.value;
+      if (type === "int" || type === "float") input.type = "number";
+      wrap.appendChild(input);
+      return wrap;
+    }
+
+    function renderPhoto() {
+      const box = document.getElementById("photoSettings");
+      if (!box) return;
+      box.textContent = "";
+      if (!photoItems.length) {
+        box.textContent = "没有照片配置（检查 _conf_schema.json）";
+        return;
+      }
+      photoItems.forEach((item) => {
+        if (["photo_persona_ref", "photo_persona_refs", "photo_persona_enabled"].includes(String(item.key))) return;
+        const row = document.createElement("div");
+        row.className = "setting-row";
+        const left = document.createElement("div");
+        const name = document.createElement("div");
+        name.className = "name";
+        name.textContent = item.description || item.key;
+        left.appendChild(name);
+        if (item.hint) {
+          const hint = document.createElement("div");
+          hint.className = "hint";
+          hint.textContent = item.hint;
+          left.appendChild(hint);
+        }
+        row.appendChild(left);
+        row.appendChild(photoControl(item));
+        box.appendChild(row);
+      });
+    }
+
+    async function loadPhoto() {
+      try {
+        const data = objectFrom(await call("config"));
+        const items = Array.isArray(data.items) ? data.items : [];
+        photoItems = items.filter((item) => item.group === "照片" && (
+          String(item.key).startsWith("photo_") || String(item.key).startsWith("draw_")
+        ));
+        renderPhoto();
+        loadPhotoTemplate();
+        loadPhotoPromptSaved();
+        const status = document.getElementById("photoStatus");
+        if (status) status.textContent = "";
+      } catch (error) {
+        const box = document.getElementById("photoSettings");
+        if (box) box.textContent = "读取失败：" + (error.message || error);
+      }
+    }
+
+    function photoControlValue(el) {
+      const type = el.dataset.type;
+      if (type === "bool") return !!el.checked;
+      if (type === "int" || type === "float") return Number(el.value);
+      return el.value;
+    }
+
+    async function savePhoto() {
+      const changes = {};
+      document.querySelectorAll("#photoSettings [data-key]").forEach((el) => {
+        changes[el.dataset.key] = photoControlValue(el);
+      });
+      const status = document.getElementById("photoStatus");
+      try {
+        await call("config_save", { changes });
+        if (status) status.textContent = "已保存";
+        toast("照片设置已保存");
+      } catch (error) {
+        if (status) status.textContent = "保存失败";
+        toast("保存失败：" + (error.message || error), true);
+      }
+    }
+
+    async function pollPhotoJob(jobId, onDone, onError) {
+      for (let i = 0; i < 90; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        try {
+          const res = objectFrom(await call("photo/job", { id: jobId }));
+          if (!res) continue;
+          if (res.code && res.code !== 0) {
+            onError(res.msg || "任务不存在（插件可能重载过，重新生成一次）");
+            return;
+          }
+          if (!res.status) {
+            onError("任务状态异常，重新生成一次");
+            return;
+          }
+          if (res.status === "done") {
+            onDone(res.data || {}, res.msg || "");
+            return;
+          }
+          if (res.status === "error") {
+            onError(res.msg || "生成失败");
+            return;
+          }
+        } catch (error) {
+          // 桥接偶尔超时，继续轮询
+        }
+      }
+      onError("生成超时（服务端可能还在画，看日志）");
+    }
+
+    async function testPhoto() {
+      const kind = (document.getElementById("photoTestKind") || {}).value || "daily";
+      const status = document.getElementById("photoStatus");
+      if (status) status.textContent = "正在发…";
+      try {
+        const res = objectFrom(await call("photo/test", { category: kind }));
+        const jobId = (res && (res.job || (res.data && res.data.job))) || "";
+        if (!jobId) throw new Error("没有拿到任务号");
+        if (status) status.textContent = "后台生成中…";
+        await pollPhotoJob(jobId, (data, msg) => {
+          const text = (data && data.msg) || msg || "已触发";
+          if (status) status.textContent = text;
+          toast(text);
+        }, (msg) => {
+          if (status) status.textContent = "失败";
+          toast("发送失败：" + msg, true);
+        });
+      } catch (error) {
+        if (status) status.textContent = "发送失败";
+        toast("发送失败：" + (error.message || error), true);
+      }
+    }
+
+    async function loadPhotoPromptSaved() {
+      try {
+        const data = objectFrom(await call("photo/prompt_saved", {}));
+        const input = document.getElementById("photoPrompt");
+        if (input && !input.value) input.value = (data && data.text) || "";
+      } catch (error) {
+        // 接口没就绪时忽略
+      }
+    }
+
+    async function savePhotoPrompt() {
+      const input = document.getElementById("photoPrompt");
+      const text = input ? input.value.trim() : "";
+      try {
+        await call("photo/prompt_saved", { text });
+        toast("提示词已保存");
+      } catch (error) {
+        toast("保存失败：" + (error.message || error), true);
+      }
+    }
+
+    async function clearPhotoPrompt() {
+      const input = document.getElementById("photoPrompt");
+      if (input) input.value = "";
+      try {
+        await call("photo/prompt_saved", { text: "" });
+        toast("已清空");
+      } catch (error) {
+        toast("清空失败：" + (error.message || error), true);
+      }
+    }
+
+    async function generatePhotoPrompt() {
+      const input = document.getElementById("photoPrompt");
+      const status = document.getElementById("photoGenStatus");
+      const preview = document.getElementById("photoGenPreview");
+      const prompt = (input.value || "").trim();
+      if (!prompt) {
+        toast("先写提示词", true);
+        return;
+      }
+      if (status) status.textContent = "后台生成中（约 40-90 秒）…";
+      if (preview) preview.textContent = "";
+      try {
+        const sendBox = document.getElementById("photoPromptSend");
+        const res = objectFrom(await call("photo/prompt", {
+          prompt,
+          send: !!(sendBox && sendBox.checked),
+        }));
+        const jobId = (res && (res.job || (res.data && res.data.job))) || "";
+        if (!jobId) throw new Error("没有拿到任务号");
+        await pollPhotoJob(jobId, (data, msg) => {
+          const url = (data && data.url) || "";
+          const previewUrl = (data && data.preview) || url;
+          if (status) status.textContent = (data && data.msg) || msg || "完成";
+          if (preview && previewUrl) {
+            const img = document.createElement("img");
+            img.src = previewUrl;
+            img.style.maxWidth = "100%";
+            img.style.borderRadius = "12px";
+            preview.appendChild(img);
+          }
+        }, (msg) => {
+          if (status) status.textContent = "失败";
+          toast("生成失败：" + msg, true);
+        });
+      } catch (error) {
+        if (status) status.textContent = "失败";
+        toast("生成失败：" + (error.message || error), true);
+      }
+    }
+
+    const PHOTO_VIEW_LABELS = { front: "正面", side: "侧面", full: "全身" };
+    const photoSelected = { front: "", side: "", full: "" };
+    let photoTemplates = { front: {}, side: {}, full: {} };
+
+    function photoCard(src, options) {
+      const card = document.createElement("div");
+      card.dataset.photoCard = "1";
+      card.style.cssText = "position:relative;width:150px;padding:3px;border:2px solid transparent;border-radius:10px;cursor:pointer;opacity:0.9";
+      const img = document.createElement("img");
+      img.src = src;
+      img.style.cssText = "width:100%;border-radius:10px;display:block";
+      const check = document.createElement("input");
+      check.type = "checkbox";
+      check.checked = !!options.checked;
+      check.style.cssText = "position:absolute;top:8px;right:8px;width:20px;height:20px;z-index:2;cursor:pointer";
+      const label = document.createElement("div");
+      label.className = "sub";
+      label.textContent = options.label || "";
+      check.addEventListener("click", (event) => event.stopPropagation());
+      check.addEventListener("change", () => options.onCheck(check.checked, card, check));
+      card.addEventListener("click", () => {
+        if (options.isTemplate) {
+          check.checked = !check.checked;
+          options.onCheck(check.checked, card, check);
+        } else {
+          options.onCheck(true, card, check);
+        }
+      });
+      card.appendChild(check);
+      card.appendChild(img);
+      card.appendChild(label);
+      return card;
+    }
+
+    function refreshPhotoSaveState() {
+      document.querySelectorAll("[data-save-view]").forEach((button) => {
+        button.disabled = !photoSelected[button.dataset.saveView];
+      });
+    }
+
+    function selectPhotoCandidate(view, url, card, check) {
+      photoSelected[view] = url;
+      const box = document.querySelector('[data-cand="' + view + '"]');
+      if (box) {
+        box.querySelectorAll("[data-photo-card]").forEach((item) => {
+          item.style.borderColor = "transparent";
+          item.style.opacity = "0.9";
+          const input = item.querySelector("input");
+          if (input) input.checked = false;
+        });
+      }
+      card.style.borderColor = "#e06a9a";
+      card.style.opacity = "1";
+      if (check) check.checked = true;
+      refreshPhotoSaveState();
+    }
+
+    function renderPhotoViews(info) {
+      const box = document.getElementById("photoViews");
+      if (!box) return;
+      const templates = (info && info.templates) || {};
+      photoTemplates = templates;
+      box.textContent = "";
+      ["front", "side", "full"].forEach((view) => {
+        const tpl = templates[view] || {};
+        photoSelected[view] = "";
+        const row = document.createElement("div");
+        row.style.cssText = "margin-top:12px;padding:10px;border:1px solid #eadfe5;border-radius:12px";
+        const title = document.createElement("div");
+        title.className = "label";
+        title.textContent = PHOTO_VIEW_LABELS[view];
+        row.appendChild(title);
+
+        const candTitle = document.createElement("div");
+        candTitle.className = "sub";
+        candTitle.textContent = "生成预览（勾选一张后保存）";
+        row.appendChild(candTitle);
+        const candBox = document.createElement("div");
+        candBox.dataset.cand = view;
+        candBox.style.cssText = "display:flex;gap:10px;flex-wrap:wrap;min-height:60px;padding:6px;border:1px dashed #d9c3cf;border-radius:10px;margin-top:4px";
+        const candEmpty = document.createElement("div");
+        candEmpty.className = "sub";
+        candEmpty.textContent = "还没有生成，点上面的按钮生成";
+        candBox.appendChild(candEmpty);
+        const savedCandidate = (info && info.candidates && info.candidates[view]) || null;
+        if (savedCandidate && savedCandidate.preview) {
+          candBox.textContent = "";
+          const candCard = photoCard(savedCandidate.preview, {
+            label: PHOTO_VIEW_LABELS[view] || view,
+            checked: true,
+            onCheck: (checked, element) => {
+              if (checked) {
+                selectPhotoCandidate(view, savedCandidate.url || savedCandidate.file, element, element.querySelector("input"));
+              }
+            },
+          });
+          candBox.appendChild(candCard);
+          selectPhotoCandidate(view, savedCandidate.url || savedCandidate.file, candCard, candCard.querySelector("input"));
+        }
+        row.appendChild(candBox);
+        const viewSave = document.createElement("button");
+        viewSave.type = "button";
+        viewSave.dataset.saveView = view;
+        viewSave.textContent = "保存这个视角的模板";
+        viewSave.style.marginTop = "8px";
+        viewSave.disabled = !photoSelected[view];
+        viewSave.addEventListener("click", () => savePhotoPersona(view));
+        row.appendChild(viewSave);
+
+        const tplTitle = document.createElement("div");
+        tplTitle.className = "sub";
+        tplTitle.style.marginTop = "8px";
+        tplTitle.textContent = "模板预览（勾选 = 启用这个视角）";
+        row.appendChild(tplTitle);
+        const tplBox = document.createElement("div");
+        tplBox.dataset.tpl = view;
+        tplBox.style.cssText = "display:flex;gap:10px;flex-wrap:wrap;min-height:60px;padding:6px;border:1px dashed #cbd8d0;border-radius:10px;margin-top:4px";
+        if (tpl.preview) {
+          tplBox.appendChild(photoCard(tpl.preview, {
+            isTemplate: true,
+            checked: !!tpl.enabled,
+            label: "模板",
+            onCheck: (checked) => togglePhotoTemplate(view, checked),
+          }));
+        } else {
+          const empty = document.createElement("div");
+          empty.className = "sub";
+          empty.textContent = "这个视角还没有模板";
+          tplBox.appendChild(empty);
+        }
+        row.appendChild(tplBox);
+
+        const del = document.createElement("button");
+        del.type = "button";
+        del.textContent = "删除这个视角的模板";
+        del.style.marginTop = "8px";
+        del.addEventListener("click", () => deletePhotoTemplate(view));
+        row.appendChild(del);
+        box.appendChild(row);
+      });
+    }
+
+    async function togglePhotoTemplate(view, enabled) {
+      try {
+        const r = objectFrom(await call("photo/persona/toggle", { view, enabled }));
+        toast((r && r.msg) || "已更新");
+      } catch (error) {
+        toast("更新失败：" + (error.message || error), true);
+      }
+    }
+
+    async function deletePhotoTemplate(view) {
+      if (!window.confirm("确定删除" + (PHOTO_VIEW_LABELS[view] || view) + "模板？")) return;
+      try {
+        const r = objectFrom(await call("photo/persona/delete", { view }));
+        toast((r && r.msg) || "已删除");
+        await loadPhotoTemplate();
+      } catch (error) {
+        toast("删除失败：" + (error.message || error), true);
+      }
+    }
+
+    async function savePhotoPersona(view) {
+      const url = photoSelected[view];
+      if (!url) {
+        toast("先勾选一张候选图", true);
+        return;
+      }
+      try {
+        const r = objectFrom(await call("photo/persona", { url, view }));
+        if (r && r.code && r.code !== 0) throw new Error(r.msg || "保存失败");
+        toast("模板已保存");
+        photoSelected[view] = "";
+        const candBox = document.querySelector('[data-cand="' + view + '"]');
+        if (candBox) candBox.innerHTML = '<div class="sub">已保存为模板，重新生成可换</div>';
+        refreshPhotoSaveState();
+        await loadPhotoTemplate();
+      } catch (error) {
+        toast("保存失败：" + (error.message || error), true);
+      }
+    }
+
+    async function generatePhotoSheet(view) {
+      const status = document.getElementById("photoSheetStatus");
+      const candBox = document.querySelector('[data-cand="' + view + '"]');
+      if (status) status.textContent = "后台生成中（约 40-90 秒）…";
+      if (candBox) candBox.innerHTML = '<div class="sub">生成中…</div>';
+      photoSelected[view] = "";
+      refreshPhotoSaveState();
+      try {
+        const res = objectFrom(await call("photo/sheet", { view }));
+        const jobId = (res && (res.job || (res.data && res.data.job))) || "";
+        if (!jobId) throw new Error("没有拿到任务号");
+        await pollPhotoJob(jobId, (data) => {
+          const url = (data && data.url) || "";
+          const preview = (data && data.preview) || url;
+          if (status) status.textContent = (data && data.msg) || "完成";
+          if (!url || !candBox) return;
+          candBox.textContent = "";
+          const card = photoCard(preview, {
+            label: PHOTO_VIEW_LABELS[view] || view,
+            onCheck: (checked, element) => {
+              if (checked) selectPhotoCandidate(view, url, element, element.querySelector("input"));
+            },
+          });
+          candBox.appendChild(card);
+          selectPhotoCandidate(view, url, card, card.querySelector("input"));
+        }, (msg) => {
+          if (status) status.textContent = "失败";
+          if (candBox) candBox.innerHTML = '<div class="sub">生成失败，重新点一次生成</div>';
+          toast("生成失败：" + msg, true);
+        });
+      } catch (error) {
+        if (status) status.textContent = "失败";
+        toast("生成失败：" + (error.message || error), true);
+      }
+    }
+
+    async function savePhotoTemplateDir() {
+      const input = document.getElementById("photoTemplateDir");
+      const dir = input ? input.value.trim() : "";
+      try {
+        await call("photo/template_dir", { dir });
+        toast("模板位置已保存");
+        await loadPhotoTemplate();
+      } catch (error) {
+        toast("保存失败：" + (error.message || error), true);
+      }
+    }
+
+    async function openPhotoTemplateDir() {
+      try {
+        const data = objectFrom(await call("photo/template_open", {}));
+        const root = (data && data.root) || "";
+        let copied = false;
+        if (root && navigator.clipboard && navigator.clipboard.writeText) {
+          try {
+            await navigator.clipboard.writeText(root);
+            copied = true;
+          } catch (error) {
+            copied = false;
+          }
+        }
+        const message = copied
+          ? "已尝试打开；没弹窗的话路径已复制，可粘贴到资源管理器"
+          : "已尝试打开";
+        toast(message + "\n" + root, !(data && data.opened));
+      } catch (error) {
+        toast("打开失败：" + (error.message || error), true);
+      }
+    }
+
+    async function loadPhotoTemplate() {
+      try {
+        const info = objectFrom(await call("photo/template_dir", {}));
+        const input = document.getElementById("photoTemplateDir");
+        if (input) input.value = (info && info.configured) || "";
+        const line = document.getElementById("photoTemplateRoot");
+        if (line) {
+          const root = (info && info.root) || "";
+          line.textContent = root
+            ? "保存位置：" + root + (info.inside_plugin ? "（跟插件备份）" : "（不在插件目录，不跟插件备份）")
+            : "";
+        }
+        renderPhotoViews(info || {});
+      } catch (error) {
+        // 接口没就绪时忽略
+      }
+    }
+
     function objectFrom(res) {
       if (res && res.data && typeof res.data === "object" && !Array.isArray(res.data)) return res.data;
       return res && typeof res === "object" ? res : {};
@@ -1790,6 +2400,7 @@
       if (name === "schedule") loadSchedule();
       if (name === "profiles") loadProfiles();
       if (name === "gift") loadGift();
+      if (name === "photo") loadPhoto();
       if (name === "diary") loadDiary();
       if (name === "usage") loadUsage();
       if (name === "settings") {
@@ -1803,6 +2414,25 @@
     if (usageRefreshButton) usageRefreshButton.addEventListener("click", () => loadUsage(true));
     const giftRefreshButton = document.getElementById("giftRefresh");
     if (giftRefreshButton) giftRefreshButton.addEventListener("click", () => loadGift());
+    const photoRefreshButton = document.getElementById("photoRefresh");
+    if (photoRefreshButton) photoRefreshButton.addEventListener("click", () => loadPhoto());
+    const photoSaveButton = document.getElementById("photoSave");
+    if (photoSaveButton) photoSaveButton.addEventListener("click", () => savePhoto());
+    const photoTestButton = document.getElementById("photoTest");
+    if (photoTestButton) photoTestButton.addEventListener("click", () => testPhoto());
+    const photoGenButton = document.getElementById("photoGen");
+    if (photoGenButton) photoGenButton.addEventListener("click", () => generatePhotoPrompt());
+    const photoPromptSaveButton = document.getElementById("photoPromptSave");
+    if (photoPromptSaveButton) photoPromptSaveButton.addEventListener("click", () => savePhotoPrompt());
+    const photoPromptClearButton = document.getElementById("photoPromptClear");
+    if (photoPromptClearButton) photoPromptClearButton.addEventListener("click", () => clearPhotoPrompt());
+    document.querySelectorAll("[data-photo-view]").forEach((button) => {
+      button.addEventListener("click", () => generatePhotoSheet(button.dataset.photoView));
+    });
+    const photoTemplateSaveButton = document.getElementById("photoTemplateSave");
+    if (photoTemplateSaveButton) photoTemplateSaveButton.addEventListener("click", () => savePhotoTemplateDir());
+    const photoTemplateOpenButton = document.getElementById("photoTemplateOpen");
+    if (photoTemplateOpenButton) photoTemplateOpenButton.addEventListener("click", () => openPhotoTemplateDir());
 
     (function enableTabNav() {
       const wrap = document.querySelector(".tabnav");

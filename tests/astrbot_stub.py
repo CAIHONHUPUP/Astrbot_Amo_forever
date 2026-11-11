@@ -93,9 +93,27 @@ def install():
         def __init__(self, qq=""):
             self.qq = qq
 
+    class Image:
+        def __init__(self, file=None, **kwargs):
+            self.file = file
+            self.path = kwargs.get("path")
+
+        @classmethod
+        def fromFileSystem(cls, path, **kwargs):
+            return cls(file=str(path), path=str(path))
+
+        @classmethod
+        def fromBase64(cls, payload, **kwargs):
+            return cls(file="base64://" + str(payload))
+
+        @classmethod
+        def fromURL(cls, url, **kwargs):
+            return cls(file=str(url))
+
     components.Plain = Plain
     components.Reply = Reply
     components.At = At
+    components.Image = Image
 
     provider = types.ModuleType("astrbot.api.provider")
 
@@ -113,8 +131,8 @@ def install():
     result_mod = types.ModuleType("astrbot.core.message.message_event_result")
 
     class MessageChain:
-        def __init__(self):
-            self.chain = []
+        def __init__(self, chain=None):
+            self.chain = list(chain or [])
 
         def clear(self):
             self.chain.clear()

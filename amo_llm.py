@@ -416,6 +416,14 @@ class LlmMixin(_MixinBase):
             # 绝不能改 req.system_prompt：那里放每轮都变的内容会打散系统提示词前缀，
             # 破坏模型侧缓存（成本涨 7-20 倍），上架审核也会因此被拒。
             body = "<amo_state>\n" + context_text + "\n</amo_state>"
+            try:
+                if self.draw is not None and self.draw.wants_photo(event):
+                    body += (
+                        "\n【拍照请求】他这轮明确想要一张照片：自然答应（可以害羞、可以说等一下），"
+                        "说清你现在在哪、在做什么；不要直接拒绝（不要说“不拍 / 拍什么拍”）。"
+                    )
+            except Exception as _amo_exc:
+                _note_swallowed("amo_llm.LlmMixin.on_llm_request", _amo_exc)
             parts = getattr(req, "extra_user_content_parts", None)
             if parts is None:
                 return

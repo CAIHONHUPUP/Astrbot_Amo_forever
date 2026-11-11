@@ -159,6 +159,18 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
         from amo_human_state import HumanState
         from amo_llm_service import LLMService
 
+# ---- 画图 / 照片分享（本地功能，接万象画卷 OmniDraw）----
+try:
+    from .draw_engine import DrawEngine
+    from .photo_engine import PhotoEngine
+except ImportError:  # 直接按文件加载时
+    try:
+        from draw_engine import DrawEngine
+        from photo_engine import PhotoEngine
+    except Exception:  # 没装/导入失败时不影响主脑启动
+        DrawEngine = None
+        PhotoEngine = None
+
 
 
 # ---------------------------------------------------------------------------
@@ -446,6 +458,17 @@ WRITE_ROUTES = frozenset({
     "/worldview/regen", "/worldview_regen",
     "/say",
     "/city/set",
+    "/photo/test",
+    "/photo/prompt",
+    "/photo/prompt_saved",
+    "/photo/sheet",
+    "/photo/persona",
+    "/photo/persona/delete",
+    "/photo/persona/toggle",
+    "/photo/template_dir",
+    "/photo/template_open",
+    "/draw/test",
+    "/draw/decide",
     "/diary/write", "/diary/import", "/diary/open",
     "/refresh_status",
 })
@@ -495,6 +518,22 @@ class HumanCorePlugin(MemoryMixin, CommandMixin, ConfigMixin, MessageMixin, Soci
                 self.gift = GiftEngine(self)
             except Exception as exc:
                 logger.warning("[amo] 礼物引擎初始化失败: %s" % exc)
+        self.draw = None
+        if DrawEngine is not None:
+            try:
+                self.draw = DrawEngine(self)
+            except Exception as exc:
+                logger.warning("[amo] 画图引擎初始化失败: %s" % exc)
+        self.photo = None
+        if PhotoEngine is not None:
+            try:
+                self.photo = PhotoEngine(self)
+            except Exception as exc:
+                logger.warning("[amo] 照片引擎初始化失败: %s" % exc)
+        if self.draw is not None:
+            logger.info("[amo] 画图引擎已加载（%s）" % ("开" if self.draw.enabled else "关"))
+        if self.photo is not None:
+            logger.info("[amo] 照片引擎已加载（%s）" % ("开" if self.photo.enabled else "关"))
         self.heartflow = None
         self.segment_engine = None
         try:

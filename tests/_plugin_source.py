@@ -7,7 +7,8 @@ MODULES = ("main.py", "amo_shared.py", "amo_observability.py", "amo_db.py",
            "amo_memory_legacy.py", "amo_memory_bridge.py", "amo_memory_context.py", "amo_api.py",
            "amo_proactive.py", "amo_schedule.py", "amo_llm.py", "amo_memory.py",
            "amo_commands.py", "amo_config.py", "amo_message.py", "amo_social.py",
-           "amo_travel.py", "amo_runtime.py", "amo_kb.py", "amo_usage.py")
+           "amo_travel.py", "amo_runtime.py", "amo_kb.py", "amo_usage.py",
+           "draw_engine.py", "photo_engine.py")
 
 
 def module_paths(root):
