@@ -106,6 +106,11 @@ class ScheduleChangeTests(unittest.TestCase):
     def test_no_match_chat(self):
         self.assertIsNone(SC.detect_schedule_change("今天天气不错啊"))
 
+    def test_other_days_are_ignored(self):
+        # 只改今天：说明天/昨天的事不能动今天的日程
+        self.assertIsNone(SC.detect_schedule_change("明天我来接你"))
+        self.assertIsNone(SC.detect_schedule_change("昨天该睡了吧"))
+
     def test_apply_rewrites_current_slot(self):
         items = self._items()
         out = SC.apply_change(items, SC.detect_schedule_change("来接我"), self.NOW)

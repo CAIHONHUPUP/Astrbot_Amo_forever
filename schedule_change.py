@@ -76,6 +76,9 @@ _RULES: list[dict[str, Any]] = [
 _NEGATIONS = ("别", "不", "没", "甭", "勿")
 _NEGATION_WINDOW = 4
 _MAX_TEXT = 200
+# 只改"今天"：说了明天/后天/昨天的事，不该动今天的日程
+_OTHER_DAYS = ("明天", "后天", "下周", "下个月", "明早", "明晚", "明年",
+               "昨天", "前天", "上周", "上个月", "上次", "那时候")
 
 
 def _negated(raw: str, pos: int) -> bool:
@@ -87,6 +90,8 @@ def detect_schedule_change(text: str) -> dict[str, Any] | None:
     """返回 {activity, place, category, anchor} 或者 None。"""
     raw = re.sub(r"\s+", "", str(text or ""))
     if not raw or len(raw) > _MAX_TEXT:
+        return None
+    if any(word in raw for word in _OTHER_DAYS):
         return None
     for rule in _RULES:
         for key in rule["keys"]:
