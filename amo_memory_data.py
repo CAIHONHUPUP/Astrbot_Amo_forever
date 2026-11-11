@@ -120,6 +120,9 @@ class DataSyncMixin(_MixinBase):
     def _data_bot_id(self):
         return str(self.cfg_str("data_bot_id", "") or self.bot_name or "default")
     async def _data_call(self, name, *args, **kwargs):
+        # 写操作失败必须看得见：以前一律 debug，聊天记录/记忆写不进去也没人知道
+        _loud = name in ("add_message", "remember", "save_message")
+        _log_fail = logger.warning if _loud else logger.debug
         mem = self._data_mem()
         func = getattr(mem, name, None) if mem is not None else None
         if not callable(func):
@@ -144,12 +147,12 @@ class DataSyncMixin(_MixinBase):
                 try:
                     return await func(*args, **trimmed)
                 except Exception as exc:
-                    logger.debug("[amo] 数据插件 %s 调用失败: %s" % (name, exc))
+                    _log_fail("[amo] 数据插件 %s 调用失败: %s" % (name, exc))
                     return None
-            logger.debug("[amo] 数据插件 %s 参数不匹配" % name)
+            _log_fail("[amo] 数据插件 %s 参数不匹配" % name)
             return None
         except Exception as exc:
-            logger.debug("[amo] 数据插件 %s 调用失败: %s" % (name, exc))
+            _log_fail("[amo] 数据插件 %s 调用失败: %s" % (name, exc))
             return None
     async def _push_profile_to_data(self, uid, profile=None, platform=""):
         """把本地画像推给数据插件（名字/称呼/关系/备注），顺带记下平台身份。

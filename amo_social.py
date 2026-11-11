@@ -181,7 +181,7 @@ class SocialMixin(_MixinBase):
                 platform=self._platform_of(event), message_id=self._event_message_id(event),
             )
         except Exception as exc:
-            logger.debug("[amo] 聊天记录同步失败: %s" % exc)
+            logger.warning("[amo] 聊天记录同步失败: %s" % exc)
 
         senti = sentiment(text)
         affection = to_int(profile.get("affection"), 10)

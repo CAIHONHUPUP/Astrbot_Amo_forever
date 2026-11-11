@@ -194,6 +194,7 @@ class MessageMixin(_MixinBase):
 
     async def _handle_message(self, event):
         if not self._ready or self.state is None:
+            logger.warning("[amo] 还没初始化完成，这条消息先不处理（ready=%s）" % self._ready)
             return
         self._reload_config_if_changed()
         await self._sync_persona_name(event)
@@ -221,7 +222,8 @@ class MessageMixin(_MixinBase):
             return
         if private and self.cfg_bool("private_debounce_enabled", True):
             # 同一个人连着发的几条先合起来，只让最后一条走完整回复流程
-            if not await self._debounce_private(event, text):
+            ok_debounce = await self._debounce_private(event, text)
+            if not ok_debounce:
                 return
             text = (event.message_str or "").strip()
             if not text:

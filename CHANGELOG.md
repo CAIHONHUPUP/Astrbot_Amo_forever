@@ -1,6 +1,31 @@
 # Changelog
 
+## 6.8.6（修：模块化之后所有 handler 都没生效）
+
+**症状**：11-10 15:27 之后，amo 不再处理消息——你说的话不进聊天记录、`/amo` 命令没反应、
+`<amo_state>` 不注入；但核心 LLM 还在回复（人设没变，所以只有"记忆停在过去"这一个破绽）。
+
+**根因**：AstrBot 的 `StarHandlerRegistry` 只认 `handler_module_path == 插件主模块（main）` 的 handler：
+- 加载时按这个路径找 handler 做实例绑定（`get_handlers_by_module_name`）；
+- 派发时用 `star_map[handler_module_path].activated` 判断插件是否启用。
+
+模块化重构把 handler 都放进了 `amo_commands` / `amo_runtime` / `amo_llm` 子模块，
+20 个 handler 的 `handler_module_path` 全是子模块路径 → 绑定拿不到、启停判为"找不到插件"，
+**全部被静默跳过**（AstrBot 那两处都不打日志）。
+
+**修法**：`main.py` 新增 `_align_handler_module_paths()`，在模块导入时把本插件子模块里注册的
+handler 的 `handler_module_path` / `handler_full_name` 归一到插件主模块，并同步
+`star_handlers_map`。AstrBot 随后的实例绑定与启停判断就都正常了。
+
+**验证**：`tests/test_handler_paths.py` 4 项；线上日志
+`[amo] handler 路径归一完成：20 个`，随后 webchat 自检消息走完
+`_handle_message → 防抖 → 私聊判定`，用户消息重新写进想记。
+
+另外把三处静默失败改成 warning（聊天记录同步失败 / 数据插件写类调用失败 / 想记写聊天记录失败），
+以后这类"写不进去但没人知道"的问题会直接出现在日志里。
+
 ## 6.8.4（群聊 / 私聊记忆隔离收口 + P2）
+
 
 数据插件（我想永远记住你）那边已经能按 scope / group_id 分桶，但陪伴这边**写入链路没有这两个参数**：
 `_write_memory_checked` / `_data_memory_write` 只有 4 个参数，能力层 `hub.remember(...)` 明明支持

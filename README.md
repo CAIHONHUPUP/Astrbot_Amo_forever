@@ -4,7 +4,14 @@
 >
 > 反馈、Bug、建议请加 QQ 群：**1055679275**
 
+## 6.8.6 修 handler 全部失效
+
+- 模块化重构后 handler 的 `module_path` 是子模块，AstrBot 只认主模块路径 → 20 个 handler 被静默跳过；
+- 新增 `_align_handler_module_paths()`，导入时归一到主模块（绑定与启停判断都依赖它）；
+- 三处静默失败改 warning；新增 `tests/test_handler_paths.py`。
+
 ## 6.8.4 群聊 / 私聊记忆隔离
+
 
 - 写入链路补上 `scope` / `group_id`：群里记住的东西不再落进私聊记忆桶；
 - `/amo memo` 按当前会话决定写进群还是私聊；
