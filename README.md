@@ -1,10 +1,12 @@
 # 我想永远陪伴你
 
+> by 彩虹upup · 感谢《我会永远陪伴你》和《我想永远陪伴你》的作者
+
 > GitHub：https://github.com/GM888888456/Astrbot_Amo_forever
 >
 > 反馈、Bug、建议请加 QQ 群：**1055679275**
 
-## 6.8.8 面板与删画像
+## 6.8.20 署名与致谢
 
 - 模块化重构后 handler 的 `module_path` 是子模块，AstrBot 只认主模块路径 → 20 个 handler 被静默跳过；
 - 新增 `_align_handler_module_paths()`，导入时归一到主模块（绑定与启停判断都依赖它）；
