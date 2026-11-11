@@ -98,6 +98,10 @@ class PhotoPromptViewTests(unittest.TestCase):
         self.assertNotIn("眯二十分钟", prompt)
         self.assertIn("工位", prompt)
 
+    def test_scenery_keeps_today_outfit_on_sleeve(self):
+        prompt = PhotoEngine._prompt_for(self.engine, "daily", "", self.activity)
+        self.assertIn("今天穿的是", prompt)
+
     def test_scenery_allows_passersby_but_not_her(self):
         prompt = PhotoEngine._prompt_for(self.engine, "daily", "", self.activity)
         self.assertIn("路人", prompt)

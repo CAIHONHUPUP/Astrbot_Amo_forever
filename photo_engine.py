@@ -515,7 +515,9 @@ class PhotoEngine:
             # 日常：只留地点，不带「她在做什么」（否则和空镜打架）
             head = prefix + (place or "日常") + "，生活空镜，生活感"
         light = self._time_light() if hasattr(self, "_time_light") else "自然光"
-        return (head + "，" + light + "，" + SCENERY_ONLY + "，" + VIEW_POV).strip("，")
+        # 她拍的空镜里她本人不出镜，但最多露出的手/袖口仍要跟今天的穿搭一致
+        outfit_line = "她今天穿的是%s，画面边缘露出的手或袖口必须和这套一致" % self.outfit_today()
+        return (head + "，" + light + "，" + outfit_line + "，" + SCENERY_ONLY + "，" + VIEW_POV).strip("，")
 
     def _selfie_prompt_for(self, kind, scene, activity):
         place = self._clean_place(activity.get("place"))
