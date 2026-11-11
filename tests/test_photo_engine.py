@@ -125,6 +125,7 @@ BASE = {
     "photo_selfie_ratio": 0,
     "photo_daily_cap": 4,
     "photo_delay": 0,
+    "photo_quiet_hours": "",
 }
 
 
@@ -132,7 +133,10 @@ def engine_for(cfg=None, omni=None):
     merged = dict(BASE)
     merged.update(cfg or {})
     plugin = FakePlugin(merged, omni if omni is not None else FakeOmni())
-    return PhotoEngine(plugin), plugin
+    engine = PhotoEngine(plugin)
+    # 固定到 21:00，避免测试结果随真实时间（深夜静默）漂移
+    engine._now_parts = lambda: (0, 21 * 60)
+    return engine, plugin
 
 
 def run_tick(engine, plugin):

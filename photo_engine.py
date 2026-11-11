@@ -23,6 +23,7 @@ import json
 import os
 import random
 import time
+import urllib.error
 import urllib.request
 
 from astrbot.api import logger
@@ -669,6 +670,7 @@ class PhotoEngine:
         if self._cfg_bool("photo_dry_run", False):
             logger.info("[amo] 照片（dry-run）%s：%s" % ("自拍" if selfie else "街景", prompt))
             return False
+        started = time.monotonic()
         item = await self._generate(omni, prompt, selfie)
         if not item and selfie:
             # 自拍链路失败（没参考图/节点不支持）→ 退回空镜，别让这一次白掷；
@@ -677,7 +679,11 @@ class PhotoEngine:
         if not item:
             self._stats["failed"] += 1
             return False
-        item = await self._localize(item)
+        localized = await self._localize(item)
+        if localized is not item:
+            item = localized
+        logger.info("[amo] 照片耗时 %.1fs（生成+本地化，%s）" % (
+            time.monotonic() - started, "自拍" if selfie else "街景"))
         umo = self._target_umo(profile)
         if not await self._send(umo, item):
             self._stats["failed"] += 1
@@ -942,7 +948,7 @@ class PhotoEngine:
             _note_swallowed("photo_engine.PhotoEngine._localize", _amo_exc)
             return item
         digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
-        for _ in range(3):
+        for _ in range(2):
             try:
                 payload, content_type = await asyncio.to_thread(self._fetch_image, url)
                 if "png" in content_type or payload[:8] == b"\x89PNG\r\n\x1a\n":
@@ -957,15 +963,19 @@ class PhotoEngine:
                 copied = dict(item)
                 copied["file_path"] = target
                 return copied
+            except urllib.error.HTTPError as _amo_exc:
+                # 403/404 重试也没用，直接走原图发送
+                _note_swallowed("photo_engine.PhotoEngine._localize", _amo_exc)
+                break
             except Exception as _amo_exc:
                 _note_swallowed("photo_engine.PhotoEngine._localize", _amo_exc)
-                await asyncio.sleep(2)
+                await asyncio.sleep(1)
         return item
 
     @staticmethod
     def _fetch_image(url):
         """线程里把图片读完再回来；事件循环里 read() 会把整条链路卡住。"""
-        with urllib.request.urlopen(url, timeout=60) as response:
+        with urllib.request.urlopen(url, timeout=20) as response:
             content_type = str(response.headers.get("Content-Type") or "").lower()
             payload = response.read(_MAX_IMAGE_BYTES + 1)
         if len(payload) > _MAX_IMAGE_BYTES:

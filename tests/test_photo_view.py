@@ -98,6 +98,11 @@ class PhotoPromptViewTests(unittest.TestCase):
         self.assertNotIn("眯二十分钟", prompt)
         self.assertIn("工位", prompt)
 
+    def test_scenery_allows_passersby_but_not_her(self):
+        prompt = PhotoEngine._prompt_for(self.engine, "daily", "", self.activity)
+        self.assertIn("路人", prompt)
+        self.assertIn("不出现她本人", prompt)
+
     def test_outfit_fallback_has_no_face(self):
         # 自拍失败时的兜底：没有参考图就别硬画脸
         prompt = PhotoEngine._prompt_for(self.engine, "outfit", "", self.activity)
