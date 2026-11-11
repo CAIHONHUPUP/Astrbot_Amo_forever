@@ -3832,13 +3832,7 @@ class HumanState:
         llm = getattr(self.p, "llm", None)
         if llm is None or self.engine is None:
             return {"total": 0, "error": "llm 或 engine 不可用"}
-        try:
-            from .schedule_engine import json_extract_list
-        except Exception:
-            try:
-                from schedule_engine import json_extract_list  # type: ignore
-            except Exception:
-                return
+        # json_extract_list 就在本模块，不用再 import
         context = self.schedule_context(day) or {}
         weather = ""
         try:
