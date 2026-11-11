@@ -1,5 +1,24 @@
 # Changelog
 
+## 6.8.2（6.8.0 合并后的收口）
+
+合并照片/画图分支时混进来的三处问题，以及两个引擎的重复代码：
+
+- **覆盖率底线被盖回去**：`.coveragerc` 的 `fail_under` 在 main 上是 62，照片分支从旧基线
+  拉出来时带着 40，合并后把 62 覆盖成 40，等于白拆一道闸。现按实测（Windows 跳过 7 项 tzset，
+  67%）抬到 65。
+- **面板整份被转成 CRLF**：`views/dashboard/index.html` 在 6.8.0 里 3718 行全变 CRLF，
+  真实改动只有 635+/5−，diff 却显示 3718+/3088−。已转回 LF。
+- **新增 `amo_image_common.py`**：照片引擎与画图引擎重复的「读配置 / 找万象画卷实例 /
+  起后台任务 / 生图结果转消息组件 / 地点词清理」收成一份（两边曾漂移，`_clean_place`
+  一边截断一边不截）。
+- **三视图同步不再直接写万象画卷的配置文件**：以前直接读改它的 `config_path` 和 AstrBot 侧
+  `astrbot_plugin_omnidraw_config.json`，还把 list 写进了它期望字符串的 `persona_ref_image`；
+  现在只走它自己的 `_apply_runtime_config` + `_persist_config`，格式和校验由它负责，
+  接口缺失时退化成只改内存。
+
+测试 1401 passed / 7 skipped；mypy 0；覆盖率 67%。
+
 ## 6.8.0（日子类型 + 日程指令 + 按话改日程）
 
 ### 新增：日子类型

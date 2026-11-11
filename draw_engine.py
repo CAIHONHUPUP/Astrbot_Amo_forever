@@ -55,25 +55,42 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
     except Exception:  # pragma: no cover - 只在极端导入方式下走到
         _amo_logger = logger
 
-try:
-    from astrbot.api.message_components import Image
-except ImportError:  # 老版本/兼容路径
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
+    from .amo_image_common import (
+        MessageChain,
+        cfg,
+        clean_place,
+        find_omni,
+        image_component,
+        spawn,
+        split_keywords,
+    )
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from astrbot.api.event.components import Image
-    except Exception:  # pragma: no cover
-        Image = None
-
-try:
-    from astrbot.core.message.message_event_result import MessageChain
-except Exception:  # pragma: no cover - 单测会注入桩
-    MessageChain = None
+        from .amo_image_common import (
+            MessageChain,
+            cfg,
+            clean_place,
+            find_omni,
+            image_component,
+            spawn,
+            split_keywords,
+        )
+    except ImportError:  # 直接按文件加载时
+        from amo_image_common import (
+            MessageChain,
+            cfg,
+            clean_place,
+            find_omni,
+            image_component,
+            spawn,
+            split_keywords,
+        )
 
 # 生图可能卡死；最多等 3 分钟就放弃这一次
 GENERATE_TIMEOUT_SECONDS = 180
 # data_url 是 base64，超过这个长度就不进 kv（否则数据库会被撑大）
 _MAX_CACHED_DATA_URL = 200000
-
-OMNI_PLUGIN_NAME = "astrbot_plugin_omnidraw"
 
 DEFAULT_TOPIC_KEYWORDS = (
     "吃什么,吃啥,吃点什么,想吃什么,去哪吃,在干嘛,在做什么,做什么,好饿,饿了,"
@@ -114,7 +131,7 @@ SCENE_KEYWORDS = (
 
 
 def _split_keywords(text):
-    return [item.strip() for item in str(text or "").replace("，", ",").split(",") if item.strip()]
+    return split_keywords(text)
 
 
 def clean_explicit_prompt(text):
@@ -152,32 +169,16 @@ class DrawEngine:
     # ---------- 配置 ----------
 
     def _cfg_bool(self, key, default=False):
-        try:
-            return bool(self.plugin.cfg_bool(key, default))
-        except Exception as _amo_exc:
-            _note_swallowed("draw_engine.DrawEngine._cfg_bool", _amo_exc)
-            return default
+        return cfg(self.plugin, key, default, bool, "draw_engine.DrawEngine._cfg_bool")
 
     def _cfg_int(self, key, default=0):
-        try:
-            return int(self.plugin.cfg_int(key, default))
-        except Exception as _amo_exc:
-            _note_swallowed("draw_engine.DrawEngine._cfg_int", _amo_exc)
-            return default
+        return cfg(self.plugin, key, default, int, "draw_engine.DrawEngine._cfg_int")
 
     def _cfg_float(self, key, default=0.0):
-        try:
-            return float(self.plugin.cfg_float(key, default))
-        except Exception as _amo_exc:
-            _note_swallowed("draw_engine.DrawEngine._cfg_float", _amo_exc)
-            return default
+        return cfg(self.plugin, key, default, float, "draw_engine.DrawEngine._cfg_float")
 
     def _cfg_str(self, key, default=""):
-        try:
-            return str(self.plugin.cfg_str(key, default))
-        except Exception as _amo_exc:
-            _note_swallowed("draw_engine.DrawEngine._cfg_str", _amo_exc)
-            return default
+        return cfg(self.plugin, key, default, str, "draw_engine.DrawEngine._cfg_str")
 
     @property
     def enabled(self):
@@ -359,12 +360,7 @@ class DrawEngine:
 
     @staticmethod
     def _clean_place(place):
-        place = str(place or "").strip()
-        if not place:
-            return ""
-        if "桌" in place or place.startswith("他") or place.startswith("她"):
-            return "家里"
-        return place[:16]
+        return clean_place(place)
 
     def _current_scene(self):
         """她此刻真实在哪、在干嘛（来自日程）。"""
@@ -604,20 +600,7 @@ class DrawEngine:
     # ---------- 任务 ----------
 
     def _spawn(self, coro):
-        try:
-            spawned = self.plugin._spawn(coro)
-            if spawned is not None:
-                return spawned
-        except Exception as _amo_exc:
-            _note_swallowed("draw_engine.DrawEngine._spawn", _amo_exc)
-        try:
-            return asyncio.create_task(coro)
-        except RuntimeError:
-            try:
-                coro.close()
-            except Exception:
-                pass
-            return None
+        return spawn(self.plugin, coro, "draw_engine.DrawEngine._spawn")
 
     def _schedule(self, event, prompt, reason, cached=None, cache_key="", selfie=False):
         uid = str(self.plugin._canonical_uid(event) or "")
@@ -678,23 +661,7 @@ class DrawEngine:
 
     def _find_omni(self):
         """拿万象画卷插件实例；没装/没启用返回 None。"""
-        now = time.monotonic()
-        if self._omni is not None and now - self._omni_checked < 60:
-            return self._omni
-        self._omni_checked = now
-        self._omni = None
-        try:
-            context = getattr(self.plugin, "context", None)
-            getter = getattr(context, "get_registered_star", None) if context else None
-            if getter is None:
-                return None
-            meta = getter(OMNI_PLUGIN_NAME)
-            instance = getattr(meta, "star_cls", None) if meta else None
-            if instance is not None and hasattr(instance, "generate_images_for_plugin"):
-                self._omni = instance
-        except Exception as _amo_exc:
-            _note_swallowed("draw_engine.DrawEngine._find_omni", _amo_exc)
-        return self._omni
+        return find_omni(self.plugin, self, "draw_engine.DrawEngine._find_omni")
 
     async def _generate(self, event, prompt, selfie=False):
         omni = self._find_omni()
@@ -733,28 +700,7 @@ class DrawEngine:
 
     @staticmethod
     def _image_component(item):
-        if Image is None:
-            return None
-        data_url = str(item.get("data_url") or "")
-        if data_url:
-            payload = data_url.split(",", 1)[1] if "," in data_url else data_url
-            try:
-                return Image.fromBase64(payload)
-            except Exception as _amo_exc:
-                _note_swallowed("draw_engine.DrawEngine._image_component", _amo_exc)
-        path = str(item.get("file_path") or "")
-        if path:
-            try:
-                return Image.fromFileSystem(path)
-            except Exception as _amo_exc:
-                _note_swallowed("draw_engine.DrawEngine._image_component", _amo_exc)
-        url = str(item.get("url") or item.get("image_url") or "")
-        if url.startswith("http"):
-            try:
-                return Image.fromURL(url)
-            except Exception as _amo_exc:
-                _note_swallowed("draw_engine.DrawEngine._image_component", _amo_exc)
-        return None
+        return image_component(item)
 
     async def _send_image(self, event, item):
         component = self._image_component(item)

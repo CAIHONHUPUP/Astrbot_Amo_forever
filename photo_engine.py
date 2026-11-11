@@ -65,18 +65,37 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
             def quiet_now(_spec):
                 return False
 
-try:
-    from astrbot.api.message_components import Image
-except ImportError:  # 老版本/兼容路径
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
+    from .amo_image_common import (
+        MessageChain,
+        apply_persona_config,
+        cfg,
+        clean_place,
+        find_omni,
+        image_component,
+        spawn,
+    )
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from astrbot.api.event.components import Image
-    except Exception:  # pragma: no cover
-        Image = None
-
-try:
-    from astrbot.core.message.message_event_result import MessageChain
-except Exception:  # pragma: no cover - 单测会注入桩
-    MessageChain = None
+        from .amo_image_common import (
+            MessageChain,
+            apply_persona_config,
+            cfg,
+            clean_place,
+            find_omni,
+            image_component,
+            spawn,
+        )
+    except ImportError:  # 直接按文件加载时
+        from amo_image_common import (
+            MessageChain,
+            apply_persona_config,
+            cfg,
+            clean_place,
+            find_omni,
+            image_component,
+            spawn,
+        )
 
 # 生图可能卡住/返回超大图：都设上限，别把事件循环和数据库拖死
 GENERATE_TIMEOUT_SECONDS = 180
@@ -134,45 +153,18 @@ class PhotoEngine:
         self._stats = {"sent": 0, "failed": 0, "rolled": 0}
 
     def _spawn(self, coro):
-        try:
-            spawned = self.plugin._spawn(coro)
-            if spawned is not None:
-                return spawned
-        except Exception as _amo_exc:
-            _note_swallowed("photo_engine.PhotoEngine._spawn", _amo_exc)
-        try:
-            import asyncio
-
-            return asyncio.create_task(coro)
-        except RuntimeError:
-            try:
-                coro.close()
-            except Exception:
-                pass
-            return None
+        return spawn(self.plugin, coro, "photo_engine.PhotoEngine._spawn")
 
     # ---------- 配置 ----------
 
     def _cfg_bool(self, key, default=False):
-        try:
-            return bool(self.plugin.cfg_bool(key, default))
-        except Exception as _amo_exc:
-            _note_swallowed("photo_engine.PhotoEngine._cfg_bool", _amo_exc)
-            return default
+        return cfg(self.plugin, key, default, bool, "photo_engine.PhotoEngine._cfg_bool")
 
     def _cfg_int(self, key, default=0):
-        try:
-            return int(self.plugin.cfg_int(key, default))
-        except Exception as _amo_exc:
-            _note_swallowed("photo_engine.PhotoEngine._cfg_int", _amo_exc)
-            return default
+        return cfg(self.plugin, key, default, int, "photo_engine.PhotoEngine._cfg_int")
 
     def _cfg_str(self, key, default=""):
-        try:
-            return str(self.plugin.cfg_str(key, default))
-        except Exception as _amo_exc:
-            _note_swallowed("photo_engine.PhotoEngine._cfg_str", _amo_exc)
-            return default
+        return cfg(self.plugin, key, default, str, "photo_engine.PhotoEngine._cfg_str")
 
     @property
     def enabled(self):
@@ -414,14 +406,7 @@ class PhotoEngine:
     @staticmethod
     def _clean_place(place):
         """日程里的 place 有时是「他桌面上」这种动作描述，不适合当拍照地点。"""
-        place = str(place or "").strip()
-        if not place:
-            return ""
-        if "桌" in place or place.startswith("他") or place.startswith("她"):
-            return "家里"
-        if len(place) > 16:
-            return place[:16]
-        return place
+        return clean_place(place)
 
     def outfit_today(self):
         """今天的固定穿搭：同一天所有自拍都穿这一套，场景变了也不换。"""
@@ -490,29 +475,13 @@ class PhotoEngine:
         )
 
     def _find_omni(self):
-        now = time.monotonic()
-        if self._omni is not None and now - self._omni_checked < 60:
-            return self._omni
-        self._omni_checked = now
-        self._omni = None
-        try:
-            context = getattr(self.plugin, "context", None)
-            getter = getattr(context, "get_registered_star", None) if context else None
-            if getter is None:
-                return None
-            meta = getter("astrbot_plugin_omnidraw")
-            instance = getattr(meta, "star_cls", None) if meta else None
-            if instance is not None and hasattr(instance, "generate_images_for_plugin"):
-                self._omni = instance
-        except Exception as _amo_exc:
-            _note_swallowed("photo_engine.PhotoEngine._find_omni", _amo_exc)
-        return self._omni
+        return find_omni(self.plugin, self, "photo_engine.PhotoEngine._find_omni")
 
     def _selfie_ready(self, omni):
         try:
-            cfg = getattr(omni, "plugin_config", None)
-            ref = str(getattr(cfg, "persona_ref_image", "") or "")
-            base = str(getattr(cfg, "persona_base_prompt", "") or "")
+            conf = getattr(omni, "plugin_config", None)
+            ref = str(getattr(conf, "persona_ref_image", "") or "")
+            base = str(getattr(conf, "persona_base_prompt", "") or "")
             return bool(ref or base)
         except Exception as _amo_exc:
             _note_swallowed("photo_engine.PhotoEngine._selfie_ready", _amo_exc)
@@ -547,28 +516,7 @@ class PhotoEngine:
 
     @staticmethod
     def _image_component(item):
-        if Image is None:
-            return None
-        data_url = str(item.get("data_url") or "")
-        if data_url:
-            payload = data_url.split(",", 1)[1] if "," in data_url else data_url
-            try:
-                return Image.fromBase64(payload)
-            except Exception as _amo_exc:
-                _note_swallowed("photo_engine.PhotoEngine._image_component", _amo_exc)
-        path = str(item.get("file_path") or "")
-        if path:
-            try:
-                return Image.fromFileSystem(path)
-            except Exception as _amo_exc:
-                _note_swallowed("photo_engine.PhotoEngine._image_component", _amo_exc)
-        url = str(item.get("url") or item.get("image_url") or "")
-        if url.startswith("http"):
-            try:
-                return Image.fromURL(url)
-            except Exception as _amo_exc:
-                _note_swallowed("photo_engine.PhotoEngine._image_component", _amo_exc)
-        return None
+        return image_component(item)
 
     async def _send(self, umo, item):
         if not umo or MessageChain is None:
@@ -1045,45 +993,20 @@ class PhotoEngine:
         refs = self.persona_refs()
         return await self.generate_custom(prompts.get(str(view), prompts["front"]), refs=refs)
 
-    def _omni_native_config(self):
-        try:
-            base = os.path.dirname(str(self.plugin.db.path))
-            data_root = os.path.dirname(os.path.dirname(base))
-            return os.path.join(data_root, "config", "astrbot_plugin_omnidraw_config.json")
-        except Exception:
-            return ""
-
     def _sync_omni_refs(self):
+        """把三视图同步给万象画卷。
+
+        以前这里直接读/写它的 ``config_path`` 和 AstrBot 的
+        ``astrbot_plugin_omnidraw_config.json``，而且把 list 写进了它期望字符串的
+        ``persona_ref_image`` 键——它一改 schema 就会写坏/写空。现在只走它自己的
+        配置入口（``_apply_runtime_config`` + ``_persist_config``），格式和校验都由它负责。
+        """
         refs = self.persona_refs()
         omni = self._find_omni()
         if omni is None:
             return
-        cfg = getattr(omni, "plugin_config", None)
-        if cfg is not None:
-            try:
-                cfg.persona_ref_image = refs[0] if refs else ""
-                cfg.persona_ref_images = list(refs)
-                for profile in getattr(cfg, "personas", []) or []:
-                    try:
-                        profile.ref_images = list(refs)
-                    except Exception:
-                        pass
-            except Exception as exc:
-                logger.debug("[amo] 更新万象画卷内存人设失败: %s" % exc)
-        paths = [getattr(omni, "config_path", ""), self._omni_native_config()]
-        for persist in paths:
-            if not persist or not os.path.exists(persist):
-                continue
-            try:
-                data = json.load(open(persist, encoding="utf-8-sig"))
-                persona = data.get("persona_config") or {}
-                persona["persona_ref_image"] = list(refs)
-                for profile in (persona.get("profiles") or []):
-                    profile["persona_ref_image"] = list(refs)
-                data["persona_config"] = persona
-                json.dump(data, open(persist, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-            except Exception as exc:
-                logger.warning("[amo] 写万象画卷人设失败(%s): %s" % (os.path.basename(persist), exc))
+        if not apply_persona_config(omni, refs, "photo_engine.PhotoEngine._sync_omni_refs"):
+            logger.debug("[amo] 万象画卷没有可用的配置入口，本次只在内存里更新参考图")
 
     async def adopt_persona(self, url, view="front"):
         """把选中的三视图存成对应视角的模板，以后生图都用它。"""
