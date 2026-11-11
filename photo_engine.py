@@ -97,6 +97,11 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
             spawn,
         )
 
+try:  # 视角后缀：她出镜=自拍视角，她拍环境=她的拍摄视角（空镜）
+    from .photo_view import SCENERY_ONLY, VIEW_POV, VIEW_SELFIE
+except ImportError:  # 直接按文件加载时
+    from photo_view import SCENERY_ONLY, VIEW_POV, VIEW_SELFIE
+
 # 生图可能卡住/返回超大图：都设上限，别把事件循环和数据库拖死
 GENERATE_TIMEOUT_SECONDS = 180
 _MAX_IMAGE_BYTES = 16 * 1024 * 1024
@@ -446,20 +451,28 @@ class PhotoEngine:
         return text
 
     def _prompt_for(self, kind, scene, activity):
+        """非自拍：她拍的环境。一律空镜 + 她的拍摄视角，画面里不出现她本人。
+
+        以前这里会把「她在做什么」原样拼进去（比如「边对边打哈欠」），
+        那句话要求画面里有个人，和「不出现她」打架，模型只能自己现编一张脸
+        —— 2026-11-11 那批「长相画风全变」的照片就是这么来的。
+        """
         prefix = self._cfg_str("photo_prompt_prefix", "手机随手拍，真实自然，生活感，")
         place = self._clean_place(activity.get("place"))
         act = str(activity.get("activity") or "")
-        if kind == "outfit":
-            return "自拍，穿着%s，在%s，自然光，手机前置摄像头，生活感" % (
-                self.outfit_today(), place or "家门口"
-            )
         if kind == "travel":
-            return (prefix + (scene or act or "风景区") + "，风景照，自然光").strip("，")
-        if kind == "shopping":
-            return (prefix + (scene or "商场街边") + "，街景，生活感").strip("，")
-        if kind == "weekend":
-            return (prefix + (act or "周末出门走走") + "，街景，生活感").strip("，")
-        return (prefix + (act or "日常生活") + ("，在" + place if place else "")).strip("，")
+            head = prefix + (scene or act or "风景区") + "，风景照，自然光"
+        elif kind == "shopping":
+            head = prefix + (scene or "商场街边") + "，街景，生活感"
+        elif kind == "weekend":
+            head = prefix + (act or "周末出门走走") + "，街景，生活感"
+        elif kind == "outfit":
+            # 自拍失败时的兜底：没有参考图就别硬画脸，只拍今天这套衣服
+            head = prefix + "%s，%s的衣服细节，生活感" % (place or "家门口", self.outfit_today())
+        else:
+            # 日常：只留地点，不带「她在做什么」（否则和空镜打架）
+            head = prefix + (place or "日常") + "，生活空镜，生活感"
+        return (head + "，" + SCENERY_ONLY + "，" + VIEW_POV).strip("，")
 
     def _selfie_prompt_for(self, kind, scene, activity):
         place = self._clean_place(activity.get("place"))
@@ -470,8 +483,9 @@ class PhotoEngine:
             where = scene or place or "商场"
         else:
             where = place or "家附近"
-        return "自拍，穿着%s，在%s，%s，自然光，手机前置摄像头，生活感" % (
-            self.outfit_today(), where, act or "随手拍"
+        # 视角：她本人出镜 → 自拍视角（前置摄像头、手臂伸出、人物占主体）
+        return "自拍，穿着%s，在%s，%s，自然光，生活感，%s" % (
+            self.outfit_today(), where, act or "随手拍", VIEW_SELFIE
         )
 
     def _find_omni(self):
@@ -587,8 +601,9 @@ class PhotoEngine:
             return False
         item = await self._generate(omni, prompt, selfie)
         if not item and selfie:
-            # 自拍链路失败（没参考图/节点不支持）→ 退回普通图，别让这一次白掷
-            item = await self._generate(omni, self._prompt_for(kind, scene, activity), False)
+            # 自拍链路失败（没参考图/节点不支持）→ 退回空镜，别让这一次白掷；
+            # 注意不能退回 selfie 提示词，那样会画出一张「没有她的自拍」
+            item = await self._generate(omni, self._prompt_for("scenery", scene, activity), False)
         if not item:
             self._stats["failed"] += 1
             return False

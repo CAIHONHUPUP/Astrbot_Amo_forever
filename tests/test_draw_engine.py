@@ -220,6 +220,23 @@ class DecideTests(unittest.TestCase):
         self.assertIn("穿着", plan["prompt"])
         self.assertIn("米色针织衫", plan["prompt"])
 
+    def test_person_request_without_selfie_word_is_still_selfie(self):
+        # 「拍张你在工位的照片」以前算普通配图：脸和画风全飘（2026-11-11 实测）
+        engine, _ = engine_for()
+        plan = engine.decide(FakeEvent("拍张你在工位的照片给我看看"), "在呀")
+        self.assertIsNotNone(plan)
+        self.assertTrue(plan.get("selfie"))
+        self.assertIn("自拍视角", plan["prompt"])
+
+    def test_pov_request_draws_empty_shot_from_her_eyes(self):
+        # 「你看到的海」是她的视角：空镜、人不出镜，不能走自拍
+        engine, _ = engine_for()
+        plan = engine.decide(FakeEvent("画一张你看到的海"), "在呀")
+        self.assertIsNotNone(plan)
+        self.assertFalse(plan.get("selfie"))
+        self.assertIn("空镜", plan["prompt"])
+        self.assertIn("她的拍摄视角", plan["prompt"])
+
     def test_selfie_uses_previous_line_as_subject(self):
         engine, plugin = engine_for()
         event = FakeEvent("发张自拍")

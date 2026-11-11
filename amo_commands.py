@@ -31,6 +31,14 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
         from clock import from_timestamp as _clock_from_ts
 
 if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
+    from .amo_scope import event_scope as _event_scope
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_scope import event_scope as _event_scope
+    except ImportError:  # 直接按文件加载时
+        from amo_scope import event_scope as _event_scope
+
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_shared import (
         AstrMessageEvent, Comp, MessageChain, PLUGIN_VERSION, RELATIONS, SCHEDULE_VERSION, clamp, day_meta, filter, logger, now_ts, to_float, to_int, today_str,
     )
@@ -345,7 +353,9 @@ class CommandMixin(_MixinBase):
             content = " ".join(content_parts).strip()
             if not content:
                 return "内容不能为空。"
-            if self._external_memory_write(target, content, "manual", tier):
+            # 在群里写的记忆就留在群里：私聊里不该冒出群里的内容
+            scope, group_id = _event_scope(event)
+            if self._external_memory_write(target, content, "manual", tier, scope, group_id):
                 return "✅ 已记住：" + content
             return "⚠️ 没能写进记忆插件：请先在设置里选好记忆来源插件。"
 

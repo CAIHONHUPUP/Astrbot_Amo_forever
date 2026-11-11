@@ -9,7 +9,6 @@ from __future__ import annotations
 import os
 import sqlite3
 import sys
-import tempfile
 import time
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -307,9 +306,8 @@ class UsageTests(unittest.TestCase):
         self.assertIn("error", usage)
 
     def test_summarize_rows(self) -> None:
-        # 用 mkdtemp（conftest 在 Windows 上把它指到 .test-tmp/ 并在退出时清掉），
-        # 别再往 .test-tmp 根目录写固定命名的库，否则每次跑测都漏一个文件
-        path = os.path.join(tempfile.mkdtemp(prefix="amo-usage-"), "usage.db")
+        path = os.path.join(ROOT, ".test-tmp", "usage-%d.db" % int(time.time() * 1000))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         conn = sqlite3.connect(path)
         conn.execute(
             "CREATE TABLE provider_stats (provider_model TEXT, token_input_other INTEGER, "

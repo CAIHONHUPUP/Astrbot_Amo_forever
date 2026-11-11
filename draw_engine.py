@@ -87,6 +87,11 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
             split_keywords,
         )
 
+try:  # 视角后缀：她出镜=自拍视角，她拍环境=她的拍摄视角（空镜）
+    from .photo_view import SCENERY_ONLY, looks_like_her, view_suffix
+except ImportError:  # 直接按文件加载时
+    from photo_view import SCENERY_ONLY, looks_like_her, view_suffix
+
 # 生图可能卡死；最多等 3 分钟就放弃这一次
 GENERATE_TIMEOUT_SECONDS = 180
 # data_url 是 base64，超过这个长度就不进 kv（否则数据库会被撑大）
@@ -524,6 +529,10 @@ class DrawEngine:
         if explicit_hit and self._is_vague_request(text):
             # 「你在公园吗/拍照给我看看」：拍她自己，用固定形象参考图
             selfie = True
+        if not selfie and looks_like_her(text):
+            # 「拍张你在工位的照片」也要拍她本人 → 自拍视角、带固定形象；
+            # 「你看到的海/你眼里的窗外」是她的视角，人不出镜，保持空镜
+            selfie = True
         if selfie:
             # 「发张自拍」：按自拍提示词走，穿今天固定的那一套
             parts = ["自拍"]
@@ -540,12 +549,13 @@ class DrawEngine:
                 parts.append("穿着" + outfit)
             if subject and subject != "自拍":
                 parts.append(subject)
-            parts.extend(["自然光", "手机前置摄像头", "生活感",
+            parts.extend(["自然光", view_suffix(True), "生活感",
                           "人物长相参考模板，衣服颜色和款式以文字为准，不要照搬模板里的衣服"])
             prompt = "，".join(parts)
         else:
+            # 她拍的环境：空镜 + 她的视角，画面里不出现她本人
             prefix = self._cfg_str("photo_prompt_prefix", "自然生活照，手机随手拍，")
-            prompt = (prefix + subject).strip()
+            prompt = (prefix + subject + "，" + SCENERY_ONLY + "，" + view_suffix(False)).strip("，")
         scene_text = " ".join(filter(None, [subject, reply_text, self._place_text()]))
         keywords = self._scene_keywords(scene_text)
         residual = self._scene_residual(scene_text, keywords)
@@ -591,9 +601,12 @@ class DrawEngine:
         umo = str(getattr(event, "unified_msg_origin", "") or "")
         if umo and umo in self._inflight:
             return "上一张还在画，等它出来。"
+        selfie = looks_like_her(text)
         prefix = self._cfg_str("photo_prompt_prefix", "自然生活照，手机随手拍，")
-        prompt = (prefix + text).strip()
-        self._schedule(event, prompt, "manual")
+        body = text if ("自拍" in text or not selfie) else "自拍，" + text
+        view = view_suffix(selfie) if selfie else (SCENERY_ONLY + "，" + view_suffix(False))
+        prompt = (prefix + body + "，" + view).strip("，")
+        self._schedule(event, prompt, "manual", selfie=selfie)
         tail = "（dry-run，只记提示词）" if self.dry_run else ""
         return "🎨 开始画：%s%s（画好会单独发一张）" % (text, tail)
 
@@ -627,7 +640,8 @@ class DrawEngine:
                     self._stats["cached"] += 1
                 return
             if self.dry_run:
-                logger.info("[amo] 画图（dry-run）不调用模型：%s" % prompt)
+                logger.info("[amo] 画图（dry-run）不调用模型（%s）：%s" % (
+                    "自拍视角" if selfie else "她的拍摄视角", prompt))
                 self._stats["skipped"] += 1
                 return
             image = await self._generate(event, prompt, selfie)

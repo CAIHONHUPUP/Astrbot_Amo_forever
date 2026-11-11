@@ -896,8 +896,7 @@ class RuntimeMixin(_MixinBase):
                     continue
                 rows.extend(part or [])
             rows.sort(key=lambda r: to_int(r.get("created_at"), 0))
-            if not rows:
-                continue
+            # P2：这里原来连着判了两遍
             if not rows:
                 continue
             if not since:
@@ -924,7 +923,10 @@ class RuntimeMixin(_MixinBase):
             if len(summary) < 8:
                 continue
             content = _ms_build_content(label, summary)
-            written = await self._write_memory_checked(uid, content, "milestone", 2)
+            # 里程碑是按人归纳的私聊产物，明确写进私聊域
+            written = await self._write_memory_checked(
+                uid, content, "milestone", 2, scope="private"
+            )
             logger.info("[amo] 里程碑归档%s: %s" % ("已写入" if written else "写入失败", content[:80]))
             if written:
                 try:
@@ -1031,7 +1033,9 @@ class RuntimeMixin(_MixinBase):
                 digest_failed += 1
                 continue
             content = "【" + (now - timedelta(days=1)).strftime("%Y-%m-%d") + "】" + summary[:400]
-            written = await self._write_memory_checked(uid, content, "daily_digest", 2)
+            written = await self._write_memory_checked(
+                uid, content, "daily_digest", 2, scope="private"
+            )
             logger.info("[amo] 每日总结%s: %s" % ("已写入" if written else "写入失败", content[:80]))
             if written:
                 digest_written += 1

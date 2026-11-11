@@ -24,6 +24,14 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
     except ImportError:  # 直接按文件加载时
         from amo_observability import note as _note_swallowed
 
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
+    from .amo_scope import private_rows as _private_rows
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .amo_scope import private_rows as _private_rows
+    except ImportError:  # 直接按文件加载时
+        from amo_scope import private_rows as _private_rows
+
 
 import asyncio
 import os
@@ -318,6 +326,8 @@ class ScheduleMixin(_MixinBase):
         except Exception as exc:
             logger.debug("[amo] 日记取聊天失败: %s" % exc)
             return []
+        # 日记是她的私人视角，之后还会进记忆：群里的对话、别人的对话都不该写进来
+        rows = _private_rows(rows)
         lines = []
         for row in rows:
             text = str(row.get("content") or "").strip().replace("\n", " ")

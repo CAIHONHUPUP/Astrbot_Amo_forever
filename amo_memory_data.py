@@ -594,7 +594,8 @@ class DataSyncMixin(_MixinBase):
                 "expires_at": None,
             })
         return items
-    async def _data_memory_write(self, uid, content, kind="fact", tier=1):
+    async def _data_memory_write(self, uid, content, kind="fact", tier=1,
+                                 scope="private", group_id=""):
         """把一条记忆交给「记忆终端」写入；它只负责存，陪伴不落本地库。"""
         mem = self._data_mem()
         if mem is None or not uid:
@@ -607,19 +608,31 @@ class DataSyncMixin(_MixinBase):
             return False
         level = to_int(tier, 1)
         importance = 0.75 if level >= 2 else (0.55 if level == 1 else 0.35)
-        try:
-            result = await remember(
-                self._data_bot_id(), str(uid), content,
-                kind=str(kind or "fact"), importance=importance,
-            )
-        except TypeError:
+        # 群聊写 group + group_id，私聊写 private（记忆终端按这个分桶）
+        scope = "group" if str(scope or "") == "group" else "private"
+        group_id = str(group_id or "") if scope == "group" else ""
+        # 数据插件版本不同认的参数也不同：从最全的写法往后退，别把记忆整个丢掉
+        variants = [
+            {"kind": str(kind or "fact"), "importance": importance,
+             "scope": scope, "group_id": group_id},
+            {"kind": str(kind or "fact"), "importance": importance},
+            {},
+        ]
+        result = False
+        last_error = None
+        for kwargs in variants:
             try:
-                result = await remember(self._data_bot_id(), str(uid), content)
+                result = await remember(self._data_bot_id(), str(uid), content, **kwargs)
+            except TypeError as exc:
+                last_error = exc
+                continue
             except Exception as exc:
                 logger.debug("[amo] 记忆终端写入失败: %s" % exc)
                 return False
-        except Exception as exc:
-            logger.debug("[amo] 记忆终端写入失败: %s" % exc)
+            break
+        else:
+            if last_error is not None:
+                logger.debug("[amo] 记忆终端写入失败: %s" % last_error)
             return False
         if isinstance(result, dict):
             return bool(result.get("ok", True))

@@ -561,6 +561,21 @@
           · 改到插件目录外就不会跟插件备份，记得自己留一份
         </div>
       </section>
+
+      <section class="card" style="margin-top:14px">
+        <div class="label">最终保存</div>
+        <div class="sub" style="line-height:1.7">
+          滚到这儿不用再回头找按钮，点一次把这栏能存的一起存好：<br>
+          · 照片分享的设置项（开关、概率滑条、触发方式）<br>
+          · 「按提示词生成」里上次写的提示词<br>
+          · 三视图的模板保存位置<br>
+          三视图的模板本身是勾选 / 点按钮即生效，不在这里保存。
+        </div>
+        <div class="row" style="margin-top:10px;gap:10px;flex-wrap:wrap;align-items:center">
+          <button id="photoSaveAll" type="button" style="min-width:150px;text-align:center;font-weight:600;background:var(--pink);border-color:var(--pink);color:#fff">保存全部</button>
+          <span class="sub" id="photoSaveAllStatus"></span>
+        </div>
+      </section>
     </div>
 
     <div id="tab-diary" class="tab-panel" hidden>
@@ -1986,6 +2001,69 @@
       }
     }
 
+    async function savePhotoAll() {
+      const status = document.getElementById("photoSaveAllStatus");
+      const cardStatus = document.getElementById("photoStatus");
+      const saveBtn = document.getElementById("photoSaveAll");
+      if (saveBtn) saveBtn.disabled = true;
+      const done = [];
+      const failed = [];
+      const renderStatus = () => {
+        if (!status) return;
+        status.textContent = failed.length
+          ? "部分失败：" + failed.join("；")
+          : done.length
+            ? "已保存：" + done.join(" / ")
+            : "没有读到要保存的东西，先点右上角「刷新」";
+      };
+
+      // 1) 照片分享的配置项：和卡片里那颗「保存」走同一个接口
+      const changes = {};
+      document.querySelectorAll("#photoSettings [data-key]").forEach((el) => {
+        if (el.dataset.key) changes[el.dataset.key] = photoControlValue(el);
+      });
+      if (Object.keys(changes).length) {
+        try {
+          const result = objectFrom(await call("config_save", { changes }));
+          if (result && result.code && result.code !== 0) throw new Error(result.msg || "保存失败");
+          if (cardStatus) cardStatus.textContent = "已保存";
+          done.push("照片设置 " + Object.keys(changes).length + " 项");
+        } catch (error) {
+          if (cardStatus) cardStatus.textContent = "保存失败";
+          failed.push("照片设置（" + (error.message || error) + "）");
+        }
+        renderStatus();
+      }
+
+      // 2) 「按提示词生成」里上次写的提示词
+      const promptBox = document.getElementById("photoPrompt");
+      try {
+        await call("photo/prompt_saved", { text: promptBox ? promptBox.value.trim() : "" });
+        done.push("提示词");
+      } catch (error) {
+        failed.push("提示词（" + (error.message || error) + "）");
+      }
+      renderStatus();
+
+      // 3) 模板保存位置：没改就不写，免得白白重刷一遍三视图
+      const dirBox = document.getElementById("photoTemplateDir");
+      const dir = dirBox ? dirBox.value.trim() : "";
+      if (dirBox && dir !== photoTemplateDirSaved) {
+        try {
+          await call("photo/template_dir", { dir });
+          photoTemplateDirSaved = dir;
+          await loadPhotoTemplate();
+          done.push("模板位置");
+        } catch (error) {
+          failed.push("模板位置（" + (error.message || error) + "）");
+        }
+        renderStatus();
+      }
+
+      if (saveBtn) saveBtn.disabled = false;
+      toast(failed.length ? "有东西没存上，看按钮旁边的提示" : "这一栏已全部保存", !!failed.length);
+    }
+
     async function pollPhotoJob(jobId, onDone, onError) {
       for (let i = 0; i < 90; i += 1) {
         await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -2113,6 +2191,7 @@
     const PHOTO_VIEW_LABELS = { front: "正面", side: "侧面", full: "全身" };
     const photoSelected = { front: "", side: "", full: "" };
     let photoTemplates = { front: {}, side: {}, full: {} };
+    let photoTemplateDirSaved = "";
 
     function photoCard(src, options) {
       const card = document.createElement("div");
@@ -2367,6 +2446,7 @@
         const info = objectFrom(await call("photo/template_dir", {}));
         const input = document.getElementById("photoTemplateDir");
         if (input) input.value = (info && info.configured) || "";
+        photoTemplateDirSaved = (info && info.configured) || "";
         const line = document.getElementById("photoTemplateRoot");
         if (line) {
           const root = (info && info.root) || "";
@@ -2418,6 +2498,8 @@
     if (photoRefreshButton) photoRefreshButton.addEventListener("click", () => loadPhoto());
     const photoSaveButton = document.getElementById("photoSave");
     if (photoSaveButton) photoSaveButton.addEventListener("click", () => savePhoto());
+    const photoSaveAllButton = document.getElementById("photoSaveAll");
+    if (photoSaveAllButton) photoSaveAllButton.addEventListener("click", () => savePhotoAll());
     const photoTestButton = document.getElementById("photoTest");
     if (photoTestButton) photoTestButton.addEventListener("click", () => testPhoto());
     const photoGenButton = document.getElementById("photoGen");
