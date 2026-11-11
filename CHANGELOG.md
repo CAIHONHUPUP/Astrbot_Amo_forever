@@ -1,5 +1,21 @@
 # Changelog
 
+## 6.13.6（群聊的话不再写进私聊记忆）
+
+配合「我想永远记住你」2.7.1 的按会话记忆隔离：数据插件那边已经能分清群聊 / 私聊，
+但这里有三个**按人归纳**的批处理还在按 uid 取全部聊天，取回来的群聊内容最后被写成
+`scope='private'` 的长期记忆——群里谁说了什么，会在私聊里变成「你俩的事」。
+
+- 里程碑归档（`_milestone_archive_once`）、每日总结（`_maybe_daily_digest`）、
+  日记取聊天（`_diary_chat_lines`）三处取完数据都过一遍 `memory_scope.private_rows()`，
+  群会话（umo 含 `GroupMessage`）的行直接剔掉；
+- 新增 `memory_scope.py`（纯函数）+ `tests/test_memory_scope.py`（14 项）：
+  群/私聊判定、老数据没有 `umo` 字段时按私聊保留、以及「群里聊 30 句不会触发里程碑归档」；
+- 群聊自己的记忆不受影响：正常聊天链路仍按 `scope='group'` 写，只在那个群里召得回来；
+- 自动学习（`_auto_learn`）本来就只读私聊会话，这次没动。
+
+测试 577 passed（`test_clock` 7 项在 Windows 上跳过，CI 是 ubuntu）。
+
 ## 6.13.5（下班回家换家居服）
 
 上一版做成「一天一套」，结果 19:00 到家穿着通勤装炒菜、22:00 敷面膜还是那套。

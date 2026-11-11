@@ -285,6 +285,16 @@ except Exception:
             return ""
 
 try:
+    from .memory_scope import private_rows as _private_rows
+except Exception:
+    try:
+        from memory_scope import private_rows as _private_rows
+    except Exception:
+        # 模块缺失时退回「不过滤」，别把总结整段停掉
+        def _private_rows(rows):
+            return list(rows or [])
+
+try:
     from .wander import (
         assess as _wander_assess,
         ask_limit as _wander_ask_limit,
@@ -498,7 +508,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.13.5"
+PLUGIN_VERSION = "6.13.6"
 
 # 这些开关是面板/主链路的底座：隐藏开关并强制开启，避免误关后整块功能消失。
 FORCED_ON_CONFIG_KEYS = frozenset({
@@ -10731,6 +10741,8 @@ class HumanCorePlugin(Star):
         except Exception as exc:
             logger.debug("[amo] 日记取聊天失败: %s" % exc)
             return []
+        # 日记是从她的视角写的，之后会按私聊范围进记忆：群里的对话不该混进来
+        rows = _private_rows(rows)
         lines = []
         for row in rows:
             text = str(row.get("content") or "").strip().replace("\n", " ")
@@ -10865,6 +10877,11 @@ class HumanCorePlugin(Star):
                 continue
             if not rows:
                 continue
+            # 按人取（跨平台）会把群聊一起带回来，而这条总结写的是 scope='private'：
+            # 群友说的话不能变成她「只在私聊里记得」的事。
+            rows = _private_rows(rows)
+            if not rows:
+                continue
             if not since:
                 # 第一次只从"现在"开始记，不把全部历史一次性压成一条。
                 # 注意不能用 rows[-1]（那是本批 400 条里最旧的一条），否则会从历史开始滚。
@@ -10939,6 +10956,8 @@ class HumanCorePlugin(Star):
                 logger.debug("[amo] 每日总结取聊天失败: %s" % exc)
                 continue
             messages = (result or {}).get("messages") or []
+            # 每日总结写的是 scope='private' 的记忆：群里聊的事不算「你们俩的昨天」
+            messages = _private_rows(messages)
             lines = []
             for row in messages:
                 text = str(row.get("content") or "").strip().replace("\n", " ")
