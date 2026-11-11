@@ -171,6 +171,7 @@
     .schedule-hour-row .a { flex: 1; min-width: 0; font-size: 12.5px; }
     .schedule-hour-row .meta { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 38%; }
     .schedule-hour-row .chev { color: var(--muted); font-size: 12px; transition: transform .15s ease; }
+    .schedule-hour-wear { color: var(--muted); font-size: 11.5px; padding: 0 2px 8px 114px; margin-top: -6px; }
     .schedule-hour.open .schedule-hour-row .chev { transform: rotate(90deg); color: var(--pink); }
     .schedule-event-tag { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 99px; font-size: 10px; color: var(--pink); border: 1px solid rgba(232, 72, 154, .28); background: rgba(232, 72, 154, .08); white-space: nowrap; }
     .schedule-diary { display: none; padding: 2px 2px 14px 114px; }
@@ -183,6 +184,7 @@
     @keyframes diary-dots { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
     @media (max-width: 520px) {
       .schedule-hour-row .meta { display: none; }
+      .schedule-hour-wear { padding-left: 102px; }
       .schedule-diary { padding-left: 2px; }
       .schedule-hour-row .time { min-width: 92px; }
     }
@@ -1230,7 +1232,7 @@
             tag.textContent = eventTagText(hour.event);
             activity.appendChild(tag);
           }
-          const metaText = [hour.place || "", hour.outfit ? "穿 " + hour.outfit : "", hour.vehicle ? "开车" : "", hour.current ? "现在" : ""].filter(Boolean).join(" · ");
+          const metaText = [hour.place || "", hour.vehicle ? "开车" : "", hour.current ? "现在" : ""].filter(Boolean).join(" · ");
           const metaLine = document.createElement("span");
           metaLine.className = "meta";
           metaLine.textContent = metaText;
@@ -1241,10 +1243,16 @@
           line.appendChild(activity);
           line.appendChild(metaLine);
           line.appendChild(chev);
+          const wear = hour.outfit ? document.createElement("div") : null;
+          if (wear) {
+            wear.className = "schedule-hour-wear";
+            wear.textContent = "穿 " + hour.outfit;
+          }
           const diary = document.createElement("div");
           diary.className = "schedule-diary";
           diary.addEventListener("click", (event) => event.stopPropagation());
           hourBox.appendChild(line);
+          if (wear) hourBox.appendChild(wear);
           hourBox.appendChild(diary);
           const open = () => toggleHourDiary(hourBox, hour);
           hourBox.addEventListener("click", open);
