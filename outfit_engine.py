@@ -88,7 +88,7 @@ class OutfitEngine:
         place = str(item.get("place") or "")
         category = str(item.get("category") or "")
         text = activity + place
-        if category == "sleep" or "睡觉" in activity:
+        if category == "sleep" or "睡觉" in activity or "睡衣" in activity or "睡裙" in activity:
             return "sleep"
         if (any(word in place for word in BEACH_PLACES)
                 or any(word in activity for word in BEACH_ACTIVITIES)):
@@ -127,21 +127,36 @@ class OutfitEngine:
             return ""
         return outfit
 
+    CHANGE_WORDS = ("换衣", "换装", "换上", "换一身", "洗澡")
+
     def assign(self, items, day, persona=""):
-        """给每一段日程写 `outfit`；返回同一个列表（原地改）。"""
+        """给每一段日程写 `outfit`；返回同一个列表（原地改）。
+
+        小时展开后的活动文案每小时都不同（「过接口清单」「回消息」「掰扯需求」），
+        所以选衣服只看「场景 + 地点」，不看具体文案；只有「换衣服/洗澡」才换下一套。
+        """
         if not isinstance(items, list):
             return items
         if not self.enabled():
             return items
         gender = self.gender(persona)
-        for index, item in enumerate(items):
+        current = {}
+        variants = {}
+        for item in items:
             if not isinstance(item, dict):
                 continue
+            activity = str(item.get("activity") or "")
             scene = self.scene_of(item)
-            key = "%s|%s" % (item.get("activity") or "", item.get("place") or "")
-            outfit = self._safe(self._pick(gender, scene, day, key), scene)
+            if any(word in activity for word in self.CHANGE_WORDS):
+                variants[scene] = variants.get(scene, 0) + 1
+                current.pop(scene, None)
+            key = "%s|%s|%s" % (item.get("place") or "", scene, variants.get(scene, 0))
+            outfit = current.get(scene)
             if not outfit:
-                outfit = self._pick(gender, "casual", day, key)
+                outfit = self._safe(self._pick(gender, scene, day, key), scene)
+                if not outfit:
+                    outfit = self._pick(gender, "casual", day, key)
+                current[scene] = outfit
             item["outfit"] = outfit
         return items
 
@@ -152,6 +167,6 @@ class OutfitEngine:
         if not self.enabled():
             return str(activity.get("outfit") or "")
         scene = self.scene_of(activity)
-        key = "%s|%s" % (activity.get("activity") or "", activity.get("place") or "")
+        key = "%s|%s" % (activity.get("place") or "", scene)
         outfit = self._safe(self._pick(self.gender(persona), scene, day, key), scene)
         return outfit or self._pick(self.gender(persona), "casual", day, key)

@@ -76,6 +76,31 @@ class StabilityTests(unittest.TestCase):
             [{"activity": "上班", "place": "公司", "category": "work"}], DAY)[0]["outfit"]
         self.assertEqual(first, second)
 
+    def test_same_scene_hours_share_outfit(self):
+        """上班不同小时的活动文案不同，但衣服必须是同一套。"""
+        items = [
+            {"start": "09:00", "end": "10:00", "activity": "过接口清单", "place": "公司",
+             "category": "work"},
+            {"start": "10:00", "end": "11:00", "activity": "埋头改文档", "place": "公司",
+             "category": "work"},
+            {"start": "11:00", "end": "12:00", "activity": "跟产品掰扯需求", "place": "公司",
+             "category": "work"},
+        ]
+        engine().assign(items, DAY)
+        self.assertEqual(len({item["outfit"] for item in items}), 1)
+
+    def test_change_clothes_switches_outfit(self):
+        items = [
+            {"start": "18:00", "end": "19:00", "activity": "追剧", "place": "家",
+             "category": "rest"},
+            {"start": "19:00", "end": "19:30", "activity": "换衣服出门", "place": "家",
+             "category": "rest"},
+            {"start": "19:30", "end": "21:00", "activity": "逛街", "place": "商场",
+             "category": "play"},
+        ]
+        engine().assign(items, DAY)
+        self.assertNotEqual(items[0]["outfit"], items[2]["outfit"])
+
     def test_hourly_schedule_keeps_outfit(self):
         items = [
             {"start": "09:00", "end": "18:00", "activity": "上班", "place": "公司",

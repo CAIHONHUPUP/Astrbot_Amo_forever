@@ -590,6 +590,7 @@ DIALECT_REGIONS = {
     "上海话": "上海",
 }
 SCHEDULE_VERSION = "backbone-v6"
+OUTFIT_VERSION = "outfit-v2"  # 穿搭规则变了就改这里，旧日程会自动重配
 NETWORK_RELATIONS = ("家人", "恋人", "朋友", "同事", "同学", "熟人", "陌生人", "仇人")
 MOOD_KEYS = ("开心", "平静", "郁闷", "生气", "暴躁", "委屈", "疲惫", "焦虑", "兴奋", "依恋")
 #: 真正算「生病」的状态；「疲惫」只是累，不该按病号排日程。
@@ -3340,14 +3341,21 @@ class HumanState:
         day_type = self._today_day_type(today)
         if existing and version_ok and not force:
             hourly = self._hourly_schedule(existing)
-            # 老日程没有 outfit：补一次并落盘，不用等第二天重新生成
-            if getattr(self.p, "outfits", None) is not None and any(
-                    isinstance(item, dict) and not item.get("outfit") for item in hourly):
+            # 老日程没有 outfit、或穿搭规则升级过：补一次并落盘，不用等第二天重新生成
+            needs_outfit = (
+                getattr(self.p, "outfits", None) is not None
+                and (
+                    self.db.kv_get("outfit_version", "") != OUTFIT_VERSION
+                    or any(isinstance(item, dict) and not item.get("outfit") for item in hourly)
+                )
+            )
+            if needs_outfit:
                 try:
                     persona_text = await self.p.llm.persona(umo) if self.p.llm else ""
                 except Exception:
                     persona_text = ""
                 hourly = self.p.outfits.assign(hourly, today, persona_text)
+                self.db.kv_set("outfit_version", OUTFIT_VERSION)
             if hourly != existing:
                 self.schedule[today] = hourly
                 self.db.kv_set("schedule", self.schedule)
