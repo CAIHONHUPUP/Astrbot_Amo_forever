@@ -58,6 +58,12 @@ class DayTypeTests(unittest.TestCase):
             self.assertGreaterEqual(len(types), 6, raw)
             self.assertTrue(all(t["id"] and t["name"] for t in types))
 
+    def test_defaults_are_copies(self):
+        first = DT.normalize_day_types(None)
+        second = DT.normalize_day_types(None)
+        first[0]["name"] = "被改了"
+        self.assertNotEqual(second[0]["name"], "被改了")
+
     def test_template_key_is_ignored(self):
         types = DT.normalize_day_types([
             {"__template_key": "day_type", "id": "a", "name": "甲", "weight": 1,
@@ -102,6 +108,15 @@ class ScheduleChangeTests(unittest.TestCase):
         self.assertIsNone(SC.detect_schedule_change("别来接我"))
         self.assertIsNone(SC.detect_schedule_change("不想去吃"))
         self.assertIsNone(SC.detect_schedule_change("不用早点睡"))
+        self.assertIsNone(SC.detect_schedule_change("别早点睡"))
+        self.assertIsNone(SC.detect_schedule_change("别开车来接我"))
+        self.assertIsNone(SC.detect_schedule_change("我不想去吃了"))
+
+    def test_negation_only_when_adjacent(self):
+        # 「不早了」「别太晚」不是否定关键词，是关心话
+        self.assertIsNotNone(SC.detect_schedule_change("不早了，该睡了"))
+        self.assertIsNotNone(SC.detect_schedule_change("别太晚，早点睡"))
+        self.assertIsNotNone(SC.detect_schedule_change("差不多了，该睡了"))
 
     def test_no_match_chat(self):
         self.assertIsNone(SC.detect_schedule_change("今天天气不错啊"))
@@ -144,6 +159,13 @@ class ScheduleChangeTests(unittest.TestCase):
         items = self._items()
         now = datetime.datetime(2026, 11, 10, 15, 0)
         out = SC.apply_change(items, SC.detect_schedule_change("早点睡"), now)
+        self.assertEqual(out, items)
+
+    def test_sleep_is_ignored_after_midnight(self):
+        # 凌晨 1 点说「该睡了」：不能把接下来一整天都改成睡觉
+        items = self._items()
+        now = datetime.datetime(2026, 11, 10, 1, 0)
+        out = SC.apply_change(items, SC.detect_schedule_change("该睡了"), now)
         self.assertEqual(out, items)
 
     def test_does_not_wake_up_sleeping_target(self):

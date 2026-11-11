@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import random
-from typing import Sequence, TypedDict
+from typing import Sequence, TypedDict, cast
 
 
 class DayType(TypedDict, total=False):
@@ -114,7 +114,7 @@ def normalize_day_types(raw: object = None) -> list[DayType]:
             "scope": scope,
             "guide": str(item.get("guide") or "").strip()[:300],
         })
-    return out or list(DAY_TYPES)
+    return out or [cast(DayType, dict(item)) for item in DAY_TYPES]
 
 
 def _weight_of(item: DayType) -> float:

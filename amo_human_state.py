@@ -893,12 +893,8 @@ class HumanState:
             })
         return items
 
-    def _day_types(self) -> list:
-        """读配置里的日子类型；没配就用默认那六种。"""
-        if normalize_day_types is None:
-            return []
-        raw: list = []
-        # 新版面板用 template_list 存对象数组，走 cfg_list；老配置/测试桩里只有 cfg()
+    def _day_type_config(self) -> list:
+        """读 schedule_day_types：新版走 cfg_list，老配置/测试桩里只有 cfg()。"""
         for getter_name in ("cfg_list", "cfg"):
             getter = getattr(self.p, getter_name, None)
             if not callable(getter):
@@ -906,12 +902,17 @@ class HumanState:
             try:
                 value = getter("schedule_day_types", [])
             except Exception as _amo_exc:
-                _note_swallowed("amo_human_state._day_types", _amo_exc)
-                value = []
+                _note_swallowed("amo_human_state._day_type_config", _amo_exc)
+                continue
             if isinstance(value, list) and value:
-                raw = value
-                break
-        return normalize_day_types(raw or None)
+                return value
+        return []
+
+    def _day_types(self) -> list:
+        """读配置里的日子类型；没配就用默认那六种。"""
+        if normalize_day_types is None:
+            return []
+        return normalize_day_types(self._day_type_config() or None)
 
     def _day_type_store(self) -> dict:
         """当天是什么日子按日期存一份：重启后不变，改权重也不会半路换类型。"""
@@ -932,10 +933,7 @@ class HumanState:
             cached = store.get(key)
             if isinstance(cached, dict) and cached.get("id"):
                 return cached
-            import datetime as _dt
-
-            d = _dt.date.fromisoformat(key)
-            picked = dict(pick_day_type(self._day_types(), d.weekday() >= 5, key))
+            picked = dict(pick_day_type(self._day_types(), date.fromisoformat(key).weekday() >= 5, key))
             store[key] = picked
             if len(store) > 30:
                 for old in sorted(store)[:-30]:

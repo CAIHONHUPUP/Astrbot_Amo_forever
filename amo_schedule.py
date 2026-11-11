@@ -91,6 +91,20 @@ class ScheduleMixin(_MixinBase):
                 return bool(checker(event))
             except Exception as _amo_exc:
                 _note_swallowed("amo_schedule._schedule_change_allowed", _amo_exc)
+        # 既没配名单、也没礼物引擎时，退回「只认她的主页私聊」
+        home_umo = ""
+        try:
+            getter = getattr(self, "_first_private_umo", None)
+            if callable(getter):
+                home_umo = str(getter() or "")
+        except Exception as _amo_exc:
+            _note_swallowed("amo_schedule._schedule_change_allowed", _amo_exc)
+        if home_umo:
+            try:
+                return str(getattr(event, "unified_msg_origin", "") or "") == home_umo
+            except Exception as _amo_exc:
+                _note_swallowed("amo_schedule._schedule_change_allowed", _amo_exc)
+                return False
         return True
 
     async def _apply_user_schedule_change(self, event, user_text: str) -> None:
@@ -98,10 +112,12 @@ class ScheduleMixin(_MixinBase):
         if detect_schedule_change is None or apply_sched_change is None:
             return
         try:
-            if not self._schedule_change_allowed(event):
-                return
+            # 先做便宜的关键词识别，命中再查主人（is_owner 会读一次画像库，
+            # 放前面等于每条私聊都多一次 DB 查询）。
             change = detect_schedule_change(user_text)
             if not change:
+                return
+            if not self._schedule_change_allowed(event):
                 return
             key = today_str()
             # schedule 挂在 HumanState 上（self.state.schedule），插件本身没有这个属性

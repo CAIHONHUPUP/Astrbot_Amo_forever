@@ -125,9 +125,10 @@ class OutingSkeletonTests(unittest.TestCase):
 
 
 class _Event:
-    def __init__(self, text, private=True):
+    def __init__(self, text, private=True, umo="umo:home"):
         self.message_str = text
         self._private = private
+        self.unified_msg_origin = umo
 
     def is_private_chat(self):
         return self._private
@@ -161,7 +162,11 @@ class _SchedulePlugin(AS.ScheduleMixin):
         self.db = _DB()
         self.state = types.SimpleNamespace(schedule={})
         self.gift = None
+        self.home_umo = "umo:home"
         self.config = {"schedule_change_enabled": True, "schedule_change_owner_ids": ""}
+
+    def _first_private_umo(self):
+        return self.home_umo
 
     def cfg_bool(self, key, default=False):
         return bool(self.config.get(key, default))
@@ -201,6 +206,14 @@ class ScheduleChangeWiringTests(unittest.TestCase):
         plugin.config["schedule_change_enabled"] = False
         plugin.state.schedule[today_str()] = self._items()
         asyncio.run(plugin._apply_user_schedule_change(_Event("我来接你"), "我来接你"))
+        self.assertEqual(plugin.db.calls, 0)
+
+    def test_other_private_chat_is_ignored_without_owner_list(self):
+        # 没配名单、也没礼物引擎时，只认她的主页私聊
+        plugin = _SchedulePlugin()
+        plugin.state.schedule[today_str()] = self._items()
+        asyncio.run(plugin._apply_user_schedule_change(
+            _Event("我来接你", umo="umo:stranger"), "我来接你"))
         self.assertEqual(plugin.db.calls, 0)
 
     def test_owner_ids_filter(self):

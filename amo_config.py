@@ -359,6 +359,8 @@ class ConfigMixin(_MixinBase):
                 group = "心流"
             elif key.startswith("draw_") or key.startswith("photo_"):
                 group = "照片"
+            elif key in ("schedule_day_types", "schedule_change_enabled", "schedule_change_owner_ids"):
+                group = "日程"
             elif key.startswith("seg_"):
                 group = "分段"
             elif key.startswith("companion_") or key.startswith("memory_") or key in ("admin_uids",):

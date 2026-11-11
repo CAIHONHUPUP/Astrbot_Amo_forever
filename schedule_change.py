@@ -15,10 +15,19 @@ from __future__ import annotations
 
 import datetime
 import re
-from typing import Any
+from typing import Any, TypedDict
+
+
+class Rule(TypedDict, total=False):
+    keys: tuple[str, ...]
+    activity: str
+    place: str
+    category: str
+    anchor: str
+    negatable: bool
 
 # (触发词, 新的活动, 地点, 分类, 锚点, 是否受否定词保护)
-_RULES: list[dict[str, Any]] = [
+_RULES: list[Rule] = [
     {
         # 主语是"她"：你来接我 / 你去接我 —— 她去把主人接回来
         "keys": ("你来接我", "你来接下我", "你来接一下我", "你去接我", "你下班来接我"),
@@ -73,7 +82,9 @@ _RULES: list[dict[str, Any]] = [
     },
 ]
 
-_NEGATIONS = ("别", "不", "没", "甭", "勿")
+_NEGATION_TOKENS = ("别", "不", "没", "甭", "勿")
+# 「不早了」「别太晚」「差不多了」是关心/口癖，不是否定关键词
+_SOFTENERS = ("不早", "不晚", "别太", "不太", "不久", "不多", "没多", "差不")
 _NEGATION_WINDOW = 4
 _MAX_TEXT = 200
 # 只改"今天"：说了明天/后天/昨天的事，不该动今天的日程
@@ -82,8 +93,15 @@ _OTHER_DAYS = ("明天", "后天", "下周", "下个月", "明早", "明晚", "�
 
 
 def _negated(raw: str, pos: int) -> bool:
-    """关键词前面 4 个字里出现否定词，就当这句是否定句。"""
-    return any(word in raw[max(0, pos - _NEGATION_WINDOW):pos] for word in _NEGATIONS)
+    """关键词前 4 个字里出现否定词就算否定句，但要排除「不早了」这类关心话。
+
+    - 「别来接我」「不想去吃」「别开车来接我」→ 否定，不改日程；
+    - 「不早了，该睡了」「别太晚，早点睡」「差不多了，该睡了」→ 不是否定，照常改。
+    """
+    window = raw[max(0, pos - _NEGATION_WINDOW):pos]
+    if window.startswith(_SOFTENERS):
+        return False
+    return any(token in window for token in _NEGATION_TOKENS)
 
 
 def detect_schedule_change(text: str) -> dict[str, Any] | None:
@@ -121,6 +139,8 @@ def _pick_target(items: list[dict[str, Any]], anchor: str, now_min: int) -> dict
     """找要改的那一段：锚点优先，找不到再退回当前这一段。"""
     current = None
     for item in items:
+        if not isinstance(item, dict):
+            continue
         start = _minutes(item.get("start"))
         end = _minutes(item.get("end"))
         if start is None or end is None:
@@ -131,6 +151,8 @@ def _pick_target(items: list[dict[str, Any]], anchor: str, now_min: int) -> dict
     if anchor in ("off_work", "meal"):
         wanted = "commute" if anchor == "off_work" else "meal"
         for item in items:
+            if not isinstance(item, dict):
+                continue
             start = _minutes(item.get("start"))
             if start is None or start < now_min:
                 continue
@@ -148,8 +170,9 @@ def apply_change(items: list[dict[str, Any]], change: dict[str, Any] | None,
     if not items or not change:
         return items
     category = str(change.get("category") or "")
-    # 白天说「早点睡」是在关心对方，不是要现在睡；20:00 之后或凌晨才真的改
-    if category == "sleep" and not (now.hour >= 20 or now.hour < 6):
+    # 「早点睡」多半是关心对方；只有在晚上 20:00-23:59 才当成"今天就睡这了"。
+    # 凌晨也不能改：那时候后面的 24 小时都会被她睡过去。
+    if category == "sleep" and not (20 <= now.hour <= 23):
         return items
     now_min = now.hour * 60 + now.minute
     target = _pick_target(items, str(change.get("anchor") or "now"), now_min)
@@ -166,6 +189,9 @@ def apply_change(items: list[dict[str, Any]], change: dict[str, Any] | None,
     out: list[dict[str, Any]] = []
     hit = False
     for item in items:
+        if not isinstance(item, dict):
+            out.append(item)
+            continue
         if not hit and item is target:
             hit = True
             new_item = dict(item)

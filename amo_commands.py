@@ -468,7 +468,11 @@ class CommandMixin(_MixinBase):
         try:
             import datetime as _dt
 
-            args = str(getattr(event, "message_str", "") or "").replace("／", "/").split()
+            # 去掉 @她 之类的 mention；前缀写法可能是 / 或 ／
+            args = [
+                item for item in str(getattr(event, "message_str", "") or "").replace("／", "/").split()
+                if not item.startswith("@")
+            ]
             which = args[1] if len(args) > 1 else "今天"
             offset = {
                 "今天": 0, "today": 0,
@@ -490,7 +494,7 @@ class CommandMixin(_MixinBase):
         await self._ensure_ready()
         try:
             raw = str(getattr(event, "message_str", "") or "").replace("／", "/").strip()
-            parts = raw.split(None, 2)
+            parts = [item for item in raw.split() if not item.startswith("@")]
             if len(parts) < 3:
                 yield event.plain_result("用法：/改日程 15:00 提前回家")
                 return
@@ -503,7 +507,7 @@ class CommandMixin(_MixinBase):
                 yield event.plain_result("时间不对，要 00:00–23:59。")
                 return
             clock = "%02d:%02d" % (hour, minute)
-            activity = parts[2].strip()[:60]
+            activity = " ".join(parts[2:]).strip()[:60]
             if not activity:
                 yield event.plain_result("还没说要改成什么。")
                 return
