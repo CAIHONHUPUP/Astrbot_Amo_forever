@@ -1,99 +1,182 @@
 """从用户说的话里识别「今天要改的日程」，交给 Amo 去改那一段。
 
-只认明确改变当天行程的说法（去接她 / 提前回家 / 不去了 / 出去吃），
-不认泛泛的闲聊。改完会写回 schedule 表，生图和状态都会跟着变。
+只认明确改变当天行程的说法（去接她 / 提前回家 / 不去了 / 出去吃 / 该睡了），
+不认泛泛的闲聊，也跳过否定句（「别来接我」「不想去吃」）。
+
+改日程是**会落库**的副作用，所以这里刻意保守：
+- 每条规则带一个锚点（anchor），决定改哪一段，而不是无脑改"现在"：
+  ``off_work`` = 接下来那段下班通勤，``meal`` = 接下来那顿饭，``now`` = 当前这一段；
+- 睡觉只在地点合理的时间（20:00 之后或凌晨）才生效，白天说「早点睡」不会把整天的
+  晚饭、休息全改成睡觉；
+- 已经是睡觉的时段，不会因为一句「去吃」被叫醒；
+- 目标和现状一样就不写库（避免每句话都落一次盘）。
 """
 from __future__ import annotations
 
 import datetime
 import re
+from typing import Any
 
-# (触发词, 新的活动, 分类, 需要的时间推断方式)
-_RULES = [
+# (触发词, 新的活动, 地点, 分类, 锚点, 是否受否定词保护)
+_RULES: list[dict[str, Any]] = [
     {
-        "keys": ("来接我", "来接下我", "接我一下", "过来接我", "开车来接", "来接一下",
-                 "来接你", "去接你", "接你下班", "接你回去"),
+        # 主语是"她"：你来接我 / 你去接我 —— 她去把主人接回来
+        "keys": ("你来接我", "你来接下我", "你来接一下我", "你去接我", "你下班来接我"),
+        "activity": "我去接他，一起回家",
+        "place": "路上",
+        "category": "commute",
+        "anchor": "off_work",
+        "negatable": True,
+    },
+    {
+        # 主语是"他"：我来接你 / 来接我 / 接你下班 —— 他开车来接她
+        "keys": ("我来接你", "我下班来接你", "来接我", "来接下我", "接我一下", "过来接我",
+                 "开车来接", "来接你", "来接一下", "接你下班", "接你回去"),
         "activity": "他开车来接我，一起回家",
         "place": "路上",
         "category": "commute",
-        "after": "下班",     # 从下班那段开始改
+        "anchor": "off_work",
+        "negatable": True,
     },
     {
-        "keys": ("早点回家", "提前回家", "先回去了", "想回家"),
+        "keys": ("早点回家", "提前回家", "先回去了", "想回家", "早点回去"),
         "activity": "提前收拾东西回家",
         "place": "家",
         "category": "rest",
-        "after": "now",
+        "anchor": "off_work",
+        "negatable": True,
     },
     {
-        "keys": ("不去了", "不去了吧", "不加班了", "别加班了"),
+        # 这几句本身就是否定式（不加班 / 不去了），不再做否定词判断
+        "keys": ("不去了", "不加班了", "别加班了", "不去加班了"),
         "activity": "不去了，改回家待着",
         "place": "家",
         "category": "rest",
-        "after": "now",
+        "anchor": "now",
+        "negatable": False,
     },
     {
         "keys": ("一起吃", "去吃", "出来吃", "出去吃", "请你吃饭"),
         "activity": "和他一起出去吃饭",
         "place": "外面",
         "category": "meal",
-        "after": "now",
+        "anchor": "meal",
+        "negatable": True,
     },
     {
         "keys": ("一起睡", "早点睡", "睡吧", "该睡了", "去睡觉"),
         "activity": "上床睡觉",
         "place": "家",
         "category": "sleep",
-        "after": "now",
+        "anchor": "now",
+        "negatable": True,
     },
 ]
 
+_NEGATIONS = ("别", "不", "没", "甭", "勿")
+_NEGATION_WINDOW = 4
+_MAX_TEXT = 200
 
-def detect_schedule_change(text: str) -> dict | None:
-    """返回 {activity, place, category, from_now: bool} 或者 None。"""
-    raw = str(text or "")
-    if not raw:
+
+def _negated(raw: str, pos: int) -> bool:
+    """关键词前面 4 个字里出现否定词，就当这句是否定句。"""
+    return any(word in raw[max(0, pos - _NEGATION_WINDOW):pos] for word in _NEGATIONS)
+
+
+def detect_schedule_change(text: str) -> dict[str, Any] | None:
+    """返回 {activity, place, category, anchor} 或者 None。"""
+    raw = re.sub(r"\s+", "", str(text or ""))
+    if not raw or len(raw) > _MAX_TEXT:
         return None
     for rule in _RULES:
-        if any(k in raw for k in rule["keys"]):
+        for key in rule["keys"]:
+            pos = raw.find(key)
+            if pos < 0:
+                continue
+            if rule.get("negatable", True) and _negated(raw, pos):
+                continue
             return {
                 "activity": rule["activity"],
                 "place": rule["place"],
                 "category": rule["category"],
-                "from_now": rule.get("after") == "now",
+                "anchor": rule.get("anchor") or "now",
             }
     return None
 
 
-def apply_change(items: list[dict], change: dict, now: datetime.datetime) -> list[dict]:
-    """把日程里从「此刻」往后到该段结束的部分改掉。"""
+def _minutes(text: Any) -> int | None:
+    try:
+        hour, minute = str(text).split(":")[:2]
+        return int(hour) * 60 + int(minute)
+    except (TypeError, ValueError):
+        return None
+
+
+def _pick_target(items: list[dict[str, Any]], anchor: str, now_min: int) -> dict[str, Any] | None:
+    """找要改的那一段：锚点优先，找不到再退回当前这一段。"""
+    current = None
+    for item in items:
+        start = _minutes(item.get("start"))
+        end = _minutes(item.get("end"))
+        if start is None or end is None:
+            continue
+        if start <= now_min < end:
+            current = item
+            break
+    if anchor in ("off_work", "meal"):
+        wanted = "commute" if anchor == "off_work" else "meal"
+        for item in items:
+            start = _minutes(item.get("start"))
+            if start is None or start < now_min:
+                continue
+            if str(item.get("category") or "") == wanted:
+                return item
+        if current is not None and str(current.get("category") or "") == wanted:
+            return current
+        return None
+    return current
+
+
+def apply_change(items: list[dict[str, Any]], change: dict[str, Any] | None,
+                 now: datetime.datetime) -> list[dict[str, Any]]:
+    """改写「锚点那一段」；睡觉类还会把之后到凌晨的整段并成睡觉。"""
     if not items or not change:
         return items
-    cur = now.strftime("%H:%M")
-    out = []
-    changed = False
-    sleeping = change.get("category") == "sleep"
-    for it in items:
-        start = str(it.get("start") or "")
-        end = str(it.get("end") or "")
-        if changed and sleeping:
-            # 说了要睡：后面到第二天早上的整段都改成睡觉
-            if end <= "06:00" or start >= cur:
-                it = dict(it)
-                it["activity"] = "睡觉"
-                it["place"] = "家"
-                it["category"] = "sleep"
-                out.append(it)
-                continue
-        if not changed and start and end and start <= cur < end:
-            # 当前这段：从此刻起改成新的活动
-            it = dict(it)
-            it["start"] = cur
-            it["activity"] = change["activity"]
-            it["place"] = change.get("place") or it.get("place")
-            it["category"] = change.get("category") or it.get("category")
-            changed = True
-            out.append(it)
+    category = str(change.get("category") or "")
+    # 白天说「早点睡」是在关心对方，不是要现在睡；20:00 之后或凌晨才真的改
+    if category == "sleep" and not (now.hour >= 20 or now.hour < 6):
+        return items
+    now_min = now.hour * 60 + now.minute
+    target = _pick_target(items, str(change.get("anchor") or "now"), now_min)
+    if target is None:
+        return items
+    if str(target.get("category") or "") == "sleep" and category != "sleep":
+        # 已经在睡了，别因为一句「去吃」把人叫醒
+        return items
+    activity = str(change.get("activity") or "").strip()
+    place = str(change.get("place") or target.get("place") or "").strip()
+    if not activity or str(target.get("activity") or "") == activity:
+        return items
+    sleeping = category == "sleep"
+    out: list[dict[str, Any]] = []
+    hit = False
+    for item in items:
+        if not hit and item is target:
+            hit = True
+            new_item = dict(item)
+            new_item["activity"] = activity
+            if place:
+                new_item["place"] = place
+            if category:
+                new_item["category"] = category
+            out.append(new_item)
             continue
-        out.append(it)
+        if hit and sleeping:
+            new_item = dict(item)
+            new_item["activity"] = "睡觉"
+            new_item["place"] = "家"
+            new_item["category"] = "sleep"
+            out.append(new_item)
+            continue
+        out.append(item)
     return out

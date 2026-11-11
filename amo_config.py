@@ -46,6 +46,15 @@ class ConfigMixin(_MixinBase):
             value = default
         return default if value is None else value
 
+    def cfg_list(self, key, default=None):
+        """读列表型配置（template_list 存的是对象数组）；读到的不是 list 就当空。"""
+        value = self.cfg(key, [] if default is None else default)
+        if isinstance(value, list):
+            return value
+        if isinstance(value, (tuple, set)):
+            return list(value)
+        return []
+
     def cfg_bool(self, key, default=False):
         value = self.cfg(key, default)
         if isinstance(value, bool):

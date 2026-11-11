@@ -869,37 +869,50 @@ class ScheduleEngine:
     # 2. 主干骨架
     # ------------------------------------------------------------------
     def _outing_segments(self, ctx):
-        """外出日骨架：早上出门，白天在外面玩，傍晚回家。"""
+        """外出日骨架：早上出门，白天在外面玩，傍晚回家。
+
+        时间必须落在整点：``_expand`` 按小时切段、``_validate`` 再把第 i 段钉成
+        ``i:00``，半小时边界会让整天的行程整体错位。zone 也要用既有取值
+        （road / scenic / mall / restaurant / home），否则 ``_validate`` 会把每次
+        区域切换都改写成「从 A 赶去 B」。
+        """
         ctx = dict(ctx or {})
         home = ctx.get("home") or "家"
         city = ctx.get("city") or "城里"
         spot = ctx.get("scenic") or {}
         where = str(spot.get("name") or "").strip() or ("%s的街上" % city)
+        zone = "scenic" if str(spot.get("name") or "").strip() else "mall"
         return [
-            self._seg(8 * 60, 9 * 60 + 30, "起床收拾，翻衣柜挑今天要穿的衣服", home, "home", "life"),
-            self._seg(9 * 60 + 30, 10 * 60 + 30, "出门，坐车去%s" % where, "路上", "city", "commute",
+            self._seg("00:00", "08:00", "睡觉", home, "home", "sleep"),
+            self._seg("08:00", "09:00", "起床收拾，翻衣柜挑今天要穿的衣服", home, "home", "life"),
+            self._seg("09:00", "10:00", "出门，坐车去%s" % where, "路上", "road", "commute",
                       transit="在路上", vehicle="地铁"),
-            self._seg(10 * 60 + 30, 12 * 60, "在%s慢慢逛" % where, where, "city", "play"),
-            self._seg(12 * 60, 13 * 60 + 30, "找了家小店吃饭", "%s附近" % where, "city", "meal"),
-            self._seg(13 * 60 + 30, 16 * 60, "接着逛，走走停停", where, "city", "play"),
-            self._seg(16 * 60, 17 * 60, "找个地方坐下歇一会儿，喝点东西", where, "city", "rest"),
-            self._seg(17 * 60, 18 * 60 + 30, "往回走，路上有点累", "路上", "city", "commute",
+            self._seg("10:00", "12:00", "在%s慢慢逛" % where, where, zone, "play"),
+            self._seg("12:00", "13:00", "找了家小店吃饭", "%s附近" % where, "restaurant", "meal"),
+            self._seg("13:00", "16:00", "接着逛，走走停停", where, zone, "play"),
+            self._seg("16:00", "17:00", "找个地方坐下歇一会儿，喝点东西", where, zone, "rest"),
+            self._seg("17:00", "18:00", "往回走，路上有点累", "路上", "road", "commute",
                       transit="在路上", vehicle="地铁"),
-            self._seg(18 * 60 + 30, 20 * 60, "到家附近吃晚饭", home, "home", "meal"),
-            self._seg(20 * 60, 22 * 60 + 30, "洗完澡窝在沙发上，翻今天拍的照片", home, "home", "rest"),
-            self._seg(22 * 60 + 30, 24 * 60, "睡觉", home, "home", "sleep"),
+            self._seg("18:00", "19:00", "到家先洗把脸缓一缓", home, "home", "life"),
+            self._seg("19:00", "20:00", "到家附近吃晚饭", home, "home", "meal"),
+            self._seg("20:00", "22:00", "洗完澡窝在沙发上，翻今天拍的照片", home, "home", "rest"),
+            self._seg("22:00", "24:00", "睡觉", home, "home", "sleep"),
         ]
 
     def build_skeleton(self, ctx):
         event_kind = (ctx.get("event") or {}).get("kind")
+        meta = ctx.get("meta") or {}
         day_id = str(((ctx or {}).get("day_type") or {}).get("id") or "")
-        if event_kind == "business_trip" and not (ctx.get("meta") or {}).get("rest"):
+        sick = bool((ctx.get("health") or {}).get("sick"))
+        good_weather = bool(ctx.get("good_weather", True))
+        if event_kind == "business_trip" and not meta.get("rest"):
             segments = self._business_trip_segments(ctx)
         elif day_id == "outing":
-            segments = self._outing_segments(ctx)
-        elif day_id == "homebody":
-            segments = self._rest_segments(ctx)
-        elif (ctx.get("meta") or {}).get("rest"):
+            # 生病、天气不好就别硬出门，按宅家过
+            segments = self._outing_segments(ctx) if (good_weather and not sick) else self._rest_segments(ctx)
+        elif day_id == "overtime":
+            segments = self._workday_segments(ctx, overtime=True)
+        elif day_id == "homebody" or meta.get("rest"):
             segments = self._rest_segments(ctx)
         else:
             # 工作日的「临时加班」以前只改文案、不改骨架：突发事件写着「今天回不去了」，
@@ -1560,10 +1573,17 @@ class ScheduleEngine:
             ))
         event = ctx.get("event") or {}
         scenic = ctx.get("scenic") or {}
+        day_type = ctx.get("day_type") or {}
+        day_type_line = ""
+        if str(day_type.get("guide") or "").strip():
+            day_type_line = "今天是「%s」：%s\n" % (
+                str(day_type.get("name") or "普通一天"), str(day_type["guide"]).strip(),
+            )
         system = "你是角色的日程文案助手。只输出 JSON 数组，不要输出解释。"
         prompt = (
             "角色设定：\n" + _brief_world(ctx.get("world") or {}) + "\n"
             "今天：%s，%s；天气：%s。\n"
+            "%s"
             "情绪：%s；生理期：%s；身体：%s；昨日：%s\n"
             "突发事件：%s\n"
             "景区：%s\n"
@@ -1578,6 +1598,7 @@ class ScheduleEngine:
         ) % (
             ctx.get("day"), (ctx.get("meta") or {}).get("label") or "普通一天",
             _weather_text(ctx.get("weather") or {}),
+            day_type_line,
             _mood_text(ctx.get("mood") or {}),
             (ctx.get("period") or {}).get("phase", ""),
             (ctx.get("health") or {}).get("status", "健康"),

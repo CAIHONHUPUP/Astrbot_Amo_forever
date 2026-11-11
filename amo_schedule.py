@@ -2,16 +2,20 @@
 """ScheduleMixin：从 main.py 拆出的 mixin，由 HumanCorePlugin 组合使用。"""
 from __future__ import annotations
 
-try:
-    from .schedule_change import apply_change as apply_sched_change, detect_schedule_change
-except ImportError:
-    try:
-        from schedule_change import apply_change as apply_sched_change, detect_schedule_change
-    except ImportError:
-        detect_schedule_change = None
-        apply_sched_change = None
-
 from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
+    from .schedule_change import apply_change as apply_sched_change, detect_schedule_change
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .schedule_change import apply_change as apply_sched_change, detect_schedule_change
+    except ImportError:  # 直接按文件加载时
+        try:
+            from schedule_change import apply_change as apply_sched_change, detect_schedule_change
+        except ImportError:
+            detect_schedule_change = None  # type: ignore[assignment]
+            apply_sched_change = None  # type: ignore[assignment]
+
 if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
 else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
@@ -19,6 +23,7 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
         from .amo_observability import note as _note_swallowed
     except ImportError:  # 直接按文件加载时
         from amo_observability import note as _note_swallowed
+
 
 import asyncio
 import os
@@ -48,52 +53,70 @@ else:  # 运行时用 object：协议里的声明不能进 MRO，否则会挡掉
 
 
 class ScheduleMixin(_MixinBase):
-    async def _apply_user_schedule_change(self, umo, user_text: str) -> None:
+    def _schedule_change_allowed(self, event) -> bool:
+        """改日程是会落库的副作用：只认主人的私聊，群聊/其他人不算。"""
+        try:
+            if not self.cfg_bool("schedule_change_enabled", True):
+                return False
+        except Exception as _amo_exc:
+            _note_swallowed("amo_schedule._schedule_change_allowed", _amo_exc)
+        try:
+            if not event.is_private_chat():
+                return False
+        except Exception as _amo_exc:
+            _note_swallowed("amo_schedule._schedule_change_allowed", _amo_exc)
+            return False
+        owner_ids = {
+            item.strip()
+            for item in re.split(r"[,，\s]+", self.cfg_str("schedule_change_owner_ids", "") or "")
+            if item.strip()
+        }
+        if owner_ids:
+            uid = ""
+            try:
+                uid = str(self._canonical_uid(event) or "")
+            except Exception as _amo_exc:
+                _note_swallowed("amo_schedule._schedule_change_allowed", _amo_exc)
+            sender = ""
+            try:
+                sender = str(event.get_sender_id() or "")
+            except Exception as _amo_exc:
+                _note_swallowed("amo_schedule._schedule_change_allowed", _amo_exc)
+            return uid in owner_ids or sender in owner_ids
+        # 没单独配名单时，沿用礼物引擎的主人判定（gift_owner_ids / 恋人关系 / 管理员）
+        gift = getattr(self, "gift", None)
+        checker = getattr(gift, "is_owner", None) if gift is not None else None
+        if callable(checker):
+            try:
+                return bool(checker(event))
+            except Exception as _amo_exc:
+                _note_swallowed("amo_schedule._schedule_change_allowed", _amo_exc)
+        return True
+
+    async def _apply_user_schedule_change(self, event, user_text: str) -> None:
         """用户明确安排了行程（来接我 / 一起睡 / 出去吃），把那一段日程改掉。"""
         if detect_schedule_change is None or apply_sched_change is None:
             return
         try:
+            if not self._schedule_change_allowed(event):
+                return
             change = detect_schedule_change(user_text)
             if not change:
                 return
-            import datetime as _dt
-
-            key = _dt.date.today().isoformat()
-            items = self.schedule.get(key) or self.db.get_schedule(key) or []
+            key = today_str()
+            # schedule 挂在 HumanState 上（self.state.schedule），插件本身没有这个属性
+            items = self.state.schedule.get(key) or self.db.get_schedule(key) or []
             if not items:
                 return
-            new_items = apply_sched_change(items, change, _dt.datetime.now())
+            new_items = apply_sched_change(items, change, _now())
             if new_items == items:
                 return
-            self.schedule[key] = new_items
-            self.db.kv_set("schedule", self.schedule)
+            self.state.schedule[key] = new_items
+            self.db.kv_set("schedule", self.state.schedule)
             self.db.save_schedule(key, new_items)
             logger.info("[amo] 按用户的话改了日程: %s" % change.get("activity"))
         except Exception as _amo_exc:
             _note_swallowed("amo_schedule._apply_user_schedule_change", _amo_exc)
-
-    def schedule_text_of(self, day: str) -> str:
-        """把某天的日程拍成一段文本，给 schedule_view 工具用。"""
-        try:
-            items = self.schedule.get(day) or self.db.get_schedule(day) or []
-            if not items:
-                return "那天还没有安排。"
-            info = self.db.kv_get("day_type_" + day, None) or {}
-            lines = []
-            if isinstance(info, dict) and info.get("name"):
-                lines.append("今天是%s。" % info["name"])
-            for it in items:
-                act = str(it.get("activity") or "").strip()
-                if not act:
-                    continue
-                place = str(it.get("place") or "").strip()
-                lines.append("%s-%s %s%s" % (
-                    it.get("start") or "", it.get("end") or "", act,
-                    ("（%s）" % place) if place else ""))
-            return "\n".join(lines[:24]) or "那天还没有安排。"
-        except Exception as _amo_exc:
-            _note_swallowed("amo_schedule.schedule_text_of", _amo_exc)
-            return "想不起来…"
 
     def _migrate_schedule_defaults(self):
         """5.1.1：位置/资产改为“人格优先、缺失随机”，清掉 5.1.0 自动写入的固定默认值。"""

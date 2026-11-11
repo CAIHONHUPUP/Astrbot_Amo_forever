@@ -2,12 +2,28 @@
 
 移植自 dsh-daily-schedule 的 DAY_TYPES 设计（上班日 / 休息日 / 外出日 /
 宅家日 / 加班日 / 摸鱼日），按权重随机，工作日与周末各抽各的池子。
+
+约定：
+- 同一天用日期字符串当随机种子，多次读取结果一致；
+- 权重按配置走，配置坏了（不是 list / 项不是 dict / 权重不是数字）都退回内置默认；
+- 这里只负责「抽哪种」，具体骨架在 ``schedule_engine.build_skeleton`` 里分派。
 """
 from __future__ import annotations
 
 import random
+from typing import Sequence, TypedDict
 
-DAY_TYPES = [
+
+class DayType(TypedDict, total=False):
+    id: str
+    name: str
+    enabled: bool
+    weight: float
+    scope: str
+    guide: str
+
+
+DAY_TYPES: list[DayType] = [
     {
         "id": "workday",
         "name": "上班日",
@@ -65,22 +81,28 @@ DAY_TYPES = [
     },
 ]
 
+_MAX_TYPES = 30
+_MAX_WEIGHT = 50.0
 
-def normalize_day_types(raw) -> list[dict]:
+
+def normalize_day_types(raw: object = None) -> list[DayType]:
+    """把配置里的一坨东西洗成可用的类型表；空/坏配置退回内置默认。"""
     src = raw if isinstance(raw, list) and raw else DAY_TYPES
-    out, seen = [], set()
-    for item in src[:30]:
+    out: list[DayType] = []
+    seen: set[str] = set()
+    for item in src[:_MAX_TYPES]:
         if not isinstance(item, dict):
             continue
         name = str(item.get("name") or "").strip()[:20]
         ident = str(item.get("id") or name).strip()[:32]
-        if not name or ident in seen:
+        if not name or not ident or ident in seen:
             continue
         seen.add(ident)
         try:
-            weight = max(0.0, min(50.0, float(item.get("weight", 1) or 0)))
-        except Exception:
+            weight = float(item.get("weight", 1) or 0)
+        except (TypeError, ValueError):
             weight = 1.0
+        weight = max(0.0, min(_MAX_WEIGHT, weight))
         scope = str(item.get("scope") or "any")
         if scope not in ("weekday", "weekend", "any"):
             scope = "any"
@@ -95,28 +117,36 @@ def normalize_day_types(raw) -> list[dict]:
     return out or list(DAY_TYPES)
 
 
-def pick_day_type(day_types: list[dict], is_weekend: bool, seed: str) -> dict:
+def _weight_of(item: DayType) -> float:
+    try:
+        return float(item.get("weight") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def pick_day_type(day_types: Sequence[DayType], is_weekend: bool, seed: str) -> DayType:
     """按权重抽一个今天的类型；同一个种子结果稳定。"""
-    pool = []
+    pool: list[DayType] = []
     for item in day_types:
-        if not item.get("enabled", True):
+        if not isinstance(item, dict) or not item.get("enabled", True):
             continue
-        scope = item.get("scope", "any")
+        scope = str(item.get("scope") or "any")
         if scope == "weekday" and is_weekend:
             continue
         if scope == "weekend" and not is_weekend:
             continue
-        if float(item.get("weight") or 0) <= 0:
+        if _weight_of(item) <= 0:
             continue
         pool.append(item)
     if not pool:
         return {"id": "workday", "name": "上班日", "guide": ""}
-    total = sum(float(x["weight"]) for x in pool)
+    total = sum(_weight_of(x) for x in pool)
+    # 日期字符串做种子：同一天无论重启多少次都是同一种日子
     rng = random.Random(seed)
     point = rng.random() * total
     acc = 0.0
     for item in pool:
-        acc += float(item["weight"])
+        acc += _weight_of(item)
         if point <= acc:
             return item
     return pool[-1]

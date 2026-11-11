@@ -44,9 +44,9 @@ class RuntimeMixin(_MixinBase):
         try:
             await self._ensure_ready()
             try:
-                raw_text = (event.message_str or "").strip()
+                raw_text = str(getattr(event, "message_str", "") or "").strip()
                 if raw_text and not raw_text.startswith(("/", "／")):
-                    await self._apply_user_schedule_change(event.unified_msg_origin, raw_text)
+                    await self._apply_user_schedule_change(event, raw_text)
             except Exception as _amo_exc:
                 _note_swallowed("amo_runtime.on_message.schedule_change", _amo_exc)
             await self._handle_message(event)

@@ -15,8 +15,10 @@
 | 加班日 | 1 | 工作日 |
 | 摸鱼日 | 1 | 工作日 |
 
-用日期当随机种子，同一天多次读取结果稳定；工作日与周末各抽各的池子。
-配置项 `schedule_day_types` 可增删改，每项带 `enabled / weight / scope / guide`。
+用日期当随机种子，同一天多次读取结果稳定；工作日与周末各抽各的池子，抽到的类型当天不变。
+配置项 `schedule_day_types`（template_list）可增删改，每项带 `enabled / weight / scope / guide`。
+
+落到骨架上是四套：上班日（摸鱼日同）走工作日骨架、加班日让骨架真的晚下班、休息日与宅家日共用休息日骨架、外出日单独一套；`guide` 会写进日程文案的提示词。
 
 ### 新增：外出日骨架
 
@@ -26,12 +28,12 @@
 
 ### 新增：两个指令
 
-- `/日程 今天` 查看某天的安排（也可写 明天 / 昨天）
-- `/改日程 15:00 提前回家` 改今天某一段
+- `/日程 今天` 查看某天的安排（也可写 明天 / 昨天，写别的会回用法）
+- `/改日程 15:00 提前回家` 改今天某一段（时间支持 9:00 这种写法）
 
 ### 新增：按用户的话改日程
 
-`schedule_change.detect_schedule_change()` 识别明确改变当天行程的说法，命中就替换当前时段：
+`schedule_change.detect_schedule_change()` 识别明确改变当天行程的说法，按锚点改对应时段，不是无脑改「现在」；否定句（别来接我 / 不想去吃）不算：
 
 | 用户说 | 日程改成 |
 |---|---|
@@ -39,12 +41,157 @@
 | 早点回家 / 提前回家 | 提前收拾东西回家 |
 | 不加班了 / 不去了 | 不去了，改回家待着 |
 | 一起出去吃 / 请你吃饭 | 和他一起出去吃饭 |
-| 一起睡 / 该睡了 | 上床睡觉（后面到凌晨整段并成睡觉） |
+| 一起睡 / 该睡了 | 上床睡觉（后面到凌晨整段并成睡觉，20:00 之后才生效） |
+
+只认主人的私聊（`schedule_change_owner_ids` 留空时沿用礼物引擎的主人判定），群聊和其他人说「睡吧」不会改她的日程；已经在睡觉的时段不会被一句「去吃」叫醒；改动和现状一样就不写库。
 
 ### 测试
 
 新增 `tests/test_day_types.py`，13 个用例覆盖类型抽取隔离、种子稳定性、
 禁用兜底、五种行程识别、时段改写与边界。开发中该测试抓到两个 bug 并已修复。
+
+### 修复（合入前 review）
+
+- **恢复 `.github/workflows/test.yml`**：上游分支里这个文件被整份删掉了，合进来等于把
+  check_version / mypy / pytest / coverage 全摘掉；现在按 main 原样恢复。
+- **`_apply_user_schedule_change` 根本没生效**：用了插件上不存在的 `self.schedule`
+  （日程挂在 `HumanState` 上），AttributeError 被吞掉；改成 `self.state.schedule`，
+  时间改用 `_now()`/`today_str()`（原 `date.today()` 在 UTC 服务器上会改错日期，
+  且过不了 `tests/test_clock.py` 的源码守卫）。
+- **`/日程` 必失败**：`schedule_text_of` 原来定义在插件 mixin 上，命令却调
+  `self.state.schedule_text_of`；实现挪到 `HumanState`。
+- **外出日骨架是坏的**：时间参数写成了分钟整数，`parse_hhmm` 抛 IndexError，
+  整天塌成宅家；就算改成字符串，半小时边界也会让 `_validate` 的整点校准整体错位
+  （它是按第 i 段钉成 `i:00` 的），所以改成整点、补上 00:00–08:00 睡觉段，
+  zone 也换成既有的 road / scenic / mall / restaurant，避免被改成「从 A 赶去 B」。
+  生病或天气不好时退回休息日骨架。
+- **`schedule_day_types` 读不到**：`self.p.cfg_list` 不存在（只有 cfg_str/bool/int/float），
+  每次 AttributeError 被吞、永远用内置默认；补了 `ConfigMixin.cfg_list`，
+  并把 schema 从 `list + items` 改成仓库里对象列表的统一写法 `template_list + templates`。
+- **加班日没生效**：`build_skeleton` 只认 outing/homebody，加班日仍走普通工作日骨架；
+  现在真的按 overtime 晚下班。`guide` 以前只写不读，现在会进 `enrich` 的提示词。
+- **日子类型半路变**：原来每次 `ensure_schedule` 都重抽并写 `day_type_<日期>`，
+  改权重会让"类型"和"已生成的日程"对不上；现在按日期缓存到 `day_types` kv（当天不重抽），
+  并随日程一起清理 14 天前的记录。
+- **改日程钩子没有权限闸**：挂在 `on_message` 上对所有非命令消息生效，群里谁都能改；
+  现在只认主人私聊（`schedule_change_enabled` 可关）。
+- **规则误伤**：`早点睡` 白天也会把晚饭/休息全改成睡觉、`去吃` 在上午改当前时段、
+  `别来接我` 也会改成来接；现在加了否定词判断、按锚点定位（下班通勤 / 下一顿饭 / 当前段）、
+  睡觉 20:00 之后才生效、不唤醒已睡时段、"我来接你"与"来接我"区分主客。
+- 小修：`/日程 后天` 不再静默当成今天；`/改日程` 校验时间；`_conf_schema.json` 末尾换行补回。
+
+#### 结构（原「未发布（基于 6.6.8）」）
+
+#### 测试：覆盖率 46% → 68%，新增 544 项行为测试
+
+- 新增 6 个测试文件（合计 544 个测试 / 约 7,300 行），全部只加测试、**源码零改动**：
+  - `tests/test_runtime_coverage.py`（133 项）：消息钩子、`_tick()` 单步、事件分发、
+    里程碑与每日总结；后台循环用假 `sleep` 只跑一圈；
+  - `tests/test_api_coverage.py`（79 项）：面板 HTTP 接口（状态/天气/日程/日记/记忆/画像/礼物）、
+    假 request 的正常、缺参、错误分支；
+  - `tests/test_social_coverage.py`（121 项）：关系网、称呼、社交互动；
+  - `tests/test_cmd_coverage.py`（92 项）：`/amo` 系列子命令与参数解析；
+  - `tests/test_schedule_coverage.py`（72 项）：日程生成与结构校验；`tests/test_travel_coverage.py`（47 项）：出行/地点；
+- 覆盖率 **46% → 68%**（测试 748 → 1292），`amo_runtime` 5% → 高覆盖、`amo_api` 17% → 高覆盖；
+- 全量 `pytest tests` 28 秒跑完（无 sleep / 无真实时钟依赖），mypy 45 个文件 0 错误、pyflakes 0；
+- `.coveragerc` 底线 **40% → 62%**（实测 68%，Windows 会跳过 7 项 `tzset` 测试，留余量）。
+
+#### 结构（第三轮）：main.py 只剩组装层，三个大类独立成模块
+
+- `main.py` 3,677 → **1,155 行**，只保留插件装配、`ReplyGate`、生命周期钩子：
+  - `amo_db.py`（815 行）：`AmoDB` 存储层（kv/画像/关系网/消息/日程/日记）；
+  - `amo_human_state.py`（1,576 行）：`HumanState` 心情/生理期/健康/天气/日程/旅行覆盖层；
+  - `amo_llm_service.py`（409 行）：`LLMService` 人格读取/对话/润色/判定/事实提取；
+  - `main.py` 顶部保留再导出（`from .amo_db import AmoDB` 等），外部 `from main import ...` 不变。
+- 双模式导入（包内相对 / 按文件直接加载）改成 `if TYPE_CHECKING: ... else: try/except`，
+  mypy 在包模式下不再把兜底 import 当成重复定义（原先 342 个 `no-redef`）。
+
+#### 类型：mypy 覆盖全部模块
+
+- 新增 `amo_types.py`：用 `Protocol` 声明 13 个 mixin **组合后**的公共接口
+  （`db` / `state` / `llm` / `_ensure_ready()` 等），mixin 条件继承协议、运行时继承 `object`，
+  不参与 MRO、不遮挡真实实现；78 个 `attr-defined` 全部归零；
+- 新增 `tools/mypy_check.py`：把插件目录当包（父目录进 `MYPYPATH`）跑 mypy，任何 cwd 都能用；
+- `mypy.ini` 从 5 个纯模块扩到**全部 20 个模块 + main.py**，0 错误；
+- `amo_shared.py` 的 40 个公开工具函数补了参数/返回标注，其余函数逐步补（`allow_untyped_defs` 还在）。
+
+#### 记忆：只适配「想记」(Astr_Amo_data)
+
+- 删除旧记忆源适配（牢记 / 天使之魂 / livingmemory / companion，约 1,200 行）和所有
+  "退回外挂记忆插件"的分支：召回、写入、面板/命令读取现在只走 `Astr_Amo_data`；
+- `amo_memory.py`（1,866 行）拆成 4 个：
+  `amo_memory_data.py`（626 行，想记桥/同步/画像/列表）、`amo_memory_context.py`（274 行，
+  时间回看/跨平台/`_recall`）、`amo_memory_bridge.py`（153 行，MemoryHub/写入）、
+  `amo_memory.py`（32 行，facade）；
+- `amo_llm.py` 里散着的记忆胶水（`_memory_hub` / `_external_memory_*` / 画像同步等，约 500 行）
+  一并搬到 `amo_memory_*`，`amo_llm.py` 841 → 443 行；
+- **修掉一个真实缺口**：只装想记时，面板记忆页能读到记忆，但画像页和 `/profile`、`/memories`
+  命令只读旧适配器 → 显示 0 条；现在统一走 `_all_memories()`（想记优先）；
+- 面板「记忆来源」下拉不再列出旧插件，只报告想记在不在；`_conf_schema.json` 移除
+  `companion_memory_plugin_name`。
+
+#### 测试与覆盖率
+
+- 单测 **470 → 744**（7 项 Windows 无 `tzset` 跳过），新增：
+  `test_shared_core`（工具/文本/用量）、`test_amo_db`（存储层）、`test_human_state`（状态机）、
+  `test_llm_service`（人格/润色/事实提取）、`test_reply_gate`（插话判定）、`test_state_events`（日程副作用）、
+  `test_uid_merge`（跨平台合并）、`test_config_helpers`（迁移/热重载）、`test_balance`、
+  `test_text_pipeline`、`test_social_message_helpers`、`test_plugin_glue`；
+- 覆盖率 **30% → 44%**（16,360 行语句，`.coveragerc` 底线 40%）。
+
+#### 顺手修的 bug
+
+- `AmoDB.update_profile()` 没有任何可写字段时仍会写 `profile_updated_at`（返回 True，脏写同步时间）；
+- `clear_diaries_from()` 用 TEXT 比 `hour`，`"9" >= "10"` 成立 → 清 10 点会连 0–9 点一起删；
+- 跨平台合并时关系网两列分别 UPDATE 会产生反向重复（a→b 与 b→a 各一条），现按无序对去重再统一方向；
+- 日程里脏 `start`（如「坏数据」）被 `parse_hhmm` 当成 00:00，午夜凭空多一段活动；
+- `segment_text()` 对没有标点的超长块不做切分，`max_len` 实际不生效（链接/成对符号/代码块仍不切）；
+- `extract_persona_name()` 把「你是AI助手」里的「AI助手」当成人格名（大小写不匹配 blocked 表）；
+- `fetch_deepseek_balance()` 与 `fetch_provider_balance(kind="deepseek")` 逻辑重复，合并成一处。
+
+
+#### 结构：main.py 拆分 + 吞异常可观测
+
+- 13,982 行的 `main.py` 拆到 **3,677 行**：`amo_shared.py`（导入兜底 / 常量 / 工具 / 用量）
+  加 13 个 mixin——
+  `amo_api.py`（面板 API）、`amo_proactive.py`（主动消息/问候）、`amo_schedule.py`（日程/日记/天气）、
+  `amo_llm.py`（LLM 注入/回复）、`amo_memory.py`（记忆/外部记忆桥/数据插件同步）、
+  `amo_commands.py`（命令与状态）、`amo_config.py`（配置迁移/热重载）、
+  `amo_message.py`（消息收发/分段/防抖）、`amo_social.py`（关系/群聊/引用守卫）、
+  `amo_travel.py`（城市跟随/旅行）、`amo_runtime.py`（钩子/后台循环/主动上下文）、
+  `amo_kb.py`（方言/景区知识库）、`amo_usage.py`（用量/余额）；
+- 827 处静默 `except Exception` 改成「计数 + 限流 warning」：同一个点 10 分钟最多一条、
+  全局 15 秒最多一条；`/status` 的 `counts.swallowed` 给出被吞最多的 10 个点；
+- 新增 `amo_observability.py` 与 4 项单测；
+- CI 增加 `mypy`（5 个纯模块）和 `coverage` 30% 底线，`requirements-dev.txt` 补依赖；
+- 单测 470 项（7 项 Windows 无 tzset 跳过）。
+
+#### 跨平台归一：同一个人的 QQ / 飞书两边记忆真正相通
+
+- **平台名不再被写成机器人名字**：QQ 的 umo 前缀是 `大肥鱼`，以前 `platform` 直接取第一段，
+  库里 25 行 `platform='大肥鱼'`，跨平台按 `aiocqhttp` 查不到那半边；新增 `normalize_platform()`。
+- **她的回复挂到人身上**：`add_message` 给 `role='bot'` 的行按会话另一方补 `pid`，
+  `person_context` 才能把她的话（`other_platform_bot_lines`）带回来。
+- **`person_context` 分开展量**：他的近聊按 (平台, uid)、她的按 `pid + role='bot'`，
+  以前混在一条 SQL 里她的话会把他的挤出 limit；记忆按这个人的所有身份 uid 查（飞书那头以前永远 0 条）。
+- **时间回看跨平台**：私聊合并该人所有会话再排序去重；群聊仍按 uid（不串群友）。
+- 修了她的回复写入时的平台名（`_platform_for_umo()`），历史 38 条被标成 `role=user` 的消息已迁移。
+
+#### 其余修复
+
+- 延迟回复 4-18 分钟后无条件发：期间已回复/有新消息就丢弃；
+- 回看判定收窄：「我10点开会」「我在3号线地铁上」「明天9点叫我」不再触发「记不清」；
+- 心流判定 20s 超时；「判断暂停」真正生效；
+- 室内景点池不再写死贵阳/贵州；`float(temp)` 非数字不再炸整天日程；
+- `/status` 只读（不再 force 刷天气/现生成日程）；
+- **Windows 时区修复**：没有 `tzset` 的平台不再把 `TZ` 写成 `Asia/Shanghai`（Windows CRT
+  会把它当非法值按 UTC 算，`datetime.now()` 本地、`fromtimestamp()` 却 UTC，同一进程两套时钟）；
+  心流里两处 `datetime.fromtimestamp` 改走 `clock`；
+- `weather_alert` 的兜底函数原来放进了礼物模块的 `except` 分支，礼物导入失败时会反过来
+  盖掉天气函数、天气模块失败时又完全没有兜底 → 已归位；
+- `dialect_style` 补进配置 schema，保存语种不再依赖接口特判；
+- 测试在 Windows 可跑：没有 `tzset` 时跳过进程时区用例，时间断言改用 `clock`；
+- P2：清掉未使用导入/死变量。
 
 ## 6.6.8（主动消息/日程一致性 + 引用守卫）
 

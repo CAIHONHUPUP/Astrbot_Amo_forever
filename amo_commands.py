@@ -449,15 +449,17 @@ class CommandMixin(_MixinBase):
         try:
             import datetime as _dt
 
-            args = str(getattr(event, "message_str", "") or "").split()
-            which = args[-1] if len(args) > 1 else "今天"
-            today = _dt.date.today()
-            if which in ("明天", "tomorrow"):
-                target = today + _dt.timedelta(days=1)
-            elif which in ("昨天", "yesterday"):
-                target = today - _dt.timedelta(days=1)
-            else:
-                target = today
+            args = str(getattr(event, "message_str", "") or "").replace("／", "/").split()
+            which = args[1] if len(args) > 1 else "今天"
+            offset = {
+                "今天": 0, "today": 0,
+                "明天": 1, "tomorrow": 1,
+                "昨天": -1, "yesterday": -1,
+            }.get(which)
+            if offset is None:
+                yield event.plain_result("用法：/日程 [今天|明天|昨天]")
+                return
+            target = _dt.date.fromisoformat(today_str()) + _dt.timedelta(days=offset)
             yield event.plain_result(self.state.schedule_text_of(target.isoformat()))
         except Exception as _amo_exc:
             _note_swallowed("amo_commands.cmd_schedule", _amo_exc)
@@ -468,36 +470,46 @@ class CommandMixin(_MixinBase):
         """改今天某一段：/改日程 15:00 提前回家"""
         await self._ensure_ready()
         try:
-            raw = str(getattr(event, "message_str", "") or "").strip()
+            raw = str(getattr(event, "message_str", "") or "").replace("／", "/").strip()
             parts = raw.split(None, 2)
             if len(parts) < 3:
                 yield event.plain_result("用法：/改日程 15:00 提前回家")
                 return
-            clock, activity = parts[1], parts[2]
-            import datetime as _dt
-
-            key = _dt.date.today().isoformat()
+            match = re.match(r"^(\d{1,2})[:：](\d{2})$", parts[1].strip())
+            if not match:
+                yield event.plain_result("时间要写成 HH:MM，比如 /改日程 15:00 提前回家")
+                return
+            hour, minute = int(match.group(1)), int(match.group(2))
+            if hour > 23 or minute > 59:
+                yield event.plain_result("时间不对，要 00:00–23:59。")
+                return
+            clock = "%02d:%02d" % (hour, minute)
+            activity = parts[2].strip()[:60]
+            if not activity:
+                yield event.plain_result("还没说要改成什么。")
+                return
+            key = today_str()
             items = self.state.schedule.get(key) or self.db.get_schedule(key) or []
             hit = None
-            for it in items:
-                if str(it.get("start") or "") == clock[:5]:
-                    hit = it
+            for item in items:
+                if str(item.get("start") or "") == clock:
+                    hit = item
                     break
             if hit is None:
-                for it in items:
-                    s0 = str(it.get("start") or "")
-                    e0 = str(it.get("end") or "")
-                    if s0 and e0 and s0 <= clock[:5] < e0:
-                        hit = it
+                for item in items:
+                    start = str(item.get("start") or "")
+                    end = str(item.get("end") or "")
+                    if start and end and start <= clock < end:
+                        hit = item
                         break
             if hit is None:
                 yield event.plain_result("那个时间点找不到对应的安排。")
                 return
-            hit["activity"] = activity.strip()[:60]
+            hit["activity"] = activity
             self.state.schedule[key] = items
             self.db.kv_set("schedule", self.state.schedule)
             self.db.save_schedule(key, items)
-            yield event.plain_result("改好了，%s 那段现在是「%s」。" % (hit.get("start"), activity.strip()[:30]))
+            yield event.plain_result("改好了，%s 那段现在是「%s」。" % (hit.get("start"), activity[:30]))
         except Exception as _amo_exc:
             _note_swallowed("amo_commands.cmd_schedule_edit", _amo_exc)
             yield event.plain_result("没改成…")

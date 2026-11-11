@@ -11,23 +11,17 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
     except ImportError:  # 直接按文件加载时
         from amo_observability import note as _note_swallowed
 
-try:
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .day_types import normalize_day_types, pick_day_type
-except ImportError:
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
-        from day_types import normalize_day_types, pick_day_type
-    except ImportError:
-        normalize_day_types = None
-        pick_day_type = None
-
-try:
-    from .schedule_change import apply_change as apply_sched_change, detect_schedule_change
-except ImportError:
-    try:
-        from schedule_change import apply_change as apply_sched_change, detect_schedule_change
-    except ImportError:
-        detect_schedule_change = None
-        apply_sched_change = None
+        from .day_types import normalize_day_types, pick_day_type
+    except ImportError:  # 直接按文件加载时
+        try:
+            from day_types import normalize_day_types, pick_day_type
+        except ImportError:
+            normalize_day_types = None  # type: ignore[assignment]
+            pick_day_type = None  # type: ignore[assignment]
 
 
 from datetime import date
@@ -903,28 +897,79 @@ class HumanState:
         """读配置里的日子类型；没配就用默认那六种。"""
         if normalize_day_types is None:
             return []
-        raw = []
-        try:
-            raw = self.p.cfg_list("schedule_day_types", [])
-        except Exception:
-            raw = []
+        raw: list = []
+        # 新版面板用 template_list 存对象数组，走 cfg_list；老配置/测试桩里只有 cfg()
+        for getter_name in ("cfg_list", "cfg"):
+            getter = getattr(self.p, getter_name, None)
+            if not callable(getter):
+                continue
+            try:
+                value = getter("schedule_day_types", [])
+            except Exception as _amo_exc:
+                _note_swallowed("amo_human_state._day_types", _amo_exc)
+                value = []
+            if isinstance(value, list) and value:
+                raw = value
+                break
         return normalize_day_types(raw or None)
+
+    def _day_type_store(self) -> dict:
+        """当天是什么日子按日期存一份：重启后不变，改权重也不会半路换类型。"""
+        try:
+            raw = self.db.kv_get("day_types", {}) or {}
+        except Exception as _amo_exc:
+            _note_swallowed("amo_human_state._day_type_store", _amo_exc)
+            return {}
+        return dict(raw) if isinstance(raw, dict) else {}
 
     def _today_day_type(self, day: str) -> dict:
         """今天是什么日子：上班日 / 休息日 / 外出日 / 宅家日 / 加班日 / 摸鱼日。"""
         if pick_day_type is None:
             return {"id": "workday", "name": "上班日", "guide": ""}
         try:
+            key = str(day)
+            store = self._day_type_store()
+            cached = store.get(key)
+            if isinstance(cached, dict) and cached.get("id"):
+                return cached
             import datetime as _dt
 
-            d = _dt.date.fromisoformat(str(day))
-            is_weekend = d.weekday() >= 5
-            picked = pick_day_type(self._day_types(), is_weekend, str(day))
-            self.db.kv_set("day_type_" + str(day), picked)
+            d = _dt.date.fromisoformat(key)
+            picked = dict(pick_day_type(self._day_types(), d.weekday() >= 5, key))
+            store[key] = picked
+            if len(store) > 30:
+                for old in sorted(store)[:-30]:
+                    store.pop(old, None)
+            self.db.kv_set("day_types", store)
             return picked
         except Exception as _amo_exc:
             _note_swallowed("amo_human_state._today_day_type", _amo_exc)
             return {"id": "workday", "name": "上班日", "guide": ""}
+
+    def schedule_text_of(self, day: str) -> str:
+        """把某天的日程拍成一段文本（/日程 用）。"""
+        try:
+            key = str(day)
+            items = self.schedule.get(key) or self.db.get_schedule(key) or []
+            if not items:
+                return "那天还没有安排。"
+            info = self._day_type_store().get(key) or {}
+            lines = []
+            if isinstance(info, dict) and info.get("name"):
+                lines.append("今天是%s。" % info["name"])
+            for item in items:
+                activity = str(item.get("activity") or "").strip()
+                if not activity:
+                    continue
+                place = str(item.get("place") or "").strip()
+                lines.append("%s-%s %s%s" % (
+                    item.get("start") or "", item.get("end") or "", activity,
+                    ("（%s）" % place) if place else "",
+                ))
+            return "\n".join(lines[:24]) or "那天还没有安排。"
+        except Exception as _amo_exc:
+            _note_swallowed("amo_human_state.schedule_text_of", _amo_exc)
+            return "想不起来…"
 
     async def ensure_schedule(self, umo, force=False):
         """每天只生成一次主干；点击二级卡片时再动态生成这一小时的日记。"""
@@ -1033,6 +1078,12 @@ class HumanState:
                 self.schedule.pop(day, None)
                 self.schedule_ctx.pop(day, None)
         self.db.kv_set("schedule_ctx", self.schedule_ctx)
+        day_types = self._day_type_store()
+        stale_types = [key for key in day_types if key < cutoff]
+        if stale_types:
+            for key in stale_types:
+                day_types.pop(key, None)
+            self.db.kv_set("day_types", day_types)
         logger.info("[amo] 生成日程主干 %s：%s" % (
             today, (context or {}).get("event", {}).get("kind", "none"),
         ))
