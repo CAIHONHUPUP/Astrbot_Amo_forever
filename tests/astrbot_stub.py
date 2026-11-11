@@ -90,12 +90,25 @@ def install():
             self.id = id
 
     class Image:
-        def __init__(self, file=None):
+        def __init__(self, file=None, **kwargs):
             self.file = file
+            self.path = kwargs.get("path")
 
         @staticmethod
         def fromBytes(data):
             return Image("bytes:" + str(data))
+
+        @classmethod
+        def fromFileSystem(cls, path, **kwargs):
+            return cls(file=str(path), path=str(path))
+
+        @classmethod
+        def fromBase64(cls, payload, **kwargs):
+            return cls(file="base64://" + str(payload))
+
+        @classmethod
+        def fromURL(cls, url, **kwargs):
+            return cls(file=str(url))
 
     class At:
         def __init__(self, qq=""):

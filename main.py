@@ -19,6 +19,7 @@ import re
 import sqlite3
 import threading
 import time
+import uuid
 from datetime import date, datetime, timedelta, timezone
 
 # 统一时区：容器/服务器常在 UTC 跑，直接取服务器本地时间会把北京时间 10 点算成凌晨 2 点
@@ -50,6 +51,18 @@ except Exception:
     Comp = None
 
 from astrbot.api import logger
+
+# ---- 画图 / 照片分享（本地功能，接万象画卷 OmniDraw）----
+try:
+    from .draw_engine import DrawEngine
+    from .photo_engine import PhotoEngine
+except ImportError:  # 直接按文件加载时
+    try:
+        from draw_engine import DrawEngine
+        from photo_engine import PhotoEngine
+    except Exception:  # 没装/导入失败时不影响主脑启动
+        DrawEngine = None
+        PhotoEngine = None
 
 try:
     from .day_types import normalize_day_types, pick_day_type
@@ -477,7 +490,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.11.0"
+PLUGIN_VERSION = "6.12.0"
 
 # 这些开关是面板/主链路的底座：隐藏开关并强制开启，避免误关后整块功能消失。
 FORCED_ON_CONFIG_KEYS = frozenset({
@@ -4658,6 +4671,17 @@ WRITE_ROUTES = frozenset({
     "/worldview/regen", "/worldview_regen",
     "/say",
     "/city/set",
+    "/photo/test",
+    "/photo/prompt",
+    "/photo/prompt_saved",
+    "/photo/sheet",
+    "/photo/persona",
+    "/photo/persona/delete",
+    "/photo/persona/toggle",
+    "/photo/template_dir",
+    "/photo/template_open",
+    "/draw/test",
+    "/draw/decide",
     "/diary/write", "/diary/import", "/diary/open",
     "/refresh_status",
 })
@@ -4706,6 +4730,22 @@ class HumanCorePlugin(Star):
                 self.gift = GiftEngine(self)
             except Exception as exc:
                 logger.warning("[amo] 礼物引擎初始化失败: %s" % exc)
+        self.draw = None
+        if DrawEngine is not None:
+            try:
+                self.draw = DrawEngine(self)
+            except Exception as exc:
+                logger.warning("[amo] 画图引擎初始化失败: %s" % exc)
+        self.photo = None
+        if PhotoEngine is not None:
+            try:
+                self.photo = PhotoEngine(self)
+            except Exception as exc:
+                logger.warning("[amo] 照片引擎初始化失败: %s" % exc)
+        if self.draw is not None:
+            logger.info("[amo] 画图引擎已加载（%s）" % ("开" if self.draw.enabled else "关"))
+        if self.photo is not None:
+            logger.info("[amo] 照片引擎已加载（%s）" % ("开" if self.photo.enabled else "关"))
         self.heartflow = None
         self.segment_engine = None
         try:
@@ -9902,6 +9942,14 @@ class HumanCorePlugin(Star):
             # 绝不能改 req.system_prompt：那里放每轮都变的内容会打散系统提示词前缀，
             # 破坏模型侧缓存（成本涨 7-20 倍），上架审核也会因此被拒。
             body = "<amo_state>\n" + context_text + "\n</amo_state>"
+            try:
+                if self.draw is not None and self.draw.wants_photo(event):
+                    body += (
+                        "\n【拍照请求】他这轮明确想要一张照片：自然答应（可以害羞、可以说等一下），"
+                        "说清你现在在哪、在做什么；不要直接拒绝（不要说“不拍 / 拍什么拍”）。"
+                    )
+            except Exception as exc:
+                logger.debug("[amo] 画图提示失败: %s" % exc)
             parts = getattr(req, "extra_user_content_parts", None)
             if parts is None:
                 return
@@ -10068,6 +10116,13 @@ class HumanCorePlugin(Star):
                     self.gift.observe_reply(event, text)
                 except Exception as exc:
                     logger.debug("[amo] 礼物心愿捕获失败: %s" % exc)
+            # 先判断要不要补图：表情包/图片回复会被后面的非 Plain 检查提前 return，
+            # 所以放在这里，保证「拍给我看看」即使她只回表情也能触发
+            if self.draw is not None:
+                try:
+                    self.draw.maybe_after_reply(event, text)
+                except Exception as exc:
+                    logger.warning("[amo] 画图判断失败: %s" % exc)
             # 用上下文判断“这句是不是在跟她说”，而不是靠关键词猜
             addressed_to_me = self._is_talking_to_me(event)
             if not addressed_to_me and (
@@ -10266,6 +10321,11 @@ class HumanCorePlugin(Star):
     async def _tick(self):
         if not self._ready or self.state is None:
             return
+        if self.photo is not None:
+            try:
+                await self.photo.tick()
+            except Exception as exc:
+                logger.debug("[amo] 照片任务失败: %s" % exc)
         # 数据插件可能在陪伴之后才装：每 5 分钟重新探测一次，装上就自动接管/迁移
         if (self._data_mem() is None and self._data_store() is None
                 and now_ts() - to_float(getattr(self, "_last_data_probe", 0), 0) > 300):
@@ -11715,6 +11775,7 @@ class HumanCorePlugin(Star):
                 "/amo weather 天气｜/amo worldview 世界观｜/amo threshold 阈值\n"
                 "管理员：/amo rel @人 关系｜/amo set @人 字段 值｜/amo memo @人 内容 [0/1/2]（写入记忆插件）\n"
                 "/amo period set YYYY-MM-DD｜/amo health set 状态\n"
+                "/amo draw 描述（测试画图）｜/amo photo（照片概率/状态）\n"
                 "/amo schedule regen｜/amo worldview regen｜/amo say 内容｜/amo clean"
             )
 
@@ -11737,6 +11798,24 @@ class HumanCorePlugin(Star):
             if not segments:
                 lines.append("（没有可发送的片段）")
             return "\n".join(lines)
+
+        if sub in ("draw", "画图"):
+            engine = getattr(self, "draw", None)
+            if engine is None:
+                return "画图引擎未加载"
+            text = " ".join(args[1:]).strip()
+            return engine.manual(event, text)
+
+        if sub in ("photo", "照片"):
+            engine = getattr(self, "photo", None)
+            if engine is None:
+                return "照片引擎未加载"
+            tail = " ".join(args[1:]).strip().lower()
+            if tail in ("test", "测试", "share"):
+                return "照片测试：" + await engine.share_now("daily")
+            if tail in ("travel", "shopping", "weekend", "daily", "outfit"):
+                return "照片测试：" + await engine.share_now(tail)
+            return engine.status_text()
 
         if sub == "status" or sub == "状态":
             return self._format_status(await self._status_data())
@@ -12158,6 +12237,19 @@ class HumanCorePlugin(Star):
             ("/weather/brief", self.api_weather_brief, ["GET", "POST"]),
             ("/city/search", self.api_city_search, ["GET", "POST"]),
             ("/city/set", self.api_city_set, ["GET", "POST"]),
+            ("/photo/test", self.api_photo_test, ["GET", "POST"]),
+            ("/photo/prompt", self.api_photo_prompt, ["GET", "POST"]),
+            ("/photo/prompt_saved", self.api_photo_prompt_saved, ["GET", "POST"]),
+            ("/photo/sheet", self.api_photo_sheet, ["GET", "POST"]),
+            ("/photo/job", self.api_photo_job, ["GET", "POST"]),
+            ("/photo/persona", self.api_photo_persona, ["GET", "POST"]),
+            ("/photo/persona/delete", self.api_photo_persona_delete, ["GET", "POST"]),
+            ("/photo/persona/toggle", self.api_photo_persona_toggle, ["GET", "POST"]),
+            ("/photo/template_dir", self.api_photo_template_dir, ["GET", "POST"]),
+            ("/photo/template_open", self.api_photo_template_open, ["GET", "POST"]),
+            ("/draw/status", self.api_draw_status, ["GET", "POST"]),
+            ("/draw/test", self.api_draw_test, ["GET", "POST"]),
+            ("/draw/decide", self.api_draw_decide, ["GET", "POST"]),
             ("/usage", self.api_usage, ["GET"]),
             ("/providers", self.api_providers, ["GET"]),
             ("/providers_list", self.api_providers, ["GET"]),
@@ -12372,6 +12464,8 @@ class HumanCorePlugin(Star):
                 continue
             if key.startswith("hf_"):
                 group = "心流"
+            elif key.startswith("draw_") or key.startswith("photo_"):
+                group = "照片"
             elif key.startswith("seg_"):
                 group = "分段"
             elif key.startswith("companion_") or key.startswith("memory_") or key in ("admin_uids",):
@@ -13976,6 +14070,309 @@ class HumanCorePlugin(Star):
         except Exception as exc:
             logger.debug("[amo] 礼物面板数据失败: %s" % exc)
             return {"code": 0, "data": {"enabled": False, "wishes": [], "gifts": []}}
+
+    def _photo_job_start(self, kind, coro):
+        """后台跑生图任务，接口立刻返回 job id，避免桥接请求超时。"""
+        jobs = getattr(self, "_photo_jobs", None)
+        if jobs is None:
+            jobs = {}
+            self._photo_jobs = jobs
+        cutoff = now_ts() - 900
+        for key in [key for key, value in jobs.items() if float(value.get("ts") or 0) < cutoff]:
+            jobs.pop(key, None)
+        job_id = uuid.uuid4().hex[:12]
+        jobs[job_id] = {"status": "running", "kind": kind, "ts": now_ts(), "data": None, "msg": ""}
+
+        async def runner():
+            try:
+                result = await coro
+                jobs[job_id].update(status="done", data=result)
+            except Exception as exc:
+                logger.warning("[amo] 照片任务失败(%s): %s" % (kind, exc))
+                jobs[job_id].update(status="error", msg=str(exc))
+
+        try:
+            asyncio.create_task(runner())
+        except RuntimeError:
+            try:
+                coro.close()
+            except Exception:
+                pass
+            jobs[job_id].update(status="error", msg="事件循环不可用")
+        return job_id
+
+    async def api_photo_job(self):
+        await self._ensure_ready()
+        data = await self._body()
+        data = data if isinstance(data, dict) else {}
+        job_id = str(data.get("id") or "")
+        job = (getattr(self, "_photo_jobs", {}) or {}).get(job_id)
+        if not job:
+            return {"code": 1, "msg": "任务不存在（插件可能重载过，重新生成一次）"}
+        return {"code": 0, "data": {
+            "id": job_id,
+            "status": job.get("status"),
+            "kind": job.get("kind"),
+            "msg": job.get("msg") or "",
+            "data": job.get("data"),
+        }}
+
+    async def api_photo_prompt(self):
+        """面板「按提示词生成」：用角色模板画一张，发到最近会话。"""
+        await self._ensure_ready()
+        data = await self._body()
+        data = data if isinstance(data, dict) else {}
+        prompt = str(data.get("prompt") or "").strip()
+        send = bool(data.get("send", False))
+        if not prompt:
+            return {"code": 1, "msg": "提示词不能为空"}
+        engine = getattr(self, "photo", None)
+        if engine is None:
+            return {"code": 1, "msg": "照片引擎未加载"}
+
+        async def build():
+            item = await engine.generate_prompt(prompt, send=send)
+            if not item:
+                raise RuntimeError("没出图，看日志（[amo] 自定义生图）")
+            url = (item.get("url") or item.get("image_url") or item.get("data_url")
+                   or item.get("file_path") or "")
+            return {"url": url, "preview": engine.preview_data_url(item),
+                    "msg": "已生成并发到聊天" if send else "已生成"}
+
+        return {"code": 0, "data": {"job": self._photo_job_start("prompt", build())}}
+
+    async def api_photo_prompt_saved(self):
+        """保存/读取「按提示词生成」输入框里上一次写的提示词。"""
+        await self._ensure_ready()
+        data = await self._body()
+        data = data if isinstance(data, dict) else {}
+        if "text" in data:
+            try:
+                self.db.kv_set("photo_prompt_saved", str(data.get("text") or ""))
+            except Exception as exc:
+                return {"code": 1, "msg": "保存失败：%s" % exc}
+        try:
+            text = str(self.db.kv_get("photo_prompt_saved", "") or "")
+        except Exception:
+            text = ""
+        return {"code": 0, "data": {"text": text}}
+
+    async def api_photo_sheet(self):
+        """角色三视图：front / side / full。"""
+        await self._ensure_ready()
+        data = await self._body()
+        data = data if isinstance(data, dict) else {}
+        view = str(data.get("view") or "front").strip().lower()
+        engine = getattr(self, "photo", None)
+        if engine is None:
+            return {"code": 1, "msg": "照片引擎未加载"}
+
+        async def build():
+            item = await engine.persona_sheet(view)
+            if not item:
+                raise RuntimeError("没出图，看日志")
+            engine.set_candidate(view, item)
+            url = (item.get("url") or item.get("image_url") or item.get("data_url")
+                   or item.get("file_path") or "")
+            return {"url": url, "preview": engine.preview_data_url(item),
+                    "view": view, "msg": "已生成 " + view}
+
+        return {"code": 0, "data": {"job": self._photo_job_start("sheet", build())}}
+
+    async def api_photo_persona(self):
+        """把选中的三视图设为角色模板。"""
+        await self._ensure_ready()
+        data = await self._body()
+        data = data if isinstance(data, dict) else {}
+        url = str(data.get("url") or "").strip()
+        view = str(data.get("view") or "front").strip().lower()
+        engine = getattr(self, "photo", None)
+        if engine is None:
+            return {"code": 1, "msg": "照片引擎未加载"}
+        # 优先用本地候选文件，避免远端 URL 过期后保存失败
+        candidate = engine.candidate(view)
+        local = str(candidate.get("file") or "")
+        if local and os.path.exists(local):
+            url = local
+        if not url:
+            return {"code": 1, "msg": "缺少图片地址"}
+        message = await engine.adopt_persona(url, view)
+        if message.startswith("✅"):
+            engine.clear_candidate(view)
+        return {"code": 0 if message.startswith("✅") else 1, "msg": message}
+
+    async def api_photo_persona_delete(self):
+        await self._ensure_ready()
+        data = await self._body()
+        data = data if isinstance(data, dict) else {}
+        view = str(data.get("view") or "").strip().lower()
+        engine = getattr(self, "photo", None)
+        if engine is None:
+            return {"code": 1, "msg": "照片引擎未加载"}
+        try:
+            message = await engine.delete_persona(view)
+        except Exception as exc:
+            return {"code": 1, "msg": "删除失败：%s" % exc}
+        return {"code": 0 if message.startswith("✅") else 1, "msg": message}
+
+    async def api_photo_persona_toggle(self):
+        await self._ensure_ready()
+        data = await self._body()
+        data = data if isinstance(data, dict) else {}
+        view = str(data.get("view") or "").strip().lower()
+        enabled = bool(data.get("enabled", True))
+        engine = getattr(self, "photo", None)
+        if engine is None:
+            return {"code": 1, "msg": "照片引擎未加载"}
+        message = engine.set_template_enabled(view, enabled)
+        return {"code": 0 if message.startswith("✅") else 1, "msg": message}
+
+    async def api_photo_template_dir(self):
+        """角色模板保存位置：GET 读取，POST 修改。"""
+        await self._ensure_ready()
+        engine = getattr(self, "photo", None)
+        if engine is None:
+            return {"code": 1, "msg": "照片引擎未加载"}
+        data = await self._body()
+        data = data if isinstance(data, dict) else {}
+        if "dir" in data:
+            folder = str(data.get("dir") or "").strip()
+            try:
+                self.config["photo_template_dir"] = folder
+                if hasattr(self.config, "save_config"):
+                    self.config.save_config()
+            except Exception as exc:
+                return {"code": 1, "msg": "保存失败：%s" % exc}
+        info = engine.template_info()
+        info["configured"] = self.cfg_str("photo_template_dir", "")
+        info["msg"] = "已保存" if "dir" in data else ""
+        return {"code": 0, "data": info}
+
+    async def api_photo_template_open(self):
+        await self._ensure_ready()
+        engine = getattr(self, "photo", None)
+        if engine is None:
+            return {"code": 1, "msg": "照片引擎未加载"}
+        root = engine.template_info().get("root", "")
+        opened = False
+        try:
+            if os.name == "nt" and os.path.isdir(root):
+                os.startfile(root)
+                opened = True
+        except Exception as exc:
+            logger.debug("[amo] 打开模板文件夹失败: %s" % exc)
+        return {"code": 0, "data": {"root": root, "opened": opened}}
+
+    async def api_photo_test(self):
+        """面板「现在发一张」：无视概率，按类别立刻分享一张照片。"""
+        await self._ensure_ready()
+        data = await self._body()
+        data = data if isinstance(data, dict) else {}
+        kind = str(data.get("category") or "daily").strip().lower() or "daily"
+        engine = getattr(self, "photo", None)
+        if engine is None:
+            return {"code": 1, "msg": "照片引擎未加载"}
+
+        async def build():
+            message = await engine.share_now(kind)
+            return {"msg": message}
+
+        return {"code": 0, "data": {"job": self._photo_job_start("test", build())}}
+
+    async def api_draw_status(self):
+        await self._ensure_ready()
+        engine = getattr(self, "draw", None)
+        if engine is None:
+            return {"code": 1, "msg": "画图引擎未加载"}
+        try:
+            return {"code": 0, "msg": engine.diagnostics()}
+        except Exception as exc:
+            return {"code": 1, "msg": "画图自检失败：%s" % exc}
+
+    async def api_draw_decide(self):
+        """调试：给一段用户消息和她的回复，看会不会触发、提示词是什么。"""
+        await self._ensure_ready()
+        data = await self._body()
+        data = data if isinstance(data, dict) else {}
+        text = str(data.get("text") or "")
+        reply = str(data.get("reply") or "")
+        uid = str(data.get("uid") or "302578963")
+        engine = getattr(self, "draw", None)
+        if engine is None:
+            return {"code": 1, "msg": "画图引擎未加载"}
+
+        class _FakeEvent:
+            def __init__(self, message, sender):
+                self.message_str = message
+                self.unified_msg_origin = "debug:private:%s" % sender
+                self._sender = sender
+
+            def is_private_chat(self):
+                return True
+
+            def get_sender_id(self):
+                return self._sender
+
+            def is_admin(self):
+                return False
+
+        try:
+            plan = engine.decide(_FakeEvent(text, uid), reply)
+        except Exception as exc:
+            return {"code": 1, "msg": "decide 异常：%s" % exc}
+        safe = None
+        if isinstance(plan, dict):
+            safe = {k: v for k, v in plan.items() if k != "cached"}
+            safe["cached"] = bool(plan.get("cached"))
+        return {"code": 0, "data": {"plan": safe}}
+
+    async def api_draw_test(self):
+        """调试：按当前场景真画一张并发到最近会话（会花钱，仅测试用）。"""
+        await self._ensure_ready()
+        data = await self._body()
+        data = data if isinstance(data, dict) else {}
+        text = str(data.get("text") or "拍照给我看看")
+        reply = str(data.get("reply") or "在呀")
+        umo = str(data.get("umo") or self._last_umo or "")
+        if not umo:
+            try:
+                for profile in self.db.proactive_profiles(limit=5) or []:
+                    candidate = self._pick_proactive_umo(profile)
+                    if candidate:
+                        umo = str(candidate)
+                        break
+            except Exception as exc:
+                logger.debug("[amo] 画图测试取会话失败: %s" % exc)
+        engine = getattr(self, "draw", None)
+        if engine is None:
+            return {"code": 1, "msg": "画图引擎未加载"}
+        if not umo:
+            return {"code": 1, "msg": "没有可发送的会话"}
+        plugin = self
+
+        class _FakeEvent:
+            def __init__(self):
+                self.message_str = text
+                self.unified_msg_origin = umo
+
+            def is_private_chat(self):
+                return True
+
+            def get_sender_id(self):
+                return "302578963"
+
+            def is_admin(self):
+                return False
+
+            async def send(self, chain):
+                await plugin.context.send_message(umo, chain)
+
+        plan = engine.decide(_FakeEvent(), reply)
+        if not plan:
+            return {"code": 0, "msg": "没有触发（看 draw_debug 日志）", "data": {"plan": None}}
+        engine._schedule(_FakeEvent(), plan["prompt"], plan.get("reason", "test"),
+                         plan.get("cached"), plan.get("cache_key", ""), plan.get("selfie", False))
+        return {"code": 0, "msg": "已开始画：%s" % plan["prompt"], "data": {"umo": umo}}
 
     async def api_schedule_regen(self):
         await self._ensure_ready()
