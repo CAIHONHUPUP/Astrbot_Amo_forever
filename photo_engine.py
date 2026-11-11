@@ -78,6 +78,10 @@ try:
 except Exception:  # pragma: no cover - 单测会注入桩
     MessageChain = None
 
+# 生图可能卡住/返回超大图：都设上限，别把事件循环和数据库拖死
+GENERATE_TIMEOUT_SECONDS = 180
+_MAX_IMAGE_BYTES = 16 * 1024 * 1024
+
 TRAVEL_WORDS = ("旅游", "旅行", "景区", "景点", "古镇", "海边", "爬山", "公园", "游乐园")
 SHOPPING_WORDS = ("逛街", "商场", "专柜", "步行街")
 OUTFIT_CATEGORY = ("commute", "work")
@@ -232,7 +236,17 @@ class PhotoEngine:
         # 明确配了 photo_owner_ids 但一个都没匹配上：宁可不发，也不发给别人
         if self._cfg_str("photo_owner_ids", "").strip():
             return []
-        return [row for row in rows if str(row.get("private_umo") or "").strip()]
+        # 没配名单、也没有相恋/管理员：只发她的主页私聊，不要发给陌生私聊
+        home_umo = ""
+        try:
+            getter = getattr(self.plugin, "_first_private_umo", None)
+            if callable(getter):
+                home_umo = str(getter() or "")
+        except Exception as _amo_exc:
+            _note_swallowed("photo_engine.PhotoEngine._profiles", _amo_exc)
+        if not home_umo:
+            return []
+        return [row for row in rows if str(row.get("private_umo") or "") == home_umo]
 
     def _target_umo(self, profile):
         try:
@@ -324,9 +338,10 @@ class PhotoEngine:
             return 0
         cutoff = time.time() - days * 86400
         removed = 0
+        cache_dir = self._cache_dir()
         try:
-            for name in os.listdir(self._cache_dir()):
-                path = os.path.join(self._cache_dir(), name)
+            for name in os.listdir(cache_dir):
+                path = os.path.join(cache_dir, name)
                 try:
                     if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
                         os.remove(path)
@@ -377,7 +392,8 @@ class PhotoEngine:
                 profile = random.choice(profiles)
                 self._busy = True
                 # 生图要几十秒，不能卡在 30 秒一轮的 tick 里；发完再放开
-                self._spawn(self._run_share(kind, scene, profile))
+                if self._spawn(self._run_share(kind, scene, profile)) is None:
+                    self._busy = False
                 return
         except Exception as exc:
             logger.debug("[amo] 照片任务失败: %s" % exc)
@@ -513,7 +529,11 @@ class PhotoEngine:
         if selfie:
             args["mode"] = "selfie"
         try:
-            result = await omni.generate_images_for_plugin(**args)
+            result = await asyncio.wait_for(
+                omni.generate_images_for_plugin(**args), timeout=GENERATE_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            logger.warning("[amo] 照片生成超时（%d 秒）" % GENERATE_TIMEOUT_SECONDS)
+            return None
         except Exception as exc:
             logger.warning("[amo] 照片生成失败（%s）: %s" % ("自拍" if selfie else "街景", exc))
             return None
@@ -612,7 +632,11 @@ class PhotoEngine:
                 prompt = self._prompt_for(kind, scene, activity)
             logger.info("[amo] 照片（dry-run）%s：%s" % (kind, prompt))
             return "🧪 dry-run：%s" % prompt
-        ok = await self._share(kind, scene, random.choice(profiles))
+        self._busy = True
+        try:
+            ok = await self._share(kind, scene, random.choice(profiles))
+        finally:
+            self._busy = False
         return "✅ 发了一张（%s）" % kind if ok else "❌ 没发出去，看日志"
 
     def template_dir(self):
@@ -846,9 +870,7 @@ class PhotoEngine:
         digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
         for _ in range(3):
             try:
-                with await asyncio.to_thread(lambda: urllib.request.urlopen(url, timeout=60)) as response:
-                    payload = response.read()
-                    content_type = str(response.headers.get("Content-Type") or "").lower()
+                payload, content_type = await asyncio.to_thread(self._fetch_image, url)
                 if "png" in content_type or payload[:8] == b"\x89PNG\r\n\x1a\n":
                     ext = ".png"
                 elif "webp" in content_type or payload[:4] == b"RIFF":
@@ -865,6 +887,16 @@ class PhotoEngine:
                 _note_swallowed("photo_engine.PhotoEngine._localize", _amo_exc)
                 await asyncio.sleep(2)
         return item
+
+    @staticmethod
+    def _fetch_image(url):
+        """线程里把图片读完再回来；事件循环里 read() 会把整条链路卡住。"""
+        with urllib.request.urlopen(url, timeout=60) as response:
+            content_type = str(response.headers.get("Content-Type") or "").lower()
+            payload = response.read(_MAX_IMAGE_BYTES + 1)
+        if len(payload) > _MAX_IMAGE_BYTES:
+            raise ValueError("图片超过 %d MB，丢弃" % (_MAX_IMAGE_BYTES // (1024 * 1024)))
+        return payload, content_type
 
     async def generate_custom(self, prompt, refs=None):
         """按提示词生成一张（可选带角色模板参考图），不发送。"""

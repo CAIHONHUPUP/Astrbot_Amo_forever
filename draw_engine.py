@@ -68,6 +68,11 @@ try:
 except Exception:  # pragma: no cover - 单测会注入桩
     MessageChain = None
 
+# 生图可能卡死；最多等 3 分钟就放弃这一次
+GENERATE_TIMEOUT_SECONDS = 180
+# data_url 是 base64，超过这个长度就不进 kv（否则数据库会被撑大）
+_MAX_CACHED_DATA_URL = 200000
+
 OMNI_PLUGIN_NAME = "astrbot_plugin_omnidraw"
 
 DEFAULT_TOPIC_KEYWORDS = (
@@ -232,11 +237,19 @@ class DrawEngine:
         last = self._last_draw.get(uid, 0.0)
         if cooldown and last and now - last < cooldown:
             return "冷却中（%d 秒）" % int(cooldown - (now - last))
-        hour = [ts for ts in self._draw_times.get(uid, []) if now - ts < 3600]
-        if len(hour) >= max(0, self._cfg_int("draw_max_per_hour", 3)):
+        times = list(self._draw_times.get(uid, []))
+        hour = [ts for ts in times if now - ts < 3600]
+        max_hour = max(0, self._cfg_int("draw_max_per_hour", 3))
+        if max_hour <= 0:
+            return "画图限额为 0（已关闭）"
+        if len(hour) >= max_hour:
             return "这一小时画满了"
-        day = [ts for ts in hour if now - ts < 86400]
-        if len(day) >= max(0, self._cfg_int("draw_max_per_day", 10)):
+        # 以前这里从 hour 里再筛 86400，等于"每天"只看最近一小时，日限额根本拦不住
+        day = [ts for ts in times if now - ts < 86400]
+        max_day = max(0, self._cfg_int("draw_max_per_day", 10))
+        if max_day <= 0:
+            return "画图限额为 0（已关闭）"
+        if len(day) >= max_day:
             return "今天画满了"
         return None
 
@@ -291,14 +304,22 @@ class DrawEngine:
     def _cache_put(self, key, item):
         if self._cfg_int("draw_cache_minutes", 1440) <= 0 or not isinstance(item, dict):
             return
+        file_path = str(item.get("file_path") or "")
+        url = str(item.get("url") or item.get("image_url") or "")
+        data_url = str(item.get("data_url") or "")
+        if not (file_path or url or data_url):
+            return
+        # 有本地文件/外链就够了；data_url 是 base64，存进 kv 会把库撑到几百 MB
+        if data_url and (file_path or url or len(data_url) > _MAX_CACHED_DATA_URL):
+            data_url = ""
+        if not (file_path or url or data_url):
+            return
         payload = {
             "ts": time.time(),
-            "file_path": str(item.get("file_path") or ""),
-            "url": str(item.get("url") or item.get("image_url") or ""),
-            "data_url": str(item.get("data_url") or ""),
+            "file_path": file_path,
+            "url": url,
+            "data_url": data_url,
         }
-        if not (payload["file_path"] or payload["url"] or payload["data_url"]):
-            return
         try:
             self.plugin.db.kv_set(key, payload)
         except Exception as _amo_exc:
@@ -607,7 +628,9 @@ class DrawEngine:
         self._stats["scheduled"] += 1
         if self.debug:
             logger.info("[amo] 画图排队（%s%s）：%s" % (reason, "/缓存" if cached else "", prompt))
-        self._spawn(self._run(event, prompt, uid, umo, cached, cache_key, selfie))
+        if self._spawn(self._run(event, prompt, uid, umo, cached, cache_key, selfie)) is None:
+            if umo:
+                self._inflight.discard(umo)
 
     async def _run(self, event, prompt, uid, umo, cached=None, cache_key="", selfie=False):
         try:
@@ -682,9 +705,14 @@ class DrawEngine:
         if selfie:
             args["mode"] = "selfie"
         try:
-            result = await omni.generate_images_for_plugin(**args)
+            result = await asyncio.wait_for(
+                omni.generate_images_for_plugin(**args), timeout=GENERATE_TIMEOUT_SECONDS)
         except asyncio.CancelledError:
             raise
+        except asyncio.TimeoutError:
+            self._last_error = "生成超时（%d 秒）" % GENERATE_TIMEOUT_SECONDS
+            logger.warning("[amo] 万象画卷生成超时（%d 秒）" % GENERATE_TIMEOUT_SECONDS)
+            return None
         except Exception as exc:
             self._last_error = str(exc)
             logger.warning("[amo] 万象画卷生成失败: %s" % exc)
