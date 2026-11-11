@@ -246,6 +246,14 @@ class PhotoTests(unittest.TestCase):
         mapped = engine._template_map()
         self.assertEqual(set(mapped), {"front", "side", "full"})
 
+    def test_time_light_hours(self):
+        engine, _ = engine_for()
+        self.assertIn("晚上", engine._light_for_hour(21))
+        self.assertIn("深夜", engine._light_for_hour(23))
+        self.assertIn("黄昏", engine._light_for_hour(18))
+        self.assertIn("上午", engine._light_for_hour(9))
+        self.assertIn("正午", engine._light_for_hour(12))
+
     def test_selfie_kind_forces_selfie(self):
         engine, _ = engine_for()
         self.assertTrue(engine._pick_selfie("selfie"))

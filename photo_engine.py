@@ -462,6 +462,35 @@ class PhotoEngine:
         self._outfit_text = text
         return text
 
+    @staticmethod
+    def _light_for_hour(hour):
+        """按当前时间给生图光线，别晚上拍出白天。"""
+        try:
+            hour = int(hour) % 24
+        except (TypeError, ValueError):
+            hour = 12
+        if 5 <= hour < 7:
+            return "清晨，天刚亮，柔和偏冷的晨光"
+        if 7 <= hour < 11:
+            return "上午，明亮自然光"
+        if 11 <= hour < 14:
+            return "正午，明亮顶光"
+        if 14 <= hour < 17:
+            return "下午，暖色斜阳"
+        if 17 <= hour < 19:
+            return "傍晚黄昏，暖橙色夕阳、光线正在变暗"
+        if 19 <= hour < 22:
+            return "晚上，室内暖色灯光，窗外是夜色，不要白天阳光"
+        return "深夜，室内只开暖黄小灯，窗外漆黑，不要白天阳光"
+
+    def _time_light(self):
+        try:
+            hour = int(_clock_now().hour)
+        except Exception as _amo_exc:
+            _note_swallowed("photo_engine.PhotoEngine._time_light", _amo_exc)
+            hour = 12
+        return "现在是%02d点，%s" % (hour, self._light_for_hour(hour))
+
     def _prompt_for(self, kind, scene, activity):
         """非自拍：她拍的环境。一律空镜 + 她的拍摄视角，画面里不出现她本人。
 
@@ -473,7 +502,7 @@ class PhotoEngine:
         place = self._clean_place(activity.get("place"))
         act = str(activity.get("activity") or "")
         if kind == "travel":
-            head = prefix + (scene or act or "风景区") + "，风景照，自然光"
+            head = prefix + (scene or act or "风景区") + "，风景照"
         elif kind == "shopping":
             head = prefix + (scene or "商场街边") + "，街景，生活感"
         elif kind == "weekend":
@@ -484,7 +513,8 @@ class PhotoEngine:
         else:
             # 日常：只留地点，不带「她在做什么」（否则和空镜打架）
             head = prefix + (place or "日常") + "，生活空镜，生活感"
-        return (head + "，" + SCENERY_ONLY + "，" + VIEW_POV).strip("，")
+        light = self._time_light() if hasattr(self, "_time_light") else "自然光"
+        return (head + "，" + light + "，" + SCENERY_ONLY + "，" + VIEW_POV).strip("，")
 
     def _selfie_prompt_for(self, kind, scene, activity):
         place = self._clean_place(activity.get("place"))
@@ -496,8 +526,9 @@ class PhotoEngine:
         else:
             where = place or "家附近"
         # 视角：她本人出镜 → 自拍视角（前置摄像头、手臂伸出、人物占主体）
-        return "自拍，穿着%s，衣服就这一套、不要换成别的，在%s，%s，自然光，生活感，%s" % (
-            self.outfit_today(), where, act or "随手拍", VIEW_SELFIE
+        light = self._time_light() if hasattr(self, "_time_light") else "自然光"
+        return "自拍，穿着%s，衣服就这一套、不要换成别的，在%s，%s，%s，生活感，%s" % (
+            self.outfit_today(), where, act or "随手拍", light, VIEW_SELFIE
         )
 
     def _find_omni(self):
