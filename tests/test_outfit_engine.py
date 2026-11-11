@@ -76,6 +76,11 @@ class StabilityTests(unittest.TestCase):
             [{"activity": "上班", "place": "公司", "category": "work"}], DAY)[0]["outfit"]
         self.assertEqual(first, second)
 
+    def test_home_place_words(self):
+        items = [{"activity": "瘫在沙发上", "place": "南明区·小窝", "category": "rest"}]
+        outfit = engine().assign(items, DAY)[0]["outfit"]
+        self.assertTrue(any(word in outfit for word in ("家居", "睡衣", "T恤", "针织")))
+
     def test_same_scene_hours_share_outfit(self):
         """上班不同小时的活动文案不同，但衣服必须是同一套。"""
         items = [

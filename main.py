@@ -590,7 +590,7 @@ DIALECT_REGIONS = {
     "上海话": "上海",
 }
 SCHEDULE_VERSION = "backbone-v6"
-OUTFIT_VERSION = "outfit-v2"  # 穿搭规则变了就改这里，旧日程会自动重配
+OUTFIT_VERSION = "outfit-v3"  # 穿搭规则变了就改这里，旧日程会自动重配
 NETWORK_RELATIONS = ("家人", "恋人", "朋友", "同事", "同学", "熟人", "陌生人", "仇人")
 MOOD_KEYS = ("开心", "平静", "郁闷", "生气", "暴躁", "委屈", "疲惫", "焦虑", "兴奋", "依恋")
 #: 真正算「生病」的状态；「疲惫」只是累，不该按病号排日程。

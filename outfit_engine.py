@@ -44,6 +44,7 @@ SWIM_WORDS = ("泳装", "泳衣", "泳裤", "比基尼")
 HOME_WEAR_WORDS = ("睡衣", "家居服", "睡裙")
 BEACH_PLACES = ("海边", "沙滩", "泳池", "游泳馆", "温泉", "海滩", "水上乐园")
 BEACH_ACTIVITIES = ("游泳", "泡温泉", "玩水", "潜水", "冲浪")
+HOME_PLACE_WORDS = ("家", "小窝", "公寓", "住处", "宿舍", "房间")
 
 
 class OutfitEngine:
@@ -104,7 +105,7 @@ class OutfitEngine:
             return "out"
         if category == "commute" or any(word in text for word in ("通勤", "地铁", "开车去", "回家路上")):
             return "commute"
-        if place in ("家", "") or "家" in place:
+        if place in ("家", "") or any(word in place for word in HOME_PLACE_WORDS):
             return "home"
         return "casual"
 
