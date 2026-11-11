@@ -1184,7 +1184,7 @@
       const event = context.event || {};
       const eventText = event.kind && event.kind !== "none" ? " · " + (event.title || "突发事件") : "";
       day.textContent = data.day
-        ? "日期：" + data.day + (meta.label ? " · " + meta.label : "") + (meta.rest ? " · 休息日" : "") + eventText + " · 点开每小时卡片生成小日记"
+        ? "日期：" + data.day + (meta.label ? " · " + meta.label : "") + (meta.rest ? " · 休息日" : "") + eventText + " · 点开每小时卡片查看小日记（日程生成时已写好）"
         : "";
       const tree = Array.isArray(data.tree) ? data.tree : (Array.isArray(data.schedule_tree) ? data.schedule_tree : []);
       if (!tree.length) {
@@ -1208,6 +1208,15 @@
         summary.appendChild(time);
         summary.appendChild(label);
         summary.appendChild(place);
+        const hoursOfBlock = block.children || [];
+        const shown = hoursOfBlock.find((hour) => hour.current && hour.outfit)
+          || hoursOfBlock.find((hour) => hour.outfit);
+        if (shown && shown.outfit) {
+          const outfit = document.createElement("span");
+          outfit.className = "place";
+          outfit.textContent = " · 穿 " + shown.outfit;
+          summary.appendChild(outfit);
+        }
         details.appendChild(summary);
         (block.children || []).forEach((hour) => {
           const hourBox = document.createElement("div");

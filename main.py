@@ -498,7 +498,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.13.0"
+PLUGIN_VERSION = "6.13.1"
 
 # 这些开关是面板/主链路的底座：隐藏开关并强制开启，避免误关后整块功能消失。
 FORCED_ON_CONFIG_KEYS = frozenset({
@@ -3360,6 +3360,7 @@ class HumanState:
                 self.schedule[today] = hourly
                 self.db.kv_set("schedule", self.schedule)
                 self.db.save_schedule(today, hourly)
+            self.warm_schedule_diaries(today, hourly, umo)
             return hourly
         world = await self.ensure_worldview(umo)
         persona = ""
@@ -3445,8 +3446,11 @@ class HumanState:
         if force:
             try:
                 self.db.clear_diaries(today)
+                self.db.kv_set("diary_prefill_" + today, False)
+                self.db.kv_set("diary_warm_" + today, False)
             except Exception:
                 pass
+        self.warm_schedule_diaries(today, items, umo)
         cutoff = (_now().date() - timedelta(days=14)).isoformat()
         for day in list(self.schedule.keys()):
             if day < cutoff:
@@ -3770,6 +3774,126 @@ class HumanState:
             "good_weather": True,
             "yesterday": self.engine.yesterday_summary(day) if self.engine is not None else {},
         }
+
+    def prefill_diaries(self, day, items):
+        """日程建好就先给每小时写一句保底日记，点开不再现生成。"""
+        key = "diary_prefill_" + str(day)
+        try:
+            if self.db.kv_get(key, False):
+                return
+        except Exception:
+            pass
+        if self.engine is None:
+            return
+        try:
+            context = self.schedule_context(day) or self._minimal_context(day)
+        except Exception:
+            context = {}
+        previous = None
+        for item in items or []:
+            start = str(item.get("start") or "")
+            if not start:
+                continue
+            try:
+                cached = self.db.get_diary(day, start)
+            except Exception:
+                cached = ""
+            if cached:
+                previous = item
+                continue
+            text = ""
+            try:
+                text = self.engine.fallback_diary(context, item, previous)
+            except Exception:
+                text = ""
+            if not text:
+                text = "这一小时我在%s，%s。" % (
+                    item.get("place") or "家", item.get("activity") or "待着")
+            try:
+                self.db.save_diary(day, start, text)
+            except Exception:
+                pass
+            previous = item
+        try:
+            self.db.kv_set(key, True)
+        except Exception:
+            pass
+
+    async def warm_diaries(self, day, items, umo):
+        """一次 LLM 调用把 24 小时的小日记都写出来；失败就保留保底版。"""
+        key = "diary_warm_" + str(day)
+        try:
+            if self.db.kv_get(key, False):
+                return
+            self.db.kv_set(key, True)
+        except Exception:
+            pass
+        llm = getattr(self.p, "llm", None)
+        if llm is None or self.engine is None:
+            return
+        lines = []
+        for item in items or []:
+            start = str(item.get("start") or "")
+            if not start:
+                continue
+            lines.append("%s %s（%s）" % (
+                start, item.get("activity") or "待着", item.get("place") or "家"))
+        if not lines:
+            return
+        system = "你就是这个角色本人。你在写只给自己看的第一人称小日记。只输出 JSON 数组。"
+        prompt = (
+            "下面是今天的日程，每个整点一条。请给每一条写一句第一人称小日记，"
+            "20 到 35 个字，口语、具体、有生活细节，不要重复上一句。\n"
+            "只输出 JSON 数组，格式：[{\"start\":\"07:00\",\"diary\":\"……\"}]，不要解释。\n\n"
+            + "\n".join(lines)
+        )
+        try:
+            raw = await llm.chat_raw(umo, system, prompt)
+        except Exception:
+            return
+        try:
+            from .schedule_engine import json_extract_list
+        except Exception:
+            try:
+                from schedule_engine import json_extract_list  # type: ignore
+            except Exception:
+                return
+        rows = json_extract_list(raw)
+        if not isinstance(rows, list):
+            return
+        saved = 0
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            start = str(row.get("start") or "").strip()
+            text = str(row.get("diary") or row.get("text") or "").strip()
+            if not start or len(text) < 8:
+                continue
+            try:
+                self.db.save_diary(day, start, text)
+                saved += 1
+            except Exception:
+                pass
+        if saved:
+            logger.info("[amo] 今日小日记已预生成 %d 条" % saved)
+
+    def warm_schedule_diaries(self, day, items, umo):
+        """预填保底 + 后台批量生成，不阻塞日程返回。"""
+        try:
+            if (self.db.kv_get("diary_prefill_" + str(day), False)
+                    and self.db.kv_get("diary_warm_" + str(day), False)):
+                return
+        except Exception:
+            pass
+        try:
+            self.prefill_diaries(day, items)
+        except Exception as exc:
+            logger.debug("[amo] 预填日记失败: %s" % exc)
+        try:
+            if getattr(self.p, "llm", None) is not None:
+                self.p._spawn(self.warm_diaries(day, items, umo))
+        except Exception as exc:
+            logger.debug("[amo] 批量日记启动失败: %s" % exc)
 
     async def expand_hour(self, day, item, items=None, force=False):
         """点击二级卡片时，实时生成这一小时的第一人称小日记。"""
