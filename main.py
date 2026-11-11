@@ -498,7 +498,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.13.1"
+PLUGIN_VERSION = "6.13.2"
 
 # 这些开关是面板/主链路的底座：隐藏开关并强制开启，避免误关后整块功能消失。
 FORCED_ON_CONFIG_KEYS = frozenset({
@@ -591,6 +591,7 @@ DIALECT_REGIONS = {
 }
 SCHEDULE_VERSION = "backbone-v6"
 OUTFIT_VERSION = "outfit-v3"  # 穿搭规则变了就改这里，旧日程会自动重配
+DIARY_WARM_VERSION = "diary-v2"  # 小日记规则变了就改这里，会重新预生成
 NETWORK_RELATIONS = ("家人", "恋人", "朋友", "同事", "同学", "熟人", "陌生人", "仇人")
 MOOD_KEYS = ("开心", "平静", "郁闷", "生气", "暴躁", "委屈", "疲惫", "焦虑", "兴奋", "依恋")
 #: 真正算「生病」的状态；「疲惫」只是累，不该按病号排日程。
@@ -3447,7 +3448,7 @@ class HumanState:
             try:
                 self.db.clear_diaries(today)
                 self.db.kv_set("diary_prefill_" + today, False)
-                self.db.kv_set("diary_warm_" + today, False)
+                self.db.kv_set("diary_warm_%s_%s" % (DIARY_WARM_VERSION, today), False)
             except Exception:
                 pass
         self.warm_schedule_diaries(today, items, umo)
@@ -3820,8 +3821,8 @@ class HumanState:
             pass
 
     async def warm_diaries(self, day, items, umo):
-        """一次 LLM 调用把 24 小时的小日记都写出来；失败就保留保底版。"""
-        key = "diary_warm_" + str(day)
+        """后台把 24 小时的小日记都写细；按 6 小时一组，写完一组接下一组。"""
+        key = "diary_warm_%s_%s" % (DIARY_WARM_VERSION, day)
         try:
             if self.db.kv_get(key, False):
                 return
@@ -3831,26 +3832,6 @@ class HumanState:
         llm = getattr(self.p, "llm", None)
         if llm is None or self.engine is None:
             return
-        lines = []
-        for item in items or []:
-            start = str(item.get("start") or "")
-            if not start:
-                continue
-            lines.append("%s %s（%s）" % (
-                start, item.get("activity") or "待着", item.get("place") or "家"))
-        if not lines:
-            return
-        system = "你就是这个角色本人。你在写只给自己看的第一人称小日记。只输出 JSON 数组。"
-        prompt = (
-            "下面是今天的日程，每个整点一条。请给每一条写一句第一人称小日记，"
-            "20 到 35 个字，口语、具体、有生活细节，不要重复上一句。\n"
-            "只输出 JSON 数组，格式：[{\"start\":\"07:00\",\"diary\":\"……\"}]，不要解释。\n\n"
-            + "\n".join(lines)
-        )
-        try:
-            raw = await llm.chat_raw(umo, system, prompt)
-        except Exception:
-            return
         try:
             from .schedule_engine import json_extract_list
         except Exception:
@@ -3858,30 +3839,81 @@ class HumanState:
                 from schedule_engine import json_extract_list  # type: ignore
             except Exception:
                 return
-        rows = json_extract_list(raw)
-        if not isinstance(rows, list):
-            return
-        saved = 0
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            start = str(row.get("start") or "").strip()
-            text = str(row.get("diary") or row.get("text") or "").strip()
-            if not start or len(text) < 8:
-                continue
+        context = self.schedule_context(day) or {}
+        weather = ""
+        try:
+            from .schedule_engine import _weather_text
+        except Exception:
             try:
-                self.db.save_diary(day, start, text)
-                saved += 1
+                from schedule_engine import _weather_text  # type: ignore
             except Exception:
-                pass
-        if saved:
-            logger.info("[amo] 今日小日记已预生成 %d 条" % saved)
+                _weather_text = None
+        if _weather_text is not None:
+            weather = _weather_text(context.get("weather") or {})
+        persona = ""
+        try:
+            persona = await llm.persona(umo)
+        except Exception:
+            persona = ""
+        hours = [item for item in (items or []) if str(item.get("start") or "")]
+        total = 0
+        previous = ""
+        for begin in range(0, len(hours), 6):
+            chunk = hours[begin:begin + 6]
+            lines = []
+            for item in chunk:
+                start = str(item.get("start") or "")
+                bits = ["%s %s（%s）" % (start, item.get("activity") or "待着",
+                                        item.get("place") or "家")]
+                if item.get("detail"):
+                    bits.append("细节：" + str(item.get("detail"))[:40])
+                if item.get("vehicle"):
+                    bits.append("交通：" + str(item.get("vehicle")))
+                if item.get("mood"):
+                    bits.append("心情：" + str(item.get("mood")))
+                lines.append("；".join(bits))
+            system = "你就是这个角色本人。你在写只给自己看的第一人称小日记。只输出 JSON 数组。"
+            prompt = (
+                "角色设定（节选）：\n" + str(persona or "")[:400] + "\n"
+                "天气：%s。\n" % (weather or "未知")
+                + ("上一段最后一条日记（要承接，不要重复）：\n" + previous[:300] + "\n" if previous else "")
+                + "下面是今天的 %s-%s 这一段的日程：\n%s\n\n"
+                "请给每一条写一段**详细**的第一人称小日记，每段 120 到 200 字：\n"
+                "1. 只写这一小时，不要提前写下一小时；\n"
+                "2. 写清地点、正在做的动作、一个小细节（手上的东西、周围的声音、天气的体感）；\n"
+                "3. 带一点当时的情绪和心里话，口语化，像真的日记；\n"
+                "4. 每段之间要承接，不能矛盾，也不要整段重复上一段。\n"
+                "只输出 JSON 数组：[{\"start\":\"07:00\",\"diary\":\"……\"}]，不要解释。\n\n"
+                % (chunk[0].get("start") or "", chunk[-1].get("end") or "", "\n".join(lines))
+            )
+            try:
+                raw = await llm.chat_raw(umo, system, prompt)
+            except Exception:
+                continue
+            rows = json_extract_list(raw)
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                start = str(row.get("start") or "").strip()
+                text = str(row.get("diary") or row.get("text") or "").strip()
+                if not start or len(text) < 20:
+                    continue
+                try:
+                    self.db.save_diary(day, start, text)
+                    total += 1
+                    previous = text
+                except Exception:
+                    pass
+        if total:
+            logger.info("[amo] 今日小日记已预生成 %d 条（详细版）" % total)
 
     def warm_schedule_diaries(self, day, items, umo):
         """预填保底 + 后台批量生成，不阻塞日程返回。"""
         try:
             if (self.db.kv_get("diary_prefill_" + str(day), False)
-                    and self.db.kv_get("diary_warm_" + str(day), False)):
+                    and self.db.kv_get("diary_warm_%s_%s" % (DIARY_WARM_VERSION, day), False)):
                 return
         except Exception:
             pass
