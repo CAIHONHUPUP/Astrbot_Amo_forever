@@ -115,7 +115,7 @@ def find_omni(plugin, holder, scope="amo_image_common.find_omni", ttl=OMNI_CACHE
     now = time.monotonic()
     checked = getattr(holder, "_omni_checked", 0.0)
     cached = getattr(holder, "_omni", None)
-    if cached is not None and now - checked < ttl:
+    if not force and cached is not None and now - checked < ttl:
         return cached
     holder._omni_checked = now
     holder._omni = None

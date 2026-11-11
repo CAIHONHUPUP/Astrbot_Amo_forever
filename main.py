@@ -757,6 +757,7 @@ class HumanCorePlugin(MemoryMixin, CommandMixin, ConfigMixin, MessageMixin, Soci
             except Exception as exc:
                 logger.debug("[amo] 与数据插件同步失败: %s" % exc)
             self._ready = True
+            self._spawn(self._log_omni_handshake())
             self._loop_task = self._spawn(self._background_loop())
             self._spawn(self._warm_up())
 
@@ -775,6 +776,36 @@ class HumanCorePlugin(MemoryMixin, CommandMixin, ConfigMixin, MessageMixin, Soci
             await self.state.ensure_schedule(umo)
         except Exception as exc:
             logger.debug("[amo] 预热失败: %s" % exc)
+
+    async def _log_omni_handshake(self):
+        """启动时主动和万象画卷握手一次；没装也不报错，生图前还会再找。"""
+        try:
+            from .amo_image_common import find_omni
+        except Exception:
+            try:
+                from amo_image_common import find_omni
+            except Exception:
+                return
+        try:
+            engine = getattr(self, "photo", None) or getattr(self, "draw", None)
+            if engine is None:
+                return
+            omni = None
+            for attempt in range(8):
+                omni = find_omni(engine, engine, "main._log_omni_handshake", force=True)
+                if omni is not None:
+                    break
+                await asyncio.sleep(2)
+            if omni is None:
+                logger.info("[amo] 暂未发现万象画卷插件，生图时会自动重试握手")
+                return
+            cfg = getattr(omni, "plugin_config", None)
+            nodes = list(getattr(cfg, "providers", []) or [])
+            model = str(getattr(nodes[0], "model", "") or "") if nodes else ""
+            logger.info("[amo] 已握手万象画卷，可直接生图（生图节点 %d 个%s）" % (
+                len(nodes), ("，模型 " + model) if model else ""))
+        except Exception as exc:
+            logger.debug("[amo] 万象画卷握手检查失败: %s" % exc)
 
     async def initialize(self):
         await self._ensure_ready()
