@@ -165,6 +165,12 @@ class ScheduleMixin(_MixinBase):
             self.db.kv_set("schedule", self.state.schedule)
             self.db.save_schedule(key, new_items)
             # 生病/请假长期呆家才换睡衣；旅游/出差直接出发不换
+            if str(change.get("category") or "") == "health":
+                status = "发烧" if "发烧" in str(user_text) else ("感冒" if "感冒" in str(user_text) else "生病")
+                try:
+                    self.state.set_health(status, hours=24, note="按主人的话生病请假")
+                except Exception as _amo_exc:
+                    _note_swallowed("amo_schedule._apply_user_schedule_change", _amo_exc)
             if should_switch_to_pajamas is not None and should_switch_to_pajamas(change, user_text):
                 self.db.kv_set("home_early:" + key, True)
             elif travel:

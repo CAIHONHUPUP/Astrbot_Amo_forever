@@ -15,6 +15,12 @@ class ScheduleChangeTests(unittest.TestCase):
         self.assertEqual(change.get("place"), "家")
         self.assertEqual(change.get("category"), "health")
 
+    def test_sick_leave_without_home_word(self):
+        change = detect_schedule_change("你生病了，今天请假吧")
+        self.assertTrue(change)
+        self.assertEqual(change.get("place"), "家")
+        self.assertEqual(change.get("category"), "health")
+
     def test_go_hospital(self):
         change = detect_schedule_change("你赶紧去医院看看")
         self.assertTrue(change)
