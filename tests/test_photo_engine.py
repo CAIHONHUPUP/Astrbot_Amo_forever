@@ -258,6 +258,11 @@ class PhotoTests(unittest.TestCase):
         self.assertIn("上午", engine._light_for_hour(9))
         self.assertIn("正午", engine._light_for_hour(12))
 
+    def test_test_kinds_use_matching_scene(self):
+        self.assertIn("风景", PhotoEngine._scene_for_kind("travel", "家"))
+        self.assertIn("街", PhotoEngine._scene_for_kind("shopping", "家"))
+        self.assertIn("公园", PhotoEngine._scene_for_kind("weekend", "家"))
+
     def test_selfie_kind_forces_selfie(self):
         engine, _ = engine_for()
         self.assertTrue(engine._pick_selfie("selfie"))

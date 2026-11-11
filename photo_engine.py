@@ -701,6 +701,20 @@ class PhotoEngine:
         logger.info("[amo] 照片已分享（%s/%s）：%s" % (kind, "自拍" if selfie else "街景", prompt))
         return True
 
+    @staticmethod
+    def _scene_for_kind(kind, place=""):
+        """测试/手动发图时按类别给明确场景，避免“旅游”沿用当前在家的地点。"""
+        kind = str(kind or "daily")
+        if kind == "travel":
+            return "户外风景区/旅游景点，有天空、远景和游客"
+        if kind == "shopping":
+            return "商场街边/商业街，有店铺招牌、路人和街道"
+        if kind == "weekend":
+            return "周末街头/公园，有散步的人和绿化"
+        if kind == "outfit":
+            return str(place or "家里")
+        return str(place or "日常")
+
     async def share_now(self, kind="daily", umo=""):
         """面板「测试」/``/amo photo test``：无视概率，立刻按类别发一张。"""
         if not self.enabled:
@@ -712,7 +726,7 @@ class PhotoEngine:
             return "没有可发送的会话（先和他聊一句）。"
         activity = self._activity()
         kind = str(kind or "daily").strip() or "daily"
-        scene = str(activity.get("place") or "") or "日常"
+        scene = self._scene_for_kind(kind, str(activity.get("place") or ""))
         if self._cfg_bool("photo_dry_run", False):
             if kind == "outfit":
                 prompt = self._selfie_prompt_for(kind, scene, activity)
