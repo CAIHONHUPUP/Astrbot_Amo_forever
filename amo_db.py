@@ -582,6 +582,13 @@ class AmoDB:
         a, b = self._relation_pair(a_uid, b_uid)
         if not a or not b or a == b:
             return False
+        # 机器人自己的账号不是关系网里的「人」，别把它写成节点
+        try:
+            self_uid = str(self.kv_get("self_uid", "") or "")
+        except Exception:
+            self_uid = ""
+        if self_uid and self_uid in (str(a_uid), str(b_uid)):
+            return False
         with self.lock:
             self.conn.execute(
                 "INSERT INTO relation_network(a_uid, b_uid, relation, note, updated_at) "

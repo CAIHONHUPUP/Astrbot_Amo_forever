@@ -16,6 +16,15 @@ import os
 import re
 import uuid
 from datetime import timedelta
+
+# 画像关系（RELATIONS）和关系网（NETWORK_RELATIONS）是两套词表
+PROFILE_TO_NETWORK = {
+    "仇恨": "仇人",
+    "抵触": "陌生人",
+    "普通": "朋友",
+    "熟识": "熟人",
+    "相恋": "恋人",
+}
 if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_shared import (
         DIALECT_REGIONS, MOOD_KEYS, NETWORK_RELATIONS, PLUGIN_NAME, RELATIONS, _diary_import_folder, _diary_parse_day, _diary_read, _diary_tree, _diary_write, _now, clamp, day_meta, logger, now_ts, summarize_token_usage, to_float, to_int, today_str, uniq, usage_cost, web_request,
@@ -434,12 +443,32 @@ class ApiMixin(_MixinBase):
         profiles = self.db.list_profiles(limit=500)
         names = {str(item.get("uid")): (item.get("alias") or item.get("name") or item.get("uid")) for item in profiles}
         names["bot"] = str(getattr(self, "bot_name", "") or "你")
+        profile_edges = {}
+        for item in profiles:
+            uid = str(item.get("uid") or "")
+            mapped = PROFILE_TO_NETWORK.get(str(item.get("relation") or ""))
+            if uid and mapped:
+                profile_edges[uid] = mapped
         edges = []
+        covered = set()
         for edge in self.db.list_relations():
             row = dict(edge)
-            row["a_name"] = names.get(str(row.get("a_uid")), row.get("a_uid"))
-            row["b_name"] = names.get(str(row.get("b_uid")), row.get("b_uid"))
+            a_uid, b_uid = str(row.get("a_uid")), str(row.get("b_uid"))
+            other = b_uid if a_uid == "bot" else a_uid if b_uid == "bot" else ""
+            if other in profile_edges:
+                row["relation"] = profile_edges[other]
+                covered.add(other)
+            row["a_name"] = names.get(a_uid, a_uid)
+            row["b_name"] = names.get(b_uid, b_uid)
             edges.append(row)
+        for uid, relation in profile_edges.items():
+            if uid in covered:
+                continue
+            edges.append({
+                "a_uid": "bot", "b_uid": uid, "relation": relation,
+                "note": "画像：关系字段", "updated_at": now_ts(),
+                "a_name": names["bot"], "b_name": names.get(uid, uid),
+            })
         return {"code": 0, "data": {"edges": edges, "profiles": profiles, "relations": list(NETWORK_RELATIONS)}}
 
     async def api_profile_links(self):
@@ -776,6 +805,13 @@ class ApiMixin(_MixinBase):
         self.db.update_profile(uid, **fields)
         if fields.get("relation") == "相恋":
             self._register_lover(uid)
+        if fields.get("relation"):
+            mapped = PROFILE_TO_NETWORK.get(str(fields["relation"]))
+            if mapped:
+                try:
+                    self.db.upsert_relation("bot", uid, mapped, "画像：关系字段")
+                except Exception as exc:
+                    logger.debug("[amo] 画像关系同步到关系网失败: %s" % exc)
         try:
             await self._push_profile_to_data(uid, self.db.get_profile(uid))
         except Exception as exc:

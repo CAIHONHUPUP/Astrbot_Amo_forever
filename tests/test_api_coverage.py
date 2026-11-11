@@ -1232,7 +1232,10 @@ class RelationTests(ApiTestBase):
         self.set_request(body={"a_uid": "u1", "b_uid": "u2"})
         result = self.api("api_relation_delete")
         self.assertEqual(result["code"], 0)
-        self.assertEqual(result["data"]["edges"], [])
+        # 真实关系边删掉了；画像里的 relation 字段还会补一条面板用的展示边
+        edges = result["data"]["edges"]
+        self.assertEqual([edge for edge in edges if edge.get("note") != "画像：关系字段"], [])
+        self.assertEqual({edge["b_uid"] for edge in edges}, {"u1", "u2"})
         self.assertIn(("delete_relation", "大肥鱼", "u1", "u2"), mem.calls)
 
 

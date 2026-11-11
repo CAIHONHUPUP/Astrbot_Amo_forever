@@ -57,6 +57,11 @@ class RuntimeMixin(_MixinBase):
         uid = ""
         try:
             uid = str(event.get_self_id() or "")
+            if uid:
+                try:
+                    self.db.kv_set("self_uid", uid)
+                except Exception as _amo_exc:
+                    _note_swallowed("amo_runtime.HumanCorePlugin._self_identity", _amo_exc)
         except Exception as _amo_exc:
             _note_swallowed("amo_runtime.HumanCorePlugin._self_identity", _amo_exc)
         role_name = str(self.persona_name or self.bot_name or "陪伴")
