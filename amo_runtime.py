@@ -37,6 +37,18 @@ if TYPE_CHECKING:
 else:  # 运行时用 object：协议里的声明不能进 MRO，否则会挡掉别的 mixin 的真实实现
     _MixinBase = object
 
+try:  # 「换一套/睡衣不好看」的识别（衣柜模块里，纯函数）
+    from .wardrobe import is_outfit_change_request, is_pajama_change_request
+except ImportError:  # 直接按文件加载时
+    try:
+        from wardrobe import is_outfit_change_request, is_pajama_change_request
+    except Exception:  # pragma: no cover
+        def is_pajama_change_request(text):
+            return False
+
+        def is_outfit_change_request(text):
+            return False
+
 
 class RuntimeMixin(_MixinBase):
     @filter.event_message_type(filter.EventMessageType.ALL)
@@ -250,6 +262,34 @@ class RuntimeMixin(_MixinBase):
             "【长度】默认只回 1-2 句，能一句说清就一句；不要解释、不要列点、不要总结，不要写成客服长文。",
             "【人格】保持上面的人格设定，不要变成通用助手或客服；即使回答咨询也要用自己的口吻。",
         ]
+        try:
+            wardrobe = getattr(self, "wardrobe", None)
+            if wardrobe is not None:
+                _outfit = wardrobe.current()
+                _top = str(_outfit.get("top") or "")
+                _bottom = str(_outfit.get("bottom") or "")
+                _shoes = str(_outfit.get("shoes") or "")
+                _wear = "、".join([part for part in (_top, _bottom) if part])
+                if _wear:
+                    if _outfit.get("sleep"):
+                        try:
+                            _at_hotel = self.wardrobe.at_hotel()
+                        except Exception:
+                            _at_hotel = False
+                        if _at_hotel:
+                            _line = ("【穿搭】在酒店，换上"
+                                     + ("酒店睡衣" if _outfit.get("hotel") else "睡衣")
+                                     + "了：" + _wear)
+                        else:
+                            _line = "【穿搭】已经下班回家，换上睡衣了：" + _wear
+                    else:
+                        _line = "【穿搭】今天穿的是" + _wear
+                    if _shoes:
+                        _line += "，鞋子是" + _shoes
+                    _line += "；被问起穿搭就照这个说，不要另编，平时不用主动细讲。"
+                    parts.append(_line)
+        except Exception as _amo_exc:
+            _note_swallowed("amo_runtime.HumanCorePlugin._dynamic_context", _amo_exc)
         try:
             now_text = _now().strftime("%H:%M")
             agenda = []
@@ -541,6 +581,62 @@ class RuntimeMixin(_MixinBase):
                     parts.append(gift_hint)
             except Exception as exc:
                 logger.debug("[amo] 礼物上下文失败: %s" % exc)
+
+        try:
+            if is_private and getattr(self, "wardrobe", None) is not None:
+                text_now = event.message_str or ""
+                if is_outfit_change_request(text_now):
+                    at_home = self.wardrobe.at_home()
+                    at_hotel = self.wardrobe.at_hotel()
+                    pajama = is_pajama_change_request(text_now)
+                    try:
+                        hour = int(_now().hour)
+                    except Exception:
+                        hour = 20
+                    night_time = hour >= 20 or hour < 8
+                    place = ""
+                    try:
+                        place = self._short_place((self.state.current_activity() or {}).get("place") or "")
+                    except Exception:
+                        place = ""
+                    if at_home is False and not at_hotel:
+                        # 白天在外面：换不了，按人设解释，别假装换了
+                        parts.append(
+                            "【换装】他让你换一套，但你现在在外面"
+                            + ("（" + place + "）" if place else "")
+                            + "，换不了衣服。用你的人设语气（无奈/撒娇/讲道理都行）跟他说清楚："
+                            "在外面不方便换，回家再换；不要答应，也不要假装已经换好。"
+                        )
+                    elif pajama:
+                        changed = self.wardrobe.set_night(reroll=True)
+                        self.wardrobe.current()
+                        wear = "、".join([part for part in (changed.get("top"), changed.get("bottom")) if part])
+                        if wear:
+                            parts.append(
+                                "【换装】他嫌睡衣不好看，你顺手换了一套睡衣：" + wear
+                                + "（今晚穿）。用你的人设语气接一句，带点被他说动/配合的感觉，别报后台。"
+                            )
+                    elif night_time:
+                        changed = self.wardrobe.set_night(reroll=True)
+                        self.wardrobe.current()
+                        wear = "、".join([part for part in (changed.get("top"), changed.get("bottom")) if part])
+                        if wear:
+                            parts.append(
+                                "【换装】他让你换一套，你晚上在家，已经换上新的睡衣了：" + wear
+                                + "。用你的人设语气接一句（配合/撒娇/嫌他事多都可以），别报后台。"
+                            )
+                    else:
+                        # 白天在家：可以换白天这套
+                        changed = self.wardrobe.reroll()
+                        self.wardrobe.current()
+                        wear = "、".join([part for part in (changed.get("top"), changed.get("bottom")) if part])
+                        if wear:
+                            parts.append(
+                                "【换装】他让你换一套，你正好在家，已经换好新的白天穿搭：" + wear
+                                + "。用你的人设语气接一句（被夸/配合/撒个娇都行），别报后台。"
+                            )
+        except Exception as _amo_exc:
+            _note_swallowed("amo_runtime.HumanCorePlugin._dynamic_context", _amo_exc)
 
         parts = self._lean_parts(parts)
         if (not is_group) and first_person_experience is not None:

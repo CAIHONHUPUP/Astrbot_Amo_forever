@@ -56,6 +56,31 @@ _RULES: list[Rule] = [
         "negatable": True,
     },
     {
+        # 生病相关：请假回家 / 在家养病 / 去医院，优先级放在「回家」前面
+        "keys": ("请假回家", "回家休息", "回去休息", "回家养病", "回家躺着", "先回家休息"),
+        "activity": "请了假，回家躺着养病",
+        "place": "家",
+        "category": "health",
+        "anchor": "now",
+        "negatable": True,
+    },
+    {
+        "keys": ("去医院", "去看病", "看病", "挂号", "看医生", "去诊所"),
+        "activity": "去医院看病",
+        "place": "医院",
+        "category": "health",
+        "anchor": "now",
+        "negatable": True,
+    },
+    {
+        "keys": ("请个假", "请假", "请假在家", "在家休息一天"),
+        "activity": "请假在家休息",
+        "place": "家",
+        "category": "health",
+        "anchor": "now",
+        "negatable": True,
+    },
+    {
         # 这几句本身就是否定式（不加班 / 不去了），不再做否定词判断
         "keys": ("不去了", "不加班了", "别加班了", "不去加班了"),
         "activity": "不去了，改回家待着",

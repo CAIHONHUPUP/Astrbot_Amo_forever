@@ -412,6 +412,16 @@ class ScheduleMixin(_MixinBase):
         )
         prompt = _diary_build_prompt(day, chat_lines, hourly_lines)
         try:
+            wardrobe = getattr(self, "wardrobe", None)
+            if wardrobe is not None:
+                worn = wardrobe.current(day.isoformat()) or {}
+                outfit_text = str(worn.get("text") or "").strip()
+                if outfit_text:
+                    prompt += ("\n\n今天实际穿的是：%s。日记里如果写到衣服，"
+                               "必须写这一套，不能另编。" % outfit_text)
+        except Exception as _amo_exc:
+            _note_swallowed("amo_schedule.ScheduleMixin._generate_daily_diary", _amo_exc)
+        try:
             text = await self.llm.chat_raw(umo, system, prompt)
         except Exception as exc:
             logger.warning("[amo] 日记生成失败: %s" % exc)

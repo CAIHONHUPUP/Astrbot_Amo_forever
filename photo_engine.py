@@ -414,8 +414,20 @@ class PhotoEngine:
         return clean_place(place)
 
     def outfit_today(self):
-        """今天的固定穿搭：同一天所有自拍都穿这一套，场景变了也不换。"""
+        """今天的固定穿搭：从「穿搭」衣柜里选一套，同一天所有自拍都穿这一套。"""
         day = today_str()
+        # 先问衣柜：面板「换一套」后要立刻生效，不能吃本模块的旧缓存
+        wardrobe = getattr(self.plugin, "wardrobe", None)
+        if wardrobe is not None:
+            try:
+                current = wardrobe.current(day)
+                text = str(current.get("text") or "").strip()
+                if text:
+                    self._outfit_day = day
+                    self._outfit_text = text
+                    return text
+            except Exception as _amo_exc:
+                _note_swallowed("photo_engine.PhotoEngine.outfit_today", _amo_exc)
         if self._outfit_day == day and self._outfit_text:
             return self._outfit_text
         key = "photo_outfit:" + day
@@ -484,7 +496,7 @@ class PhotoEngine:
         else:
             where = place or "家附近"
         # 视角：她本人出镜 → 自拍视角（前置摄像头、手臂伸出、人物占主体）
-        return "自拍，穿着%s，在%s，%s，自然光，生活感，%s" % (
+        return "自拍，穿着%s，衣服就这一套、不要换成别的，在%s，%s，自然光，生活感，%s" % (
             self.outfit_today(), where, act or "随手拍", VIEW_SELFIE
         )
 
@@ -549,7 +561,33 @@ class PhotoEngine:
         return random.random() * 100 < ratio
 
     async def _generate(self, omni, prompt, selfie):
+        refs = []
+        if selfie:
+            try:
+                outfit = {}
+                wardrobe = getattr(self.plugin, "wardrobe", None)
+                if wardrobe is not None:
+                    outfit = wardrobe.current() or {}
+                names = [outfit.get(key) for key in ("coat", "top", "skirt", "bottom", "shoes")
+                         if outfit.get(key)]
+                if not names:
+                    text = str(self.outfit_today() or "")
+                    names = [part.strip() for part in text.split("，") if part.strip()]
+                if names:
+                    from .outfit_refs import ensure_many
+                    refs = await ensure_many(self.plugin, names, limit=5)
+            except Exception as exc:
+                logger.debug("[amo] 服装参考图准备失败: %s" % exc)
+                refs = []
         args = {"prompt": prompt, "count": 1, "record_usage": True}
+        if refs:
+            args["refs"] = refs
+            args["allow_local_refs"] = True
+            args["prompt"] = (
+                prompt
+                + "\n（服装参考：参考图最后几张是今天这套衣服的平铺图，"
+                  "衣服颜色和款式必须和它一致，不能改；长相和发型仍按人设三视图。）"
+            )
         if selfie:
             args["mode"] = "selfie"
         try:
@@ -1008,26 +1046,32 @@ class PhotoEngine:
         parts.append("在" + place)
         parts.extend([
             "自然光", "手机前置摄像头", "生活感",
-            "人物长相参考模板，衣服颜色和款式以文字为准，不要照搬模板里的衣服",
+            "人物长相参考模板，衣服锁定为上面的今日穿搭，不要换别的衣服，也不要照搬模板里的衣服",
         ])
         return "，".join(parts)
 
     async def generate_prompt(self, prompt, send=False):
         """面板「按提示词生成」：画一张；send=True 时同时发到最近会话。"""
         text = self.smart_prompt(prompt)
+        locked_today = False
         if text and not any(word in text for word in (
             "穿", "衣服", "裙", "衬衫", "毛衣", "外套", "卫衣", "裤", "围巾", "帽子",
         )):
             outfit = self.outfit_today()
             if outfit:
                 text = "穿着%s，%s" % (outfit, text)
+                locked_today = True
         if text and not any(word in text for word in ("二次元", "动漫", "插画")):
             prefix = self._cfg_str("photo_prompt_prefix", "").strip()
             if prefix:
                 text = prefix + text
         if text and "不要照搬模板里的衣服" not in text:
-            # 参考图只借长相，衣服必须按文字来，否则会照搬模板图里的穿搭
-            text += "；人物长相参考模板，衣服颜色和款式以文字描述为准，不要照搬模板里的衣服"
+            if locked_today:
+                # 自动补的是今天锁定那一套，出图就别再换
+                text += "；人物长相参考模板，衣服锁定为上面的今日穿搭，不要换别的衣服，也不要照搬模板里的衣服"
+            else:
+                # 他自己写了穿什么：参考图只借长相
+                text += "；人物长相参考模板，衣服颜色和款式以文字描述为准，不要照搬模板里的衣服"
         item = await self.generate_custom(text)
         if item and send:
             profiles = self._profiles()

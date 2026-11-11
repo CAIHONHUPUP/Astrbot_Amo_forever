@@ -921,6 +921,14 @@ class GiftEngine:
             }
             data["gifts"].append(gift)
             self._save()
+        wardrobe = getattr(self.plugin, "wardrobe", None)
+        if wardrobe is not None:
+            try:
+                added = wardrobe.add_from_gift(item, gift.get("id", ""))
+                if added and added.get("ok"):
+                    logger.info("[amo] 礼物进衣柜：%s（%s）" % (item, added.get("category", "")))
+            except Exception as _amo_exc:
+                _note_swallowed("gift_engine.GiftEngine.add_gift", _amo_exc)
         if wish_id:
             self._mark_wish_gifted(wish_id, gift["id"])
         return dict(gift)

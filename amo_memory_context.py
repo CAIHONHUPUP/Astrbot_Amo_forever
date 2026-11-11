@@ -132,6 +132,14 @@ class RecallContextMixin(_MixinBase):
             return ""
         if not detail:
             return ""
+        # person_context 是按时间倒序返回的（最新在前），这里统一按时间正序，
+        # 下面取尾部才能拿到「最近」几条，而不是最旧的几条。
+        recent_all = sorted(
+            detail.get("recent") or [],
+            key=lambda item: float(item.get("created_at") or 0),
+        )
+        detail = dict(detail)
+        detail["recent"] = recent_all
         others = [
             item for item in (detail.get("others") or [])
             if str(item.get("uid") or "") and str(item.get("uid")) != str(uid)
@@ -149,6 +157,9 @@ class RecallContextMixin(_MixinBase):
         other_lines = []
         my_lines = []
         for item in recent:
+            # summary/system 是摘要行，不是他当时说的话，别当成跨平台原话
+            if str(item.get("role") or "") in ("summary", "system"):
+                continue
             item_platform = str(item.get("platform") or "")
             if item_platform and item_platform == str(platform):
                 # 本平台的近聊已经在 _recent() 里，不重复

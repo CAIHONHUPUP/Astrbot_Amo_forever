@@ -1743,6 +1743,10 @@ class ScheduleEngine:
                 worn_line = "你今天身上/包里有：%s（他送的）。这一小时可以自然带一句，只提一句，别写成交代行踪。" % worn
             else:
                 worn_line = "这一小时不要主动提他送的东西（今天已经提过了）；除非上一小时写了、这一小时要承接。"
+        outfit_line = ""
+        outfit = str(ctx.get("outfit") or "").strip()
+        if outfit:
+            outfit_line = ("你今天穿的是：%s（今天锁定的这一套，日记里写到衣服只能写它，不能另编）。" % outfit)
         gift_line = ""
         gift_log = str(ctx.get("gift_log") or "").strip()
         if gift_log and allow_gift:
@@ -1759,6 +1763,7 @@ class ScheduleEngine:
             "下一小时：%s\n"
             "突发事件：%s\n"
             "景区信息：%s\n"
+            "%s\n"
             "%s\n"
             "%s\n"
             "%s\n"
@@ -1792,6 +1797,7 @@ class ScheduleEngine:
             asset_line,
             worn_line,
             gift_line,
+            outfit_line,
         )
 
     @staticmethod

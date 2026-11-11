@@ -119,6 +119,20 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
         )
 
 
+def slot_is_future(day, start, now=None):
+    """这一小时还没到（包括明天/以后的日程），小日记先不生成。"""
+    try:
+        now = now or _now()
+        day_text = str(day or "")
+        start_text = str(start or "")[:5]
+        today_text = now.strftime("%Y-%m-%d")
+        if day_text > today_text:
+            return True
+        return day_text == today_text and start_text > now.strftime("%H:%M")
+    except Exception:
+        return False
+
+
 class HumanState:
     def __init__(self, plugin):
         self.p = plugin
@@ -1412,6 +1426,12 @@ class HumanState:
         start = item.get("start") or ""
         if not start:
             return {"diary": "", "mood": "平静", "place": "", "activity": ""}
+        # 小日记只写已经过完的时间点：今天的未来时段、明天/以后都先不生成。
+        if slot_is_future(day, start):
+            return {"diary": "", "mood": item.get("mood") or "平静",
+                    "place": item.get("place") or "",
+                    "activity": item.get("activity") or "",
+                    "pending": True}
         if not force:
             cached = self.db.get_diary(day, start)
             if cached:
@@ -1432,6 +1452,13 @@ class HumanState:
             context["period"] = self.period_info()
             if self.weather:
                 context["weather"] = self.weather
+        try:
+            wardrobe = getattr(self.p, "wardrobe", None)
+            if wardrobe is not None:
+                worn = wardrobe.current(day) or {}
+                context["outfit"] = str(worn.get("text") or "")
+        except Exception as _amo_exc:
+            _note_swallowed("amo_human_state.HumanState.expand_hour", _amo_exc)
         index = 0
         for position, entry in enumerate(items):
             if entry.get("start") == start:

@@ -175,6 +175,18 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
             DrawEngine = None  # type: ignore[assignment,misc]
             PhotoEngine = None  # type: ignore[assignment,misc]
 
+# ---- 穿搭衣柜（面板「穿搭」页 / 每日锁定一套）----
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
+    from .wardrobe import Wardrobe
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .wardrobe import Wardrobe
+    except ImportError:  # 直接按文件加载时
+        try:
+            from wardrobe import Wardrobe
+        except Exception:  # 没装/导入失败时不影响主脑启动
+            Wardrobe = None  # type: ignore[assignment,misc]
+
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +485,11 @@ WRITE_ROUTES = frozenset({
     "/photo/template_open",
     "/draw/test",
     "/draw/decide",
+    "/wardrobe/add",
+    "/wardrobe/delete",
+    "/wardrobe/reroll",
+    "/wardrobe/today",
+    "/wardrobe/night",
     "/diary/write", "/diary/import", "/diary/open",
     "/refresh_status",
 })
@@ -553,6 +570,12 @@ class HumanCorePlugin(MemoryMixin, CommandMixin, ConfigMixin, MessageMixin, Soci
             if item.strip():
                 self.admin_uids.add(item.strip())
         self.db = AmoDB(self.plugin_dir)
+        self.wardrobe = None
+        if Wardrobe is not None:
+            try:
+                self.wardrobe = Wardrobe(self)
+            except Exception as exc:
+                logger.warning("[amo] 穿搭衣柜初始化失败: %s" % exc)
         self.state = None
         self.llm = LLMService(self)
         self.gate = ReplyGate(self)

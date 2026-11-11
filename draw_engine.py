@@ -534,7 +534,7 @@ class DrawEngine:
             # 「你看到的海/你眼里的窗外」是她的视角，人不出镜，保持空镜
             selfie = True
         if selfie:
-            # 「发张自拍」：按自拍提示词走，穿今天固定的那一套
+            # 「发张自拍」：默认穿今天固定的那一套；他点名要别的衣服才按他的来
             parts = ["自拍"]
             outfit = ""
             photo = getattr(self.plugin, "photo", None)
@@ -545,12 +545,19 @@ class DrawEngine:
                 except Exception as _amo_exc:
                     _note_swallowed("draw_engine.DrawEngine.decide", _amo_exc)
                     outfit = ""
-            if outfit:
+            explicit_clothes = any(word in str(subject or "") for word in (
+                "穿", "衣服", "裙", "衬衫", "毛衣", "外套", "卫衣", "裤", "鞋", "围巾", "帽子",
+            ))
+            locked_today = bool(outfit) and not explicit_clothes
+            if locked_today:
                 parts.append("穿着" + outfit)
             if subject and subject != "自拍":
                 parts.append(subject)
-            parts.extend(["自然光", view_suffix(True), "生活感",
-                          "人物长相参考模板，衣服颜色和款式以文字为准，不要照搬模板里的衣服"])
+            parts.extend(["自然光", view_suffix(True), "生活感"])
+            if locked_today:
+                parts.append("人物长相参考模板，衣服锁定为上面的今日穿搭，不要换别的衣服，也不要照搬模板里的衣服")
+            else:
+                parts.append("人物长相参考模板，衣服颜色和款式以文字为准，不要照搬模板里的衣服")
             prompt = "，".join(parts)
         else:
             # 她拍的环境：空镜 + 她的视角，画面里不出现她本人
