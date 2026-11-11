@@ -1462,5 +1462,11 @@
     "description": "发图前的一句话",
     "default": "",
     "hint": "留空就只发图，不配文字。"
+  },
+  "image_share_timeout": {
+    "type": "int",
+    "description": "出图超时（秒）",
+    "default": 90,
+    "hint": "后台任务等这么久还没出图就放弃并记一条日志，不会卡住聊天。生图慢的后端可以调到 120。"
   }
 }

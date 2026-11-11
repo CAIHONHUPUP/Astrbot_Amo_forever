@@ -477,7 +477,7 @@ except Exception:
 
 
 PLUGIN_NAME = "Astrbot_Amo_forever"
-PLUGIN_VERSION = "6.9.0"
+PLUGIN_VERSION = "6.10.0"
 
 # 这些开关是面板/主链路的底座：隐藏开关并强制开启，避免误关后整块功能消失。
 FORCED_ON_CONFIG_KEYS = frozenset({
@@ -6618,9 +6618,9 @@ class HumanCorePlugin(Star):
             return False, used
         return True, used
 
-    async def _send_image_now(self, event, data, text=""):
-        """直接把图发给当前会话（绕过分段引擎）。"""
-        if Comp is None or MessageChain is None:
+    async def _send_image_to_umo(self, umo, data, text=""):
+        """在后台把图发到会话；用 context.send_message，不依赖已经结束的事件。"""
+        if Comp is None or MessageChain is None or not umo:
             return False
         chain = []
         if str(text or "").strip():
@@ -6630,49 +6630,77 @@ class HumanCorePlugin(Star):
         except Exception:
             return False
         try:
-            await event.send(MessageChain(chain))
+            await self.context.send_message(umo, MessageChain(chain))
         except Exception as exc:
             logger.error("[amo] 主动发图失败: %s" % exc)
             return False
-        try:
-            self._last_reply_at[event.unified_msg_origin] = now_ts()
-        except Exception:
-            pass
         return True
 
-    async def _maybe_share_image(self, event):
-        """回复之后，按概率补一张「我拍了张照」——低频，宁可少发。"""
+    async def _share_decision(self, event):
+        """判断这次要不要分享；只做判断，不出图、不发送。"""
+        if not self.cfg_bool("image_share_enable", False):
+            return None
+        if event is None:
+            return None
+        if self.cfg_bool("image_share_private_only", True) and not event.is_private_chat():
+            return None
+        prob = max(0.0, min(1.0, self.cfg_float("image_share_probability", 0.06)))
+        if prob <= 0 or random.random() >= prob:
+            return None
+        now = now_ts()
+        allowed, used = self._image_share_quota(now)
+        if not allowed:
+            return None
+        if getattr(self, "_share_inflight", False):
+            return None
+        plugin = self._image_plugin()
+        if plugin is None:
+            return None
+        return {
+            "plugin": plugin,
+            "umo": str(event.unified_msg_origin),
+            "uid": str(event.get_sender_id() or ""),
+            "prompt": self._image_share_prompt(),
+            "now": now,
+            "used": used,
+        }
+
+    async def _share_image_task(self, decision):
+        """后台任务：出图 → 发送 → 记账。超时/失败都只记日志，不打扰聊天。"""
+        plugin = decision.get("plugin")
+        umo = decision.get("umo") or ""
+        prompt = decision.get("prompt") or ""
+        used = int(decision.get("used") or 0)
+        timeout = max(1, self.cfg_int("image_share_timeout", 90))
+        self._share_inflight = True
         try:
-            if not self.cfg_bool("image_share_enable", False):
-                return
-            if event is None:
-                return
-            if self.cfg_bool("image_share_private_only", True) and not event.is_private_chat():
-                return
-            prob = max(0.0, min(1.0, self.cfg_float("image_share_probability", 0.06)))
-            if prob <= 0 or random.random() >= prob:
-                return
-            now = now_ts()
-            allowed, used = self._image_share_quota(now)
-            if not allowed:
-                return
-            plugin = self._image_plugin()
-            if plugin is None:
-                return
-            data = await plugin.draw_for(
-                str(event.unified_msg_origin),
-                str(event.get_sender_id() or ""),
-                self._image_share_prompt(),
+            data = await asyncio.wait_for(
+                plugin.draw_for(umo, decision.get("uid") or "", prompt), timeout=timeout
             )
             if not data:
                 return
-            if not await self._send_image_now(event, data, self.cfg_str("image_share_prefix", "")):
+            if not await self._send_image_to_umo(umo, data, self.cfg_str("image_share_prefix", "")):
                 return
-            self.db.kv_set("image_share_last", now)
+            self.db.kv_set("image_share_last", now_ts())
             self.db.kv_set("image_share_day", {"date": today_str(), "count": used + 1})
             logger.info("[amo] 主动分享了一张图（今日第 %d 张）" % (used + 1))
+        except asyncio.TimeoutError:
+            logger.warning("[amo] 主动分享出图超时（%ss），本次跳过" % timeout)
         except Exception as exc:
             logger.debug("[amo] 主动分享失败（跳过）: %s" % exc)
+        finally:
+            self._share_inflight = False
+
+    async def _maybe_share_image(self, event):
+        """入口：只做判断，出图丢后台任务——绝不卡住回复链路。"""
+        try:
+            decision = await self._share_decision(event)
+            if not decision:
+                return
+            if self._spawn(self._share_image_task(decision)) is None:
+                self._share_inflight = False
+        except Exception as exc:
+            logger.debug("[amo] 主动分享入口异常: %s" % exc)
 
     def _data_plugin(self):
         """找「我想永远记住你」插件实例；没装就返回 None。"""
