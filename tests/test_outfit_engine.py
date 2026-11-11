@@ -94,7 +94,7 @@ class StabilityTests(unittest.TestCase):
         engine().assign(items, DAY)
         self.assertEqual(len({item["outfit"] for item in items}), 1)
 
-    def test_one_outfit_for_the_whole_day(self):
+    def test_one_outfit_while_out_then_homewear(self):
         items = [
             {"start": "09:00", "end": "12:00", "activity": "上班", "place": "公司",
              "category": "work"},
@@ -102,17 +102,21 @@ class StabilityTests(unittest.TestCase):
              "category": "meal"},
             {"start": "19:00", "end": "21:00", "activity": "在家追剧", "place": "家",
              "category": "rest"},
+            {"start": "23:00", "end": "24:00", "activity": "睡觉", "place": "家",
+             "category": "sleep"},
         ]
         engine().assign(items, DAY)
-        self.assertEqual(len({item["outfit"] for item in items}), 1)
+        self.assertEqual(items[0]["outfit"], items[1]["outfit"])   # 外出同套
+        self.assertNotEqual(items[0]["outfit"], items[2]["outfit"])  # 回家换家居服
+        self.assertNotEqual(items[2]["outfit"], items[3]["outfit"])  # 睡觉换睡衣
 
     def test_normal_change_does_not_switch(self):
         items = [
-            {"start": "18:00", "end": "19:00", "activity": "追剧", "place": "家",
-             "category": "rest"},
+            {"start": "09:00", "end": "18:00", "activity": "上班", "place": "公司",
+             "category": "work"},
             {"start": "19:00", "end": "19:30", "activity": "回家换衣服", "place": "家",
              "category": "rest"},
-            {"start": "19:30", "end": "21:00", "activity": "逛街", "place": "商场",
+            {"start": "20:00", "end": "21:00", "activity": "出门买东西", "place": "商场",
              "category": "play"},
         ]
         engine().assign(items, DAY)

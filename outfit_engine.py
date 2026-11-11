@@ -148,11 +148,12 @@ class OutfitEngine:
         return "casual" if scenes else "home"
 
     def assign(self, items, day, persona=""):
-        """给日程写 `outfit`：一天一套，从起床穿到睡觉。
+        """给日程写 `outfit`。
 
-        - 同一天不换衣服（上午下午一样），只有「淋湿/弄脏 + 回家换衣服」才换一套；
-        - 睡觉时段单独穿睡衣；
-        - 海边/泳池那几个小时单独穿泳装，其余时间还是当天那套。
+        - 出门在外（上班/通勤/吃饭/逛街）一天一套，上午下午不换；
+        - 在家换家居服，睡觉换睡衣；
+        - 海边/泳池那几个小时单独泳装；
+        - 只有「淋湿/弄脏 + 回家换衣服」才把外出那套换掉。
         """
         if not isinstance(items, list):
             return items
@@ -162,8 +163,9 @@ class OutfitEngine:
         base_scene = self.day_scene(items)
         pair = self._pick(gender, base_scene, day, "day")
         backup = self._pick(gender, base_scene, day, "day-2")
-        variant = 0
+        homewear = self._pick(gender, "home", day, "home")
         sleepwear = self._pick(gender, "sleep", day, "sleep")
+        variant = 0
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -172,14 +174,15 @@ class OutfitEngine:
             if scene == "sleep":
                 item["outfit"] = sleepwear
                 continue
-            if scene == "beach":
-                # 海边/泳池那几小时可以换泳装，但只在那个场景
-                item["outfit"] = self._safe(self._pick(gender, "beach", day, "beach"), "beach") \
-                    or self._pick(gender, "beach", day, "beach")
-                continue
             if (any(word in activity for word in self.EMERGENCY_WORDS)
                     and any(word in activity for word in self.CHANGE_WORDS)):
                 variant += 1
+            if scene == "home":
+                item["outfit"] = homewear
+                continue
+            if scene == "beach":
+                item["outfit"] = self._pick(gender, "beach", day, "beach")
+                continue
             outfit = pair if variant == 0 else backup
             item["outfit"] = self._safe(outfit, base_scene) or self._pick(gender, "casual", day, "day")
         return items
