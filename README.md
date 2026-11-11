@@ -6,7 +6,7 @@
 >
 > 反馈、Bug、建议请加 QQ 群：**1055679275**
 
-## 6.8.20 署名与致谢
+## 6.8.22 仓库改名
 
 - 模块化重构后 handler 的 `module_path` 是子模块，AstrBot 只认主模块路径 → 20 个 handler 被静默跳过；
 - 新增 `_align_handler_module_paths()`，导入时归一到主模块（绑定与启停判断都依赖它）；
