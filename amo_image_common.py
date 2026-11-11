@@ -20,6 +20,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import shutil
 import time
 from typing import TYPE_CHECKING
 
@@ -174,11 +176,63 @@ def split_keywords(text):
     return [item.strip() for item in str(text or "").replace("，", ",").split(",") if item.strip()]
 
 
+def publish_refs_to_omni(omni, refs, scope="amo_image_common.publish_refs_to_omni"):
+    """把模板图复制进万象画卷自己的 ``persona_refs/``，返回它认得的引用。
+
+    它加载配置时会用 ``_process_persona_images`` 过滤参考图：只接受
+    ``data:image`` / ``http(s)://`` / **自己 plugin_data 目录下**的路径，
+    其余一律静默丢弃（我们直接传 ``plugins/Astrbot_Amo_forever/templates/...``
+    就是被丢掉的那种——三视图看着同步了，实际上一张都没进去）。
+    所以这里按它 upload 的做法先复制一份进去，路径照原文件名带上 ``amo_`` 前缀。
+    """
+    data_dir = str(getattr(omni, "data_dir", "") or "")
+    result = []
+    target_dir = ""
+    for ref in refs or []:
+        ref = str(ref or "")
+        if not ref:
+            continue
+        if ref.startswith(("data:image", "http://", "https://")):
+            result.append(ref)  # 这几种它自己会收
+            continue
+        if not os.path.isfile(ref):
+            _note_swallowed(scope, FileNotFoundError(ref))
+            continue
+        if not target_dir:
+            if not data_dir:
+                _note_swallowed(scope, RuntimeError("万象画卷没有 data_dir"))
+                return []
+            target_dir = os.path.join(data_dir, "persona_refs")
+            try:
+                os.makedirs(target_dir, exist_ok=True)
+            except Exception as exc:
+                _note_swallowed(scope, exc)
+                return []
+        name = os.path.basename(ref)
+        if not name.startswith("amo_"):
+            name = "amo_" + name
+        dest = os.path.join(target_dir, name)
+        try:
+            # 源模板重建过就覆盖，没变就别反复写盘
+            if (not os.path.exists(dest)
+                    or os.path.getmtime(dest) < os.path.getmtime(ref)
+                    or os.path.getsize(dest) != os.path.getsize(ref)):
+                shutil.copyfile(ref, dest)
+            result.append(dest)
+        except Exception as exc:
+            _note_swallowed(scope, exc)
+    return result
+
+
 def persona_config_payload(omni, refs):
     """把参考图写进万象画卷「自己那一份」raw_config，返回新 dict（不改原对象）。
 
-    只动它的公开配置结构（``persona_config.persona_ref_images``），交给
-    ``apply_persona_config()`` 去校验 + 落盘；这里不自己拼 JSON 写文件。
+    键名按它 ``models.py`` 的真实读法（也对照过线上
+    ``plugin_data/astrbot_plugin_omnidraw/omnidraw_persist_config.json``）：
+    落盘时 ``persona_config.persona_ref_image`` 和每个 profile 的同名字段**本来就是
+    list**；``persona_ref_images`` 只是旧版别名（读取时才有），写的时候不要留两处。
+
+    交给 ``apply_persona_config()`` 走它自己的校验 + 落盘，这里不碰文件。
     """
     raw = getattr(omni, "raw_config", None)
     if not isinstance(raw, dict):
@@ -186,8 +240,9 @@ def persona_config_payload(omni, refs):
     refs = [str(item) for item in (refs or []) if item]
     payload = dict(raw)
     persona = dict(payload.get("persona_config") or {})
-    persona["persona_ref_images"] = list(refs)
-    persona["persona_ref_image"] = refs[0] if refs else ""
+    # 落盘格式里这个键就是 list；另存一份复数键会让两处不一致
+    persona["persona_ref_image"] = list(refs)
+    persona.pop("persona_ref_images", None)
     profiles = persona.get("profiles")
     if isinstance(profiles, list):
         personas = []
@@ -196,7 +251,8 @@ def persona_config_payload(omni, refs):
                 personas.append(profile)
                 continue
             item = dict(profile)
-            item["persona_ref_images"] = list(refs)
+            item["persona_ref_image"] = list(refs)
+            item.pop("persona_ref_images", None)
             personas.append(item)
         persona["profiles"] = personas
     payload["persona_config"] = persona
@@ -211,6 +267,8 @@ def apply_persona_config(omni, refs, scope="amo_image_common.apply_persona_confi
     if omni is None:
         return False
     refs = [str(item) for item in (refs or []) if item]
+    # 先转成它认可的引用（复制进它的 persona_refs/），否则会被它的加载逻辑静默丢掉
+    refs = publish_refs_to_omni(omni, refs)
     payload = persona_config_payload(omni, refs)
     apply_fn = getattr(omni, "_apply_runtime_config", None)
     if payload is None or not callable(apply_fn):

@@ -1,5 +1,21 @@
 # Changelog
 
+## 6.8.4（6.8.2 之后：三视图同步真正落地）
+
+6.8.2 已经把「直接写别人配置文件」改成走万象画卷自己的配置入口，但还差一步：
+它加载配置时只认 `data:image` / `http(s)://` / **它自己 plugin_data 目录下**的参考图
+（`models._process_persona_images`），直接传我们 `plugins/Astrbot_Amo_forever/templates/`
+的绝对路径仍然会被**静默丢掉**——也就是三视图看着同步了，实际一张都没进去。
+
+- 新增 `publish_refs_to_omni()`：先把三视图复制进它的 `persona_refs/`
+  （命名 `amo_persona_*.png`），再写配置；已用它真实的 `PluginConfig.from_dict`
+  验过：3 张图都能进 `persona_ref_images` 与 `personas[0].ref_images`；
+- `tests/test_image_common.py` 补到 35 项：复制/丢弃规则、只改内存的降级路径、
+  「不自己写它配置文件」的源码守卫；
+- 版本 6.8.2 -> 6.8.4（6.8.2 已发布，按仓库规则尾号取偶）。
+
+pytest 1436 passed / 7 skipped；覆盖率 68%（底线 65）。
+
 ## 6.8.2（6.8.0 合并后的收口）
 
 合并照片/画图分支时混进来的三处问题，以及两个引擎的重复代码：
@@ -12,10 +28,14 @@
 - **新增 `amo_image_common.py`**：照片引擎与画图引擎重复的「读配置 / 找万象画卷实例 /
   起后台任务 / 生图结果转消息组件 / 地点词清理」收成一份（两边曾漂移，`_clean_place`
   一边截断一边不截）。
-- **三视图同步不再直接写万象画卷的配置文件**：以前直接读改它的 `config_path` 和 AstrBot 侧
-  `astrbot_plugin_omnidraw_config.json`，还把 list 写进了它期望字符串的 `persona_ref_image`；
-  现在只走它自己的 `_apply_runtime_config` + `_persist_config`，格式和校验由它负责，
-  接口缺失时退化成只改内存。
+- **三视图同步改了实现，而且是真的能生效了**：万象画卷加载配置时只认
+  `data:image` / `http(s)://` / **它自己 plugin_data 目录下**的参考图路径
+  （`models._process_persona_images`），别的一律静默丢弃——我们之前直接写进它
+  `config_path` 的 `plugins/Astrbot_Amo_forever/templates/...` 正是被丢掉的那种，
+  所以「三视图同步」其实一张都没进去过。现在先把模板复制进它的 `persona_refs/`，
+  再走它自己的 `_apply_runtime_config` + `_persist_config` 落盘（不再自己拼 json 写别人的
+  文件），接口缺失时退化成只改内存。已用它真实的 `PluginConfig.from_dict` 验过：
+  3 张图都能进 `persona_ref_images` 和 `personas[0].ref_images`。
 
 测试 1401 passed / 7 skipped；mypy 0；覆盖率 67%。
 

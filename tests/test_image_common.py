@@ -21,11 +21,19 @@ import astrbot_stub  # noqa: E402
 astrbot_stub.install()
 
 import amo_image_common as C  # noqa: E402
+import tempfile  # noqa: E402
 import amo_observability as OBS  # noqa: E402
 import draw_engine as DE  # noqa: E402
 import photo_engine as PE  # noqa: E402
 import test_draw_engine as DT  # noqa: E402
 import test_photo_engine as PT  # noqa: E402
+
+
+def _tmp_base() -> str:
+    """工作区内的临时目录：系统 temp 在本机沙箱里 0700 不可写。"""
+    base = os.path.join(ROOT, '.test-tmp')
+    os.makedirs(base, exist_ok=True)
+    return base
 
 
 class CleanPlaceTests(unittest.TestCase):
@@ -185,16 +193,19 @@ class ImageComponentTests(unittest.TestCase):
 
 class PersonaConfigTests(unittest.TestCase):
     def test_payload_uses_its_own_schema_keys(self):
-        raw = {"persona_config": {"persona_ref_images": [], "profiles": [{"id": "default"}]},
+        """落盘格式：persona_ref_image 本来就是 list（对照过线上
+        omnidraw_persist_config.json 与 models.py 的读法），复数键只是旧别名。"""
+        raw = {"persona_config": {"persona_ref_image": [], "persona_ref_images": [],
+                                  "profiles": [{"id": "default"}]},
                "providers": []}
         omni = type("Omni", (), {"raw_config": raw})()
         payload = C.persona_config_payload(omni, ["a.png", "b.png"])
         persona = payload["persona_config"]
-        self.assertEqual(persona["persona_ref_images"], ["a.png", "b.png"])
-        self.assertEqual(persona["persona_ref_image"], "a.png")  # 单个键必须是字符串
-        self.assertEqual(persona["profiles"][0]["persona_ref_images"], ["a.png", "b.png"])
+        self.assertEqual(persona["persona_ref_image"], ["a.png", "b.png"])
+        self.assertNotIn("persona_ref_images", persona)  # 不写两份，免得对不上
+        self.assertEqual(persona["profiles"][0]["persona_ref_image"], ["a.png", "b.png"])
         # 不能改到对方原本的对象
-        self.assertEqual(raw["persona_config"]["persona_ref_images"], [])
+        self.assertEqual(raw["persona_config"]["persona_ref_image"], [])
 
     def test_payload_without_raw_config(self):
         omni = type("Omni", (), {})()
@@ -202,64 +213,128 @@ class PersonaConfigTests(unittest.TestCase):
 
 
 class ApplyPersonaTests(unittest.TestCase):
-    class OmniWithEntry:
-        def __init__(self):
-            self.raw_config = {"persona_config": {"profiles": []}}
-            self.applied = []
-            self.persisted = 0
-            self.synced = 0
+    """走它自己的配置入口；参考图要先复制进它 plugin_data 下的 persona_refs/。"""
 
-        def _apply_runtime_config(self, payload):
-            self.applied.append(payload)
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="amo-omni-", dir=_tmp_base())
+        self.data_dir = os.path.join(self.tmp, "omnidraw")
+        os.makedirs(self.data_dir, exist_ok=True)
+        self.src_dir = os.path.join(self.tmp, "amo-templates")
+        os.makedirs(self.src_dir, exist_ok=True)
+        self.refs = []
+        for view in ("front", "side"):
+            path = os.path.join(self.src_dir, "amo_persona_%s.png" % view)
+            with open(path, "wb") as handle:
+                handle.write(b"\x89PNG\r\n\x1a\n" + view.encode())
+            self.refs.append(path)
 
-        def _persist_config(self):
-            self.persisted += 1
+    def make_omni(self):
+        class OmniWithEntry:
+            data_dir = self.data_dir
+            raw_config = {"persona_config": {"profiles": [{"id": "default"}]}}
 
-        def _safe_update_context_config(self):
-            self.synced += 1
+            def __init__(inner):
+                inner.applied = []
+                inner.persisted = 0
+                inner.synced = 0
+
+            def _apply_runtime_config(inner, payload):
+                inner.applied.append(payload)
+
+            def _persist_config(inner):
+                inner.persisted += 1
+
+            def _safe_update_context_config(inner):
+                inner.synced += 1
+
+        return OmniWithEntry()
+
+    def test_refs_are_copied_into_its_own_dir(self):
+        omni = self.make_omni()
+        published = C.publish_refs_to_omni(omni, self.refs)
+        self.assertEqual(len(published), 2)
+        for path in published:
+            # 它只收自己 plugin_data 下的路径，其余静默丢弃
+            self.assertTrue(os.path.abspath(path).startswith(os.path.abspath(self.data_dir)))
+            self.assertTrue(os.path.exists(path))
+            self.assertEqual(os.path.basename(path), os.path.basename(path).replace("amo_amo_", "amo_"))
+            self.assertTrue(os.path.basename(path).startswith("amo_persona_"))
+
+    def test_missing_template_is_skipped(self):
+        omni = self.make_omni()
+        published = C.publish_refs_to_omni(omni, [os.path.join(self.src_dir, "nope.png")])
+        self.assertEqual(published, [])
+
+    def test_http_and_data_urls_pass_through(self):
+        omni = self.make_omni()
+        published = C.publish_refs_to_omni(omni, ["https://x/a.png", "data:image/png;base64,AAA"])
+        self.assertEqual(published, ["https://x/a.png", "data:image/png;base64,AAA"])
 
     def test_goes_through_its_own_entry(self):
-        omni = self.OmniWithEntry()
-        self.assertTrue(C.apply_persona_config(omni, ["a.png"]))
+        omni = self.make_omni()
+        self.assertTrue(C.apply_persona_config(omni, self.refs))
         self.assertEqual(len(omni.applied), 1)
-        self.assertEqual(omni.applied[0]["persona_config"]["persona_ref_images"], ["a.png"])
+        refs = omni.applied[0]["persona_config"]["persona_ref_image"]
+        self.assertEqual(len(refs), 2)
+        self.assertTrue(all(os.path.abspath(p).startswith(os.path.abspath(self.data_dir))
+                            for p in refs))
         self.assertEqual(omni.persisted, 1)
         self.assertEqual(omni.synced, 1)
 
     def test_falls_back_to_memory_only(self):
-        """没有配置入口时只改内存，绝不自己去写文件。"""
+        """没有配置入口时只改内存，绝不自己去写它的配置文件。"""
         class Cfg:
             persona_ref_image = ""
             persona_ref_images = []
             personas = []
 
-        omni = type("Omni", (), {"plugin_config": Cfg()})()
-        with mock.patch("builtins.open", side_effect=AssertionError("不该写文件")):
-            self.assertTrue(C.apply_persona_config(omni, ["a.png"]))
-        self.assertEqual(omni.plugin_config.persona_ref_images, ["a.png"])
-        self.assertEqual(omni.plugin_config.persona_ref_image, "a.png")
+        omni = type("Omni", (), {"plugin_config": Cfg(), "data_dir": self.data_dir})()
+        real_open = open
+
+        def guard(path, *args, **kwargs):
+            if "omnidraw" in str(path) and str(path).endswith(".json"):
+                raise AssertionError("不该写万象画卷的配置文件")
+            return real_open(path, *args, **kwargs)
+
+        with mock.patch("builtins.open", side_effect=guard):
+            self.assertTrue(C.apply_persona_config(omni, self.refs))
+        self.assertEqual(len(omni.plugin_config.persona_ref_images), 2)
+        self.assertTrue(omni.plugin_config.persona_ref_image)
 
     def test_apply_failure_degrades_to_memory(self):
-        class Broken(self.OmniWithEntry):
-            def _apply_runtime_config(self, payload):
-                raise RuntimeError("它的配置坏了")
+        omni = self.make_omni()
 
-        omni = Broken()
+        def boom(payload):
+            raise RuntimeError("它的配置坏了")
+
+        omni._apply_runtime_config = boom
         omni.plugin_config = type("Cfg", (), {"persona_ref_image": "", "persona_ref_images": [],
                                               "personas": []})()
-        self.assertTrue(C.apply_persona_config(omni, ["a.png"]))
-        self.assertEqual(omni.plugin_config.persona_ref_images, ["a.png"])
+        self.assertTrue(C.apply_persona_config(omni, self.refs))
+        self.assertEqual(len(omni.plugin_config.persona_ref_images), 2)
 
 
 class SyncRefsTests(unittest.TestCase):
     def test_photo_sync_uses_public_entry(self):
         engine, plugin = PT.engine_for()
-        omni = ApplyPersonaTests.OmniWithEntry()
+        case = ApplyPersonaTests("test_goes_through_its_own_entry")
+        case.setUp()
+        omni = case.make_omni()
+        engine.persona_refs = lambda: list(case.refs)  # 模板换成真文件
         engine._omni = omni
         engine._omni_checked = 10 ** 9  # 不再重新找实例
-        with mock.patch("builtins.open", side_effect=AssertionError("不该写万象画卷的配置文件")):
+        real_open = open
+
+        def guard(path, *args, **kwargs):
+            # 只禁「写它的配置文件」；复制参考图当然要开文件
+            if str(path).endswith(".json") and "omnidraw" in str(path):
+                raise AssertionError("不该自己写万象画卷的配置文件")
+            return real_open(path, *args, **kwargs)
+
+        with mock.patch("builtins.open", side_effect=guard):
             engine._sync_omni_refs()
         self.assertEqual(len(omni.applied), 1)
+        self.assertEqual(len(omni.applied[0]["persona_config"]["persona_ref_image"]), 2)
 
     def test_sync_without_omni_is_noop(self):
         engine, _ = PT.engine_for()
