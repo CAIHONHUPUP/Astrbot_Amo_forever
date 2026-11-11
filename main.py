@@ -3820,18 +3820,18 @@ class HumanState:
         except Exception:
             pass
 
-    async def warm_diaries(self, day, items, umo):
+    async def warm_diaries(self, day, items, umo, force=False):
         """后台把 24 小时的小日记都写细；按 6 小时一组，写完一组接下一组。"""
         key = "diary_warm_%s_%s" % (DIARY_WARM_VERSION, day)
         try:
-            if self.db.kv_get(key, False):
-                return
+            if not force and self.db.kv_get(key, False):
+                return {"total": 0, "skipped": True}
             self.db.kv_set(key, True)
         except Exception:
             pass
         llm = getattr(self.p, "llm", None)
         if llm is None or self.engine is None:
-            return
+            return {"total": 0, "error": "llm 或 engine 不可用"}
         try:
             from .schedule_engine import json_extract_list
         except Exception:
@@ -3912,6 +3912,7 @@ class HumanState:
                     pass
         if total:
             logger.info("[amo] 今日小日记已预生成 %d 条（详细版）" % total)
+        return {"total": total, "hours": len(hours)}
 
     def warm_schedule_diaries(self, day, items, umo):
         """预填保底 + 后台批量生成，不阻塞日程返回。"""
@@ -12478,6 +12479,7 @@ class HumanCorePlugin(Star):
             ("/memory/delete", self.api_memory_delete, ["GET", "POST"]),
             ("/memory_delete", self.api_memory_delete, ["GET", "POST"]),
             ("/schedule", self.api_schedule, ["GET", "POST"]),
+            ("/diary/warm", self.api_diary_warm, ["GET", "POST"]),
             ("/schedule/detail", self.api_schedule_detail, ["GET", "POST"]),
             ("/schedule_detail", self.api_schedule_detail, ["GET", "POST"]),
             ("/mood/update", self.api_mood_update, ["GET", "POST"]),
@@ -14233,6 +14235,23 @@ class HumanCorePlugin(Star):
         payload = {"day": day, "start": item.get("start", start), "end": item.get("end", "")}
         payload.update(result)
         return {"code": 0, "data": payload}
+
+    async def api_diary_warm(self):
+        """重建今天的小日记（详细版），用于首次部署或规则升级后手动触发。"""
+        await self._ensure_ready()
+        data = await self._body()
+        data = data if isinstance(data, dict) else {}
+        day = str(data.get("date") or today_str()).strip() or today_str()
+        items = (self.state.schedule.get(day)
+                 or self.db.get_schedule(day)
+                 or await self.state.ensure_schedule(self._last_umo))
+        items = self.state._hourly_schedule(items)
+        try:
+            result = await self.state.warm_diaries(day, items, self._last_umo, force=True)
+        except Exception as exc:
+            logger.warning("[amo] 手动重建日记失败: %s" % exc)
+            return {"code": 1, "msg": "重建失败：%s" % exc}
+        return {"code": 0, "data": result}
 
     async def api_scenic_kb_regen(self):
         await self._ensure_ready()
