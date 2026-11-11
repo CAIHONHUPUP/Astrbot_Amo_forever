@@ -513,6 +513,7 @@ class ApiMixin(_MixinBase):
             return {"code": 1, "msg": "缺少 uid"}
         if confirm not in ("1", "true", "yes", "on"):
             return {"code": 1, "msg": "删除档案需要确认：再带一次 confirm=1"}
+        logger.info("[amo] 删除档案请求: uid=%s" % uid)
         profile = {}
         try:
             profile = self.db.get_profile(uid) or {}
@@ -571,6 +572,16 @@ class ApiMixin(_MixinBase):
                     cache.pop(umo, None)
         except Exception as _amo_exc:
             _note_swallowed("amo_api.ApiMixin.api_profile_delete", _amo_exc)
+        # 面板的画像列表读的是数据插件（想记），只删本地等于没删：
+        # 数据侧还在，刷新就「删不掉」。这里把数据侧也删掉。
+        try:
+            data_counts = await self._data_call("delete_profile", self._data_bot_id(), uid)
+            if isinstance(data_counts, dict):
+                total = sum(int(v or 0) for v in data_counts.values() if isinstance(v, (int, float)))
+                if total:
+                    counts["data"] = total
+        except Exception as exc:
+            logger.warning("[amo] 删除画像时同步数据插件失败: %s" % exc)
         logger.info("[amo] 已删除档案 %s（清理 %s）" % (uid, counts))
         return {"code": 0, "msg": "已删除", "data": {"uid": uid, "counts": counts}}
 
