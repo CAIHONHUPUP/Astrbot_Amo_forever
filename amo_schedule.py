@@ -175,6 +175,15 @@ class ScheduleMixin(_MixinBase):
                 self.db.kv_set("home_early:" + key, True)
             elif travel:
                 self.db.kv_set("home_early:" + key, False)
+            # 日程突然变了：今天当前小时及以后的小日记全部作废，重新生成当前小时
+            try:
+                hour = _now().strftime("%H")
+                self.db.clear_diaries_from(key, hour)
+                current = self.state.current_activity()
+                if current:
+                    self._spawn(self.state.expand_hour(key, current, force=True))
+            except Exception as _amo_exc:
+                _note_swallowed("amo_schedule._apply_user_schedule_change", _amo_exc)
             logger.info("[amo] 按用户的话改了日程: %s" % change.get("activity"))
         except Exception as _amo_exc:
             _note_swallowed("amo_schedule._apply_user_schedule_change", _amo_exc)
