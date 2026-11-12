@@ -157,7 +157,15 @@ class ApiWriteTests(unittest.TestCase):
         self.assertEqual(self._call("api_diary_read", {"date": "昨天"}).get("code"), 1)
 
     def test_diary_write_without_material(self):
-        self.assertEqual(self._call("api_diary_write", {"date": "2026-11-12"}).get("code"), 1)
+        self.assertEqual(self._call("api_diary_write", {"date": "2026-11-09"}).get("code"), 1)
+
+    def test_diary_write_rejects_today(self):
+        # 今天的日记 22:00 自动写；面板「写昨天」只能补昨天及以前
+        from amo_shared import today_str
+
+        result = self._call("api_diary_write", {"date": today_str()})
+        self.assertEqual(result.get("code"), 1)
+        self.assertIn("22:00", result.get("msg") or "")
 
     # ---------- 穿搭 ----------
 

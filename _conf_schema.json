@@ -1372,8 +1372,8 @@
   "diary_time": {
     "type": "string",
     "description": "日记时间",
-    "default": "10:00",
-    "hint": "HH:MM，默认 10:00；到点后写「昨天」的日记，错过不自动补（面板「写昨天」可手动补）。"
+    "default": "22:00",
+    "hint": "HH:MM，默认 22:00：傍晚以后（18:00 起）写「当天」，白天写「昨天」。错过不自动补；面板「写昨天」只能补昨天及以前，当天这篇到点自动写。"
   },
   "quote_group_probability": {
     "type": "float",

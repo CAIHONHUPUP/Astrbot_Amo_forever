@@ -114,10 +114,14 @@ class LlmMixin(_MixinBase):
         self.bot_name = name
         if self.heartflow is not None:
             self.heartflow.set_identity(self.bot_name, self.bot_aliases)
-        if changed and self.worldview and self.worldview.get("name") != name:
-            self.worldview["name"] = name
+        # worldview 挂在 HumanState 上（不是插件本身）：热重载后第一条消息可能比
+        # _ensure_ready 里的 worldview 初始化更早，直接 self.worldview 会 AttributeError，
+        # 整条消息被吞掉（2026-11-12 线上实测）。这里按 state 取，取不到就跳过。
+        worldview = getattr(getattr(self, "state", None), "worldview", None)
+        if changed and isinstance(worldview, dict) and worldview.get("name") != name:
+            worldview["name"] = name
             try:
-                self.db.kv_set("worldview", self.worldview)
+                self.db.kv_set("worldview", worldview)
             except Exception as _amo_exc:
                 _note_swallowed("amo_llm.LlmMixin._sync_persona_name", _amo_exc)
 

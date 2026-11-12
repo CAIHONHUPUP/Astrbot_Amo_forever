@@ -77,6 +77,32 @@ else:  # 运行时用 object：协议里的声明不能进 MRO，否则会挡掉
     _MixinBase = object
 
 
+def diary_end_day(now, hh, mm):
+    """按 diary_time 算这一轮该收尾到哪一天；没到点返回 None。
+
+    傍晚以后（``hh >= 18``）写当天：晚上 22:00 就能看到今天的日记；
+    早上（``hh < 18``）写昨天：保留「次日早上收尾」的旧用法。
+    """
+    if (now.hour, now.minute) < (int(hh), int(mm)):
+        return None
+    if int(hh) >= 18:
+        return now.date()
+    return (now - timedelta(days=1)).date()
+
+
+def diary_manual_target(now, requested):
+    """面板手动写日记能写哪一天：只允许昨天及以前，当天和未来交给 22:00 自动写。
+
+    返回 ``(day, error)``：能写返回 ``(date, "")``，不能写返回 ``(None, 原因)``。
+    """
+    yesterday = (now - timedelta(days=1)).date()
+    if requested is None:
+        return yesterday, ""
+    if requested > yesterday:
+        return None, "今天的日记 22:00 会自动写，手动只能补昨天及以前的"
+    return requested, ""
+
+
 class ScheduleMixin(_MixinBase):
     def _schedule_change_allowed(self, event) -> bool:
         """改日程是会落库的副作用：只认主人的私聊，群聊/其他人不算。"""
@@ -288,25 +314,29 @@ class ScheduleMixin(_MixinBase):
         return os.path.join(root, "diary") if root else (_DIARY_DEFAULT_DIR or "")
 
     def _diary_clock(self):
-        """diary_time 默认 10:00。"""
-        raw = str(self.cfg_str("diary_time", "10:00") or "10:00").strip()
+        """diary_time 默认 22:00（傍晚以后写「当天」，白天写「昨天」）。"""
+        raw = str(self.cfg_str("diary_time", "22:00") or "22:00").strip()
         try:
             hour, _, minute = raw.partition(":")
             return max(0, min(23, int(hour))), max(0, min(59, int(minute or 0)))
         except (TypeError, ValueError):
-            return 10, 0
+            return 22, 0
 
     async def _maybe_daily_diary(self):
-        """每天 diary_time（默认 10:00）给「昨天」写一篇日记。"""
+        """到 diary_time 写一篇日记。
+
+        - ``diary_time >= 18:00``（默认 22:00）：写**当天**的日记，当天内容到点为止；
+        - 早上（``< 18:00``）：写**昨天**的，保留旧的「次日早上收尾」用法。
+        """
         if not self.cfg_bool("diary_enabled", True) or not callable(_diary_write):
             return
         now = _now()
         hh, mm = self._diary_clock()
-        if (now.hour, now.minute) < (hh, mm):
+        end_day = diary_end_day(now, hh, mm)
+        if end_day is None:
             return
         if getattr(self, "_diary_writing", False):
             return
-        end_day = (now - timedelta(days=1)).date()
         try:
             last_written = str(self.db.kv_get("diary_last_day", "") or "")
             start_day = (date.fromisoformat(last_written) + timedelta(days=1)) if last_written else end_day

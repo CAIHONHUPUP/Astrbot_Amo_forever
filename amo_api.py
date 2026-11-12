@@ -45,6 +45,15 @@ if TYPE_CHECKING:
 else:  # 运行时用 object：协议里的声明不能进 MRO，否则会挡掉别的 mixin 的真实实现
     _MixinBase = object
 
+try:  # 面板手动写日记只能补昨天及以前（当天由 22:00 自动写）
+    from .amo_schedule import diary_manual_target
+except ImportError:  # 直接按文件加载时
+    try:
+        from amo_schedule import diary_manual_target
+    except Exception:  # pragma: no cover
+        def diary_manual_target(now, requested):
+            return requested, ""
+
 
 class ApiMixin(_MixinBase):
     def _register_web_apis(self):
@@ -658,8 +667,9 @@ class ApiMixin(_MixinBase):
         await self._ensure_ready()
         payload = await self._body()
         day = _diary_parse_day((payload or {}).get("date"))
-        if not day:
-            day = (_now() - timedelta(days=1)).date()
+        day, error = diary_manual_target(_now(), day)
+        if error:
+            return {"code": 1, "msg": error}
         text = await self._generate_daily_diary(day)
         if not text:
             return {"code": 1, "msg": "日记生成失败（没有素材或模型没返回）"}

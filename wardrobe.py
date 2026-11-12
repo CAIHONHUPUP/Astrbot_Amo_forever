@@ -1508,13 +1508,16 @@ class Wardrobe:
                 })
             return result
 
+        # 晚上穿搭（睡衣）只在 20:00 之后生成：白天面板只提示「20:00 后自动生成」，
+        # 免得早上就看到今晚穿哪套。真正换上同样在 20:00（current() 里判断）。
+        night_ready = hour >= SLEEP_HOUR_FROM or hour < SLEEP_HOUR_TO
         return {
             "categories": category_list(False, False),
             "sleep_categories": category_list(True, False),
             "hotel_categories": category_list(True, True),
             "today": today,
             "current": self.current(),
-            "night": self.night(),
+            "night": self.night() if night_ready else {"pending": True},
             "hour": hour,
             "outfit_count": len([outfit for outfit in data.get("outfits", [])
                                  if not outfit.get("sleep")]),
