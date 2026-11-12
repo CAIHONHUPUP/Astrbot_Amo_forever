@@ -210,6 +210,55 @@ class ProactiveMixin(_MixinBase):
             return False
         return _within_minutes(data.get("ts"), now_ts(), minutes)
 
+    async def _user_spoke_today(self, uid, kind):
+        """他今天已经主动说过话了吗（决定要不要发「醒了没 / 吃了吗 / 早点睡」）。
+
+        早上问「醒了没」最容易露馅：他 08:04 说「我九点上班」，09:29 再问就成失忆了。
+        所以早上只要他今天开过口，就当他已经醒了，不再发问候（正常回复里自然会带早安）。
+
+        数据从记忆终端（想记）读：本地 `messages` 表只在开了 `local_chat_cache` 时才写，
+        默认是空的，拿它判断会永远「今天没说话」。
+        """
+        uid = str(uid or "")
+        if not uid:
+            return False
+        try:
+            start = _now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        except Exception:
+            start = now_ts() - 86400
+        rows = []
+        try:
+            rows = await self._data_call(
+                "messages_since", self._data_bot_id(), uid, int(start),
+            ) or []
+        except Exception as _amo_exc:
+            _note_swallowed("amo_proactive.ProactiveMixin._user_spoke_today.data", _amo_exc)
+            rows = []
+        if not rows:
+            try:
+                rows = self.db.messages_by_uid(uid, limit=60)
+            except Exception as _amo_exc:
+                _note_swallowed("amo_proactive.ProactiveMixin._user_spoke_today.local", _amo_exc)
+                rows = []
+        for row in rows or []:
+            if str((row or {}).get("role") or "") != "user":
+                continue
+            try:
+                ts = float((row or {}).get("created_at") or 0)
+            except (TypeError, ValueError):
+                continue
+            if ts < start:
+                continue
+            text = str((row or {}).get("content") or "")
+            if kind == "morning":
+                return True
+            if kind == "lunch" and any(word in text for word in
+                                       ("吃", "饭", "饿", "外卖", "食堂", "早餐", "午饭", "午饭")):
+                return True
+            if kind == "goodnight" and any(word in text for word in ("睡", "晚安", "困", "熬夜")):
+                return True
+        return False
+
     def _mark_greeting(self, uid, kind, umo):
         try:
             self.db.kv_set("greeting_last:%s" % str(uid), {
@@ -347,6 +396,10 @@ class ProactiveMixin(_MixinBase):
                 if kind == "morning" and (snap.get("activity") or {}).get("category") == "sleep":
                     continue
                 if self._recent_greeting(uid, self.cfg_int("ritual_min_gap_minutes", 30)):
+                    continue
+                # 他今天已经主动说过话，就别再问「醒了没 / 吃了吗 / 早点睡」——
+                # 2026-11-12 线上：08:04 他说「我九点上班」，09:29 还在发「老公早安，醒了没呀」
+                if await self._user_spoke_today(uid, kind):
                     continue
                 if not self._ritual_should_send(umos, kind):
                     continue

@@ -34,6 +34,7 @@ TODAY = "2026-11-10"
 WANTED = {
     "_ritual_umos",
     "_recent_greeting",
+    "_user_spoke_today",
     "_mark_greeting",
     "_ritual_pending",
     "_ritual_should_send",
@@ -67,10 +68,11 @@ def load_methods(root):
 
 
 class FakeDB:
-    def __init__(self, profiles, channels):
+    def __init__(self, profiles, channels, messages=None):
         self.profiles = profiles
         self.store = {"channels:%s" % UID: channels}
         self.logs = []
+        self.messages = list(messages or [])
 
     def proactive_profiles(self, limit=100):
         return self.profiles
@@ -83,6 +85,12 @@ class FakeDB:
 
     def log_proactive(self, uid, kind, text):
         self.logs.append((uid, kind, text))
+
+    def messages_by_uid(self, uid, limit=20):
+        return list(self.messages)[-int(limit):]
+
+    def messages_since(self, uid, since_ts=0, limit=200):
+        return [m for m in self.messages if float(m.get("created_at") or 0) >= float(since_ts)]
 
 
 class FakeLLM:
@@ -102,7 +110,7 @@ class FakeSelf:
         ("lunch", "ritual_lunch", "ritual_lunch_window", "11:00-13:30"),
     )
 
-    def __init__(self, methods, cfg, profiles=None, channels=None, recents=None):
+    def __init__(self, methods, cfg, profiles=None, channels=None, recents=None, messages=None):
         for name, func in methods.items():
             setattr(self, name, func.__get__(self, FakeSelf))
         self.cfg_values = dict(cfg)
@@ -113,7 +121,7 @@ class FakeSelf:
                 "aiocqhttp": {"umo": QQ, "ts": NOW - 10},
                 "lark": {"umo": LARK, "ts": NOW - 20},
             }
-        self.db = FakeDB(profiles, channels)
+        self.db = FakeDB(profiles, channels, messages)
         self.recents = recents or {}
         self.state = FakeState()
         self.llm = FakeLLM()
@@ -151,6 +159,14 @@ class FakeSelf:
     async def _send_to_umo(self, umo, text):
         self.sent.append((umo, text))
         return True
+
+    def _data_bot_id(self):
+        return "bot"
+
+    async def _data_call(self, name, *args, **kwargs):
+        if name == "messages_since":
+            return self.db.messages_since(args[1], args[2])
+        return None
 
 
 def make_self(methods, **kwargs):
@@ -197,6 +213,7 @@ class RitualBehaviorTests(unittest.TestCase):
         func.__globals__.update({
             "to_float": lambda value, default=0.0: float(value or default),
             "now_ts": lambda: NOW,
+            "_now": lambda: datetime.datetime.fromtimestamp(NOW),
             "today_str": lambda: TODAY,
             "in_minute_range": in_minute_range,
             "minutes_now": minutes_now,
@@ -247,6 +264,32 @@ class RitualBehaviorTests(unittest.TestCase):
         self.run_rituals(fake)
         self.assertEqual([umo for umo, _ in fake.sent], [QQ])
         self.assertIsNone(fake.db.kv_get("greeting_last:%s" % UID))
+
+    def test_morning_skipped_when_user_spoke_today(self):
+        # 08:04 他说「我九点上班」，09:29 不能再问「醒了没」
+        fake = make_self(self.methods, messages=[
+            {"role": "user", "content": "还没，我九点上班，还能玩半个小时", "created_at": NOW - 3600},
+        ])
+        self.run_rituals(fake)
+        self.assertEqual(fake.sent, [])
+
+    def test_morning_still_sends_when_user_silent_today(self):
+        fake = make_self(self.methods, messages=[
+            {"role": "user", "content": "昨天说的", "created_at": NOW - 86400 * 2},
+            {"role": "bot", "content": "早呀", "created_at": NOW - 86400 * 2 + 30},
+        ])
+        self.run_rituals(fake)
+        self.assertEqual(len(fake.sent), 1)
+        self.assertEqual(fake.sent[0][1], "早呀")
+
+    def test_user_spoke_today_kinds(self):
+        fake = make_self(self.methods, messages=[
+            {"role": "user", "content": "中午吃啥", "created_at": NOW - 3600},
+        ])
+        self.patch_globals(fake._user_spoke_today.__func__)
+        self.assertTrue(asyncio.run(fake._user_spoke_today(UID, "morning")))
+        self.assertTrue(asyncio.run(fake._user_spoke_today(UID, "lunch")))
+        self.assertFalse(asyncio.run(fake._user_spoke_today(UID, "goodnight")))
 
     def test_same_day_does_not_repeat(self):
         fake = make_self(self.methods)
