@@ -75,7 +75,7 @@ class SwimSeedTests(unittest.TestCase):
         for cat in data["swim_categories"]:
             for item in cat["items"]:
                 swim_names.add(item["name"])
-        self.assertIn("黑色比基尼上衣", swim_names)
+        self.assertIn("黑色比基尼泳衣上衣", swim_names)
         day_names = set()
         for cat in data["categories"]:
             for item in cat["items"]:
@@ -97,6 +97,12 @@ class SwimSeedTests(unittest.TestCase):
                 self.assertTrue(cat["items"])
             else:
                 self.assertEqual(cat["items"], [])
+
+    def test_fresh_seed_keeps_swim_outfits(self):
+        # 回归：裙子迁移曾经按「必须有鞋」筛搭配，把没鞋的泳装整套删光
+        wardrobe, _ = make_wardrobe()
+        data = wardrobe._load()
+        self.assertEqual(len([o for o in data["outfits"] if o.get("swim")]), 7)
 
 
 class SwimWearTests(unittest.TestCase):
@@ -138,27 +144,44 @@ class SwimWearTests(unittest.TestCase):
         result = wardrobe.set_swim(top=day_top["id"], bottom="")
         self.assertFalse(result["ok"])
 
-    def test_set_swim_accepts_swim_items(self):
+    def test_set_swim_accepts_matching_set(self):
         wardrobe, _ = make_wardrobe()
-        data = wardrobe.snapshot()
-        top = data["swim_categories"][1]["items"][0]
-        bottom = data["swim_categories"][2]["items"][-1]
-        result = wardrobe.set_swim("2026-11-12", top=top["id"], bottom=bottom["id"])
+        entry = wardrobe.snapshot()["swim_sets"][0]
+        result = wardrobe.set_swim("2026-11-12", top=entry["top_id"], bottom=entry["bottom_id"])
         self.assertTrue(result["ok"])
-        self.assertEqual(result["top"], top["name"])
-        self.assertEqual(result["bottom"], bottom["name"])
+        self.assertEqual(result["top"], entry["top"])
+        self.assertEqual(result["bottom"], entry["bottom"])
         self.assertEqual(result["shoes"], "")
+        self.assertEqual(result["set"], entry["set"])
 
-    def test_add_swim_item_combos_with_swim_only(self):
+    def test_set_swim_rejects_cross_set_pairing(self):
+        wardrobe, _ = make_wardrobe()
+        sets = wardrobe.snapshot()["swim_sets"]
+        result = wardrobe.set_swim("2026-11-12", top=sets[0]["top_id"], bottom=sets[1]["bottom_id"])
+        self.assertFalse(result["ok"])
+        self.assertIn("整套", result["msg"])
+
+    def test_every_swim_set_is_complete(self):
+        wardrobe, _ = make_wardrobe()
+        entries = wardrobe.snapshot()["swim_sets"]
+        self.assertEqual(len(entries), 7)
+        for entry in entries:
+            self.assertTrue(entry["top"])
+            self.assertTrue(entry["bottom"])
+            self.assertEqual(entry["set"], entry["set"])
+        # 上衣和泳裤名字必须成对（同一套的名字里带同样的款式词）
+        pairs = {(entry["top"], entry["bottom"]) for entry in entries}
+        self.assertIn(("黑色比基尼泳衣上衣", "黑色比基尼泳裤"), pairs)
+        self.assertIn(("白色荷叶边泳衣上衣", "白色荷叶边泳裤"), pairs)
+
+    def test_add_single_swim_item_is_rejected(self):
         wardrobe, _ = make_wardrobe()
         result = wardrobe.add_item("top", "橙色波点泳衣上衣", swim=True)
-        self.assertTrue(result["ok"])
-        self.assertGreaterEqual(result["combos"], 1)
+        self.assertFalse(result["ok"])
+        self.assertIn("整套", result["msg"])
         data = wardrobe.snapshot()
         names = [item["name"] for cat in data["swim_categories"] for item in cat["items"]]
-        self.assertIn("橙色波点泳衣上衣", names)
-        day_names = [item["name"] for cat in data["categories"] for item in cat["items"]]
-        self.assertNotIn("橙色波点泳衣上衣", day_names)
+        self.assertNotIn("橙色波点泳衣上衣", names)
 
     def test_delete_swim_item_removes_ref_image(self):
         wardrobe, _ = make_wardrobe()

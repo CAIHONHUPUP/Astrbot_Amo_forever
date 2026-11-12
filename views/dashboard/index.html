@@ -620,6 +620,16 @@
       </div>
 
       <div id="wardrobeEditor" hidden>
+      <section class="card" style="margin-top:14px" id="swimSetCard" hidden>
+        <div class="row between">
+          <div>
+            <div class="label">整套泳装</div>
+            <div class="sub">泳装只能整套穿：点一套选中（上衣 + 同款泳裤），不能单件搭配</div>
+          </div>
+        </div>
+        <div id="swimSetList" class="wardrobe-chips"><div class="sub">加载中…</div></div>
+      </section>
+
       <section class="card" style="margin-top:14px">
         <div class="row between">
           <div>
@@ -2276,8 +2286,9 @@
         if (data.enabled === false) {
           swimBox.appendChild(wardrobeRow("泳装还没加载", ""));
         } else if (swim.pending) {
-          swimBox.appendChild(wardrobeRow("泳装", "点「泳衣」加一件"));
+          swimBox.appendChild(wardrobeRow("泳装", "还没有整套泳装"));
         } else {
+          if (swim.set) swimBox.appendChild(wardrobeRow("整套", swim.set));
           swimBox.appendChild(wardrobeRow("上衣（泳衣）", swim.top || "—"));
           swimBox.appendChild(wardrobeRow("裤子（泳裤）", swim.bottom || "—"));
           swimBox.appendChild(wardrobeRow("鞋子", "—"));
@@ -2307,22 +2318,37 @@
           hint.textContent = "先选白天、晚上、酒店睡衣还是泳衣，再展开上衣 / 裤子 / 鞋子";
         }
       }
-      // 泳装模式只留上衣和裤子，鞋/裙子/外套都不显示
+      // 泳装模式：整套选，不显示单件分类
       const swimMode = wardrobeMode === "swim";
       WARDROBE_CATS.forEach((cat) => {
         const list = document.getElementById("wardrobeList-" + cat.key);
         const card = list ? list.closest("section") : null;
-        if (card) card.hidden = swimMode && cat.key !== "top" && cat.key !== "bottom";
+        if (card) card.hidden = swimMode;
       });
-      const topCard = document.getElementById("wardrobeList-top");
-      if (topCard && topCard.closest("section")) {
-        const label = topCard.closest("section").querySelector(".label");
-        if (label) label.textContent = swimMode ? "上衣（泳衣）" : "上衣（外套）";
-      }
-      const bottomCard = document.getElementById("wardrobeList-bottom");
-      if (bottomCard && bottomCard.closest("section")) {
-        const label = bottomCard.closest("section").querySelector(".label");
-        if (label) label.textContent = swimMode ? "裤子（泳裤）" : "裤子";
+      const swimSetCard = document.getElementById("swimSetCard");
+      if (swimSetCard) swimSetCard.hidden = !swimMode;
+      if (swimMode) {
+        const swimSetList = document.getElementById("swimSetList");
+        if (swimSetList) {
+          swimSetList.innerHTML = "";
+          const sets = Array.isArray(data.swim_sets) ? data.swim_sets : [];
+          if (!sets.length) {
+            swimSetList.innerHTML = '<div class="sub">还没有整套泳装</div>';
+          }
+          sets.forEach((entry) => {
+            const chip = document.createElement("span");
+            const selected = !!(wardrobeSwimSel.top && wardrobeSwimSel.top === entry.top_id);
+            chip.className = "wardrobe-chip" + (selected ? " selected" : "");
+            chip.title = selected ? "已选中（点别的整套可换）" : "点一下选这套";
+            chip.textContent = (selected ? "✓ " : "") + (entry.set || entry.top) + "（" + entry.top + " + " + entry.bottom + "）";
+            chip.addEventListener("click", () => {
+              wardrobeSwimSel = { top: entry.top_id || "", bottom: entry.bottom_id || "" };
+              wardrobeDirty = true;
+              renderWardrobe(wardrobeData);
+            });
+            swimSetList.appendChild(chip);
+          });
+        }
       }
       if (!wardrobeMode) return;
       const placeholders = swimMode

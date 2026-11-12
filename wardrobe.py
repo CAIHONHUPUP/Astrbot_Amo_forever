@@ -187,17 +187,18 @@ DRESS_SEED_VERSION = 1
 COAT_SEED_VERSION = 1
 HOTEL_PLACE_WORDS = ("酒店", "宾馆", "民宿", "旅馆", "客栈", "度假村", "客房", "套房")
 
-#: 泳装：只有去游泳馆 / 海边 / 水上乐园才穿；只穿上衣（泳衣）和裤子（泳裤），不穿鞋
-SEED_SWIM = (
-    ("黑色比基尼上衣", "黑色高腰泳裤"),
-    ("白色荷叶边泳衣上衣", "白色泳裤"),
-    ("蓝色条纹泳衣上衣", "藏青泳裤"),
-    ("粉色蝴蝶结泳衣上衣", "粉色泳裤"),
-    ("绿色碎花泳衣上衣", "绿色泳裤"),
-    ("紫色运动泳衣上衣", "黑色运动泳裤"),
-    ("黄色波点泳衣上衣", "黄色泳裤"),
+#: 泳装：只有去游泳馆 / 海边 / 水上乐园才穿；**整套穿，上衣和泳裤必须同一套**，不穿鞋。
+#: (整套名, 上衣, 泳裤)
+SEED_SWIM_SETS = (
+    ("黑色比基尼", "黑色比基尼泳衣上衣", "黑色比基尼泳裤"),
+    ("白色荷叶边泳衣", "白色荷叶边泳衣上衣", "白色荷叶边泳裤"),
+    ("蓝色条纹泳衣", "蓝色条纹泳衣上衣", "蓝色条纹泳裤"),
+    ("粉色蝴蝶结泳衣", "粉色蝴蝶结泳衣上衣", "粉色蝴蝶结泳裤"),
+    ("绿色碎花泳衣", "绿色碎花泳衣上衣", "绿色碎花泳裤"),
+    ("紫色运动泳衣", "紫色运动泳衣上衣", "紫色运动泳裤"),
+    ("黄色波点泳衣", "黄色波点泳衣上衣", "黄色波点泳裤"),
 )
-SWIM_SEED_VERSION = 1
+SWIM_SEED_VERSION = 2
 #: 日程地点里出现这些词就是「在水边/玩水」，自动换泳装
 SWIM_PLACE_WORDS = ("游泳", "泳池", "泳馆", "海边", "沙滩", "水上乐园", "水世界",
                     "海里", "玩水", "泳装")
@@ -851,6 +852,10 @@ class Wardrobe:
                 item["category"] = "skirt"
         kept = []
         for outfit in data.setdefault("outfits", []):
+            if outfit.get("swim"):
+                # 泳装本来就没有鞋，别让下面的「必须有鞋」把它筛掉
+                kept.append(outfit)
+                continue
             top = by_id.get(outfit.get("top")) or {}
             bottom = by_id.get(outfit.get("bottom")) or {}
             skirt = by_id.get(outfit.get("skirt")) or {}
@@ -866,7 +871,8 @@ class Wardrobe:
                 outfit["top"] = ""
                 outfit["bottom"] = ""
             kept.append(outfit)
-        data["outfits"] = [outfit for outfit in kept if outfit.get("shoes")
+        data["outfits"] = [outfit for outfit in kept
+                           if (outfit.get("swim") or outfit.get("shoes"))
                            and (outfit.get("top") or outfit.get("bottom") or outfit.get("skirt"))]
 
     def _ensure_hotel(self, data):
@@ -930,50 +936,54 @@ class Wardrobe:
         return added
 
     def _ensure_swim(self, data):
-        """补泳装：只有上衣（泳衣）和裤子（泳裤），没有鞋；去游泳/海边/水上乐园才穿。"""
+        """重建泳装：**整套**（上衣 + 同套泳裤），没有鞋；旧泳装连同参考图一起作废。"""
         items = data.setdefault("items", [])
         outfits = data.setdefault("outfits", [])
-        by_key = {(item.get("category"), item.get("name")): item
-                  for item in items if item.get("swim")}
-        existing = {
-            (outfit.get("top"), outfit.get("bottom"))
-            for outfit in outfits if outfit.get("swim")
-        }
-        added = False
-        for top, bottom in SEED_SWIM:
+        old_items = [item for item in items if item.get("swim")]
+        if old_items:
+            self._purge_swim_refs(old_items)
+            items[:] = [item for item in items if not item.get("swim")]
+            outfits[:] = [outfit for outfit in outfits if not outfit.get("swim")]
+        added = bool(old_items)
+        for set_name, top, bottom in SEED_SWIM_SETS:
             ids = {}
             for category, name in (("top", top), ("bottom", bottom)):
-                key = (category, name)
-                item = by_key.get(key)
-                if item is None:
-                    item = {
-                        "id": _new_id("i-"),
-                        "category": category,
-                        "name": name,
-                        "source": "seed",
-                        "gift_id": "",
-                        "swim": True,
-                        "created_at": time.time(),
-                    }
-                    items.append(item)
-                    by_key[key] = item
-                    added = True
+                item = {
+                    "id": _new_id("i-"),
+                    "category": category,
+                    "name": name,
+                    "source": "seed",
+                    "gift_id": "",
+                    "swim": True,
+                    "set": set_name,
+                    "created_at": time.time(),
+                }
+                items.append(item)
                 ids[category] = item["id"]
-            pair = (ids["top"], ids["bottom"])
-            if pair in existing:
-                continue
-            existing.add(pair)
             outfits.append({
                 "id": _new_id("o-"),
-                "top": pair[0],
-                "bottom": pair[1],
+                "top": ids["top"],
+                "bottom": ids["bottom"],
                 "shoes": "",
                 "source": "seed",
                 "swim": True,
+                "set": set_name,
             })
             added = True
         return added
 
+    def _purge_swim_refs(self, items):
+        """删掉旧泳装的参考图（衣服按名字一张，整套换新后不再沿用）。"""
+        if _item_ref_path is None:
+            return
+        for item in items:
+            try:
+                path = _item_ref_path(self.plugin, item)
+                if path and os.path.isfile(path):
+                    os.remove(path)
+                    logger.info("[amo] 旧泳装参考图已删除：%s" % path)
+            except Exception as _amo_exc:
+                _note_swallowed("wardrobe.Wardrobe._purge_swim_refs", _amo_exc)
     def _trim_daily(self, data):
         days = sorted(data.get("daily", {}))
         for day in days[:-30]:
@@ -1150,7 +1160,39 @@ class Wardrobe:
     # ---------- 泳装（游泳馆 / 海边 / 水上乐园） ----------
 
     def _swim_outfits(self, data):
-        return [outfit for outfit in data.get("outfits", []) if outfit.get("swim")]
+        """整套泳装：上衣和泳裤都得在、而且属于同一套（不留单件/混搭）。"""
+        items = self._items_map(data)
+        result = []
+        for outfit in data.get("outfits", []):
+            if not outfit.get("swim"):
+                continue
+            top = items.get(outfit.get("top")) or {}
+            bottom = items.get(outfit.get("bottom")) or {}
+            if not top or not bottom:
+                continue
+            if str(top.get("set") or "") != str(bottom.get("set") or ""):
+                continue
+            result.append(outfit)
+        return result
+
+    def swim_sets(self, data=None):
+        """给面板用：整套泳装列表（一套一行，不能拆开挑）。"""
+        data = data if isinstance(data, dict) else self._load()
+        items = self._items_map(data)
+        sets = []
+        for outfit in self._swim_outfits(data):
+            top = items.get(outfit.get("top")) or {}
+            bottom = items.get(outfit.get("bottom")) or {}
+            sets.append({
+                "id": outfit.get("id") or "",
+                "set": outfit.get("set") or top.get("set") or "",
+                "top": str(top.get("name") or ""),
+                "bottom": str(bottom.get("name") or ""),
+                "top_id": str(top.get("id") or ""),
+                "bottom_id": str(bottom.get("id") or ""),
+            })
+        sets.sort(key=lambda entry: entry["set"])
+        return sets
 
     def _at_swim(self):
         """现在是不是在游泳/海边/水上乐园：是的话自动换泳装。"""
@@ -1169,6 +1211,7 @@ class Wardrobe:
         result = self._describe(data, outfit)
         result["day"] = day
         result["swim"] = True
+        result["set"] = str(outfit.get("set") or "")
         return result
 
     def swim_outfit(self, day=""):
@@ -1208,6 +1251,10 @@ class Wardrobe:
             if not (bottom_item and bottom_item.get("category") == "bottom"
                     and bottom_item.get("swim")):
                 return {"ok": False, "msg": "先选一条泳裤"}
+            # 泳装只能整套穿：上衣和泳裤必须是同一套，不允许混搭
+            if str(top_item.get("set") or "") != str(bottom_item.get("set") or "") \
+                    or not str(top_item.get("set") or ""):
+                return {"ok": False, "msg": "泳装要穿整套：上衣和泳裤要选同一套"}
             outfit = None
             for entry in data.get("outfits", []):
                 if (entry.get("swim") and entry.get("top") == top_item["id"]
@@ -1222,6 +1269,7 @@ class Wardrobe:
                     "shoes": "",
                     "source": "manual",
                     "swim": True,
+                    "set": str(top_item.get("set") or ""),
                 }
                 data.setdefault("outfits", []).append(outfit)
             entry = data.setdefault("daily", {}).setdefault(day, {})
@@ -1494,8 +1542,9 @@ class Wardrobe:
             return {"ok": False, "msg": "分类不对，只能是 top / bottom / shoes"}
         if not name:
             return {"ok": False, "msg": "衣服名字不能为空"}
-        if swim and category not in ("top", "bottom"):
-            return {"ok": False, "msg": "泳装只分上衣（泳衣）和裤子（泳裤）"}
+        if swim:
+            # 泳装只能整套穿：面板里选整套，不接受单件添加，避免出现「有上衣没泳裤」
+            return {"ok": False, "msg": "泳装只能整套穿，不能单件添加"}
         with self._lock:
             data = self._load()
             for item in data["items"]:
@@ -1584,13 +1633,16 @@ class Wardrobe:
         category = item.get("category")
         combos = []
         if swim:
-            # 泳装只有「上衣 + 泳裤」两件，不配外套/裙子/鞋子
+            # 泳装只有「上衣 + 泳裤」两件，不配外套/裙子/鞋子；而且只跟自己这一套配
+            my_set = str(item.get("set") or "")
             if category == "top":
                 for bottom in bottoms:
-                    combos.append(("", item, bottom, "", ""))
+                    if my_set and str(bottom.get("set") or "") == my_set:
+                        combos.append(("", item, bottom, "", ""))
             elif category == "bottom":
                 for top in tops:
-                    combos.append(("", top, item, "", ""))
+                    if my_set and str(top.get("set") or "") == my_set:
+                        combos.append(("", top, item, "", ""))
         elif category == "coat":
             for top in tops:
                 for shoe in shoes_pool:
@@ -1738,6 +1790,7 @@ class Wardrobe:
             "hotel_categories": category_list(True, True, False),
             # 泳装只有上衣（泳衣）和裤子（泳裤），鞋是横线
             "swim_categories": category_list(False, False, True),
+            "swim_sets": self.swim_sets(data),
             "swim": self.swim_outfit(),
             "at_swim": self._at_swim(),
             "today": today,
