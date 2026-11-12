@@ -74,12 +74,13 @@ class FakeOmni:
 
 
 class FakeState:
-    def __init__(self, place="公园", activity="散步"):
+    def __init__(self, place="公园", activity="散步", zone="scenic"):
         self.place = place
         self.activity = activity
+        self.zone = zone
 
     def current_activity(self):
-        return {"place": self.place, "activity": self.activity, "zone": "scenic"}
+        return {"place": self.place, "activity": self.activity, "zone": self.zone}
 
 
 class FakePhoto:
@@ -318,10 +319,11 @@ class RunTests(unittest.TestCase):
 
     def test_location_question_uses_current_schedule_place(self):
         engine, plugin = engine_for()
-        plugin.state = FakeState(place="公司", activity="加班")
+        plugin.state = FakeState(place="公司", activity="加班", zone="office")
         plan = engine.decide(FakeEvent("你在公园吗？拍照给我看看"), "不在呀，我在公司加班呢")
         self.assertIsNotNone(plan)
         self.assertIn("公司", plan["prompt"])
+        self.assertIn("办公室", plan["prompt"])
         self.assertNotIn("公园", plan["prompt"])
 
     def test_location_question_at_park_uses_park_scene(self):

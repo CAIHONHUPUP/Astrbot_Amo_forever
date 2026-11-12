@@ -228,10 +228,9 @@ def scene_for(activity, kind=""):
         scene = _road_scene(activity)
     else:
         scene = _ZONE_SCENES.get(zone, "")
-    # 日程里的地点是个泛称（公司 / 路上 / 商场）时，把词本身留进画面，
-    # 免得提示词里只剩「景区」而看不出她到底在哪
-    if place and not _is_specific(place) and place not in scene:
-        scene = "%s，%s" % (place, scene) if scene else place
+    # 泛称地点（「公司」「商场」「路上」）不再重复拼在 scene 前面：
+    # 固定场景本身已经带了这个词（「公司里的办公室」「商场里」），
+    # 拼两遍会让模型把「写字楼」当外景画，室内场景反而没了。
     return scene or place or "日常"
 
 
