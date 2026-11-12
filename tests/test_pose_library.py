@@ -45,10 +45,10 @@ class SeedTests(unittest.TestCase):
         library = make_library()
         snapshot = library.snapshot()
         self.assertEqual(snapshot["count"], len(SEED_POSES))
-        self.assertGreaterEqual(snapshot["count"], 20)
+        self.assertEqual(snapshot["count"], 9)
         names = [pose["name"] for pose in snapshot["poses"]]
-        self.assertIn("托腮", names)
-        self.assertIn("比耶", names)
+        self.assertIn("手放腿上坐正", names)
+        self.assertIn("单手撑床", names)
         self.assertEqual(snapshot["with_ref"], 0)
 
     def test_seed_is_stable_across_reloads(self):
@@ -82,10 +82,33 @@ class EditTests(unittest.TestCase):
     def test_add_rejects_empty_and_duplicate(self):
         library = make_library()
         self.assertFalse(library.add("")["ok"])
-        self.assertFalse(library.add("托腮")["ok"])
+        self.assertFalse(library.add("手放腿上坐正")["ok"])
+
+    def test_delete_removes_reference_image(self):
+        library = make_library()
+        pose = library.snapshot()["poses"][0]
+        path = library.ref_path(pose)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as handle:
+            handle.write(b"\x89PNG\r\n\x1a\n")
+        self.assertTrue(library.delete(pose["id"])["ok"])
+        self.assertFalse(os.path.isfile(path))
+
+    def test_save_all_removes_dropped_pose_refs(self):
+        library = make_library()
+        poses = library.snapshot()["poses"]
+        dropped = poses[0]
+        path = library.ref_path(dropped)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as handle:
+            handle.write(b"\x89PNG\r\n\x1a\n")
+        kept = [{"name": pose["name"], "note": pose["note"]} for pose in poses[1:]]
+        self.assertTrue(library.save_all(kept)["ok"])
+        self.assertFalse(os.path.isfile(path))
 
     def test_delete_unknown_id(self):
         self.assertFalse(make_library().delete("nope")["ok"])
+
 
     def test_save_all_replaces_and_dedupes(self):
         library = make_library()
@@ -149,13 +172,13 @@ class RandomAndRefTests(unittest.TestCase):
         plugin = FakePlugin(root)
         legacy = os.path.join(root, "plugin_data", "Astrbot_Amo_forever", "pose_refs")
         os.makedirs(legacy, exist_ok=True)
-        with open(os.path.join(legacy, "托腮.png"), "wb") as handle:
+        with open(os.path.join(legacy, "手放腿上坐正.png"), "wb") as handle:
             handle.write(b"\x89PNG\r\n\x1a\n")
         library = PoseLibrary(plugin)
-        target = os.path.join(library.ref_dir, "托腮.png")
+        target = os.path.join(library.ref_dir, "手放腿上坐正.png")
         self.assertTrue(os.path.isfile(target))
-        self.assertFalse(os.path.isfile(os.path.join(legacy, "托腮.png")))
-        pose = [p for p in library.snapshot()["poses"] if p["name"] == "托腮"][0]
+        self.assertFalse(os.path.isfile(os.path.join(legacy, "手放腿上坐正.png")))
+        pose = [p for p in library.snapshot()["poses"] if p["name"] == "手放腿上坐正"][0]
         self.assertTrue(pose["has_ref"])
 
     def test_pending_poses(self):

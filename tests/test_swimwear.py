@@ -160,6 +160,18 @@ class SwimWearTests(unittest.TestCase):
         day_names = [item["name"] for cat in data["categories"] for item in cat["items"]]
         self.assertNotIn("橙色波点泳衣上衣", day_names)
 
+    def test_delete_swim_item_removes_ref_image(self):
+        wardrobe, _ = make_wardrobe()
+        data = wardrobe.snapshot()
+        top = data["swim_categories"][1]["items"][0]
+        item = {"category": "top", "name": top["name"], "swim": True}
+        ref = outfit_refs.item_ref_path(wardrobe.plugin, item)
+        os.makedirs(os.path.dirname(ref), exist_ok=True)
+        with open(ref, "wb") as handle:
+            handle.write(b"\x89PNG\r\n\x1a\n")
+        self.assertTrue(wardrobe.delete_item(top["id"])["ok"])
+        self.assertFalse(os.path.isfile(ref))
+
 
 class SwimRefTests(unittest.TestCase):
     def test_scope_folder_is_swim(self):

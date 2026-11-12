@@ -23,6 +23,14 @@ import uuid
 
 from astrbot.api import logger
 
+try:  # 删衣服时把它那张参考图也删掉
+    from .outfit_refs import item_ref_path as _item_ref_path
+except Exception:  # pragma: no cover - 直接按文件加载时
+    try:
+        from outfit_refs import item_ref_path as _item_ref_path
+    except Exception:
+        _item_ref_path = None
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
@@ -1529,6 +1537,15 @@ class Wardrobe:
             data["items"] = [item for item in data["items"] if item.get("id") != item_id]
             if len(data["items"]) == before:
                 return {"ok": False, "msg": "没找到这件衣服"}
+            # 衣服删了，它的参考图也一起删掉（只删这件自己那张，不动同名不同分类的）
+            if deleted and _item_ref_path is not None:
+                try:
+                    ref = _item_ref_path(self.plugin, deleted[0])
+                    if ref and os.path.isfile(ref):
+                        os.remove(ref)
+                        logger.info("[amo] 服装参考图已删除：%s" % ref)
+                except Exception as _amo_exc:
+                    _note_swallowed("wardrobe.Wardrobe.delete_item.ref", _amo_exc)
             gone = [outfit["id"] for outfit in data["outfits"]
                     if item_id in (outfit.get("coat"), outfit.get("top"),
                                    outfit.get("bottom"), outfit.get("skirt"),

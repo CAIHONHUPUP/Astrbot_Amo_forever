@@ -151,9 +151,10 @@ class ApiReadTests(unittest.TestCase):
 
     def test_poses_panel_shape(self):
         data = self._call("api_poses")["data"]
-        self.assertGreaterEqual(data.get("count"), 20)
+        self.assertEqual(data.get("count"), 9)
         names = [pose["name"] for pose in data.get("poses") or []]
-        self.assertIn("托腮", names)
+        self.assertIn("手放腿上坐正", names)
+        self.assertIn("双脚交叉坐", names)
         self.assertIn("with_ref", data)
 
     def test_schedule_returns_hourly_items(self):

@@ -45,35 +45,26 @@ MAX_POSES = 60
 _SAFE_RE = re.compile(r'[\\/:*?"<>|\r\n]+')
 
 #: 内置姿势：(名字, 画面描述)。描述会直接进自拍提示词，写得越具体越不容易走形。
+#: 2026-11-12 用户指定：只保留这 9 个（对着参考图里的 9 个姿势）。
 SEED_POSES = (
-    ("比耶", "一只手在脸颊旁边比耶，笑眼看镜头"),
-    ("托腮", "单手托腮，手指轻贴脸颊，笑着看镜头"),
-    ("撩头发", "一只手把耳侧的头发撩到耳后"),
-    ("歪头笑", "头微微歪向一侧，笑眼弯弯"),
-    ("抿嘴笑", "抿着嘴微笑，眼睛看着镜头"),
-    ("眯眼笑", "笑到眯起眼睛，很放松"),
-    ("嘟嘴", "微微嘟嘴，脸颊有点鼓"),
-    ("咬唇", "轻轻咬一下下唇，有点害羞"),
-    ("回眸", "侧过身再回头看向镜头"),
-    ("侧脸", "脸转向一侧，露出侧脸轮廓"),
-    ("低头看镜头", "微微低头、抬眼看镜头"),
-    ("手机挡半张脸", "把手机举高挡住半张脸，只露出眼睛和额头"),
-    ("单手撑脸", "手肘撑着桌面，手掌撑着脸颊"),
-    ("靠墙", "侧身靠在墙上，头轻轻贴着墙面"),
-    ("抱膝坐", "抱着膝盖坐在地上，抬眼看镜头"),
-    ("趴桌", "趴在桌上，脸贴着胳膊看镜头"),
-    ("伸懒腰", "举起双手伸懒腰，闭着眼笑"),
-    ("整理头发", "手指穿过头发，眼神看向镜头"),
-    ("喝奶茶", "吸管放在嘴边，眼睛看镜头"),
-    ("抱着花", "怀里抱着花束，脸凑近花瓣"),
-    ("抱枕头", "把枕头抱在胸前，下巴轻轻搭上去"),
-    ("戴耳机", "一只耳机戴上，手指碰着耳罩"),
-    ("眨眼", "对镜头眨一只眼，嘴角带笑"),
-    ("比心", "单手在胸前比心"),
-    ("探头", "从画面一侧探出半个身子"),
-    ("抬手挡阳光", "手掌放在额头前挡光，眯着眼笑"),
+    ("手放腿上坐正", "坐在床上，双腿并拢弯在身前，两只手放在腿上，背挺直，正对镜头"),
+    ("背对抬腿", "背对镜头趴坐着，一条腿向后高高抬起，扭头回头看镜头"),
+    ("跪姿翘臀叉腰", "单膝跪在床上，腰往下压、臀部微微翘起，一只手叉腰，另一只手拿手机自拍"),
+    ("蹲坐手叉腰", "蹲坐在床上，双腿收在身前，一只手叉腰，另一只手举手机自拍"),
+    ("跪坐背挺直", "跪坐在床上，背挺直，一只手撑在腿边，另一只手举手机自拍"),
+    ("正坐看手机", "正坐在床上，双腿并拢，低头看着手机屏幕"),
+    ("背坐看镜头", "背对镜头坐着，扭过头从肩膀上方看向镜头"),
+    ("双脚交叉坐", "坐在床上，双腿交叉，一只手撑在身侧，另一只手举手机自拍"),
+    ("单手撑床", "侧坐在床上，一只手撑在身后的床面，身体微微后仰，另一只手举手机自拍"),
 )
 
+#: 旧种子（2026-11-12 之前那批）；升级时从库里删掉，同时删掉它们的参考图
+OLD_SEED_NAMES = (
+    "比耶", "托腮", "撩头发", "歪头笑", "抿嘴笑", "眯眼笑", "嘟嘴", "咬唇", "回眸",
+    "侧脸", "低头看镜头", "手机挡半张脸", "单手撑脸", "靠墙", "抱膝坐", "趴桌",
+    "伸懒腰", "整理头发", "喝奶茶", "抱着花", "抱枕头", "戴耳机", "眨眼", "比心",
+    "探头", "抬手挡阳光",
+)
 
 def safe_name(name):
     text = _SAFE_RE.sub("_", str(name or "").strip())
@@ -90,7 +81,7 @@ def _new_id():
 
 class PoseLibrary:
     VERSION = 1
-    SEED_VERSION = 1
+    SEED_VERSION = 2
 
     def __init__(self, plugin):
         self.plugin = plugin
@@ -164,7 +155,20 @@ class PoseLibrary:
             return data
 
     def _merge_seed(self, data):
-        existing = {str(p.get("name") or "").strip() for p in data.get("poses") or []}
+        """升级种子：删掉旧种子（连同参考图），补上新的这 9 个姿势。"""
+        keep = {name for name, _ in SEED_POSES}
+        kept = []
+        removed = []
+        for pose in data.get("poses") or []:
+            name = str(pose.get("name") or "").strip()
+            if name in OLD_SEED_NAMES and name not in keep:
+                removed.append(pose)
+                continue
+            kept.append(pose)
+        data["poses"] = kept
+        for pose in removed:
+            self._remove_ref(pose)
+        existing = {str(p.get("name") or "").strip() for p in kept}
         for name, note in SEED_POSES:
             if name in existing:
                 continue
@@ -172,6 +176,18 @@ class PoseLibrary:
                 "id": _new_id(), "name": name, "note": note, "created_at": _now_ts(),
             })
         return data
+
+    def _remove_ref(self, pose):
+        """删除某个姿势的参考图（删姿势时一起删掉，别留孤儿文件）。"""
+        try:
+            path = self.ref_path(pose)
+            if os.path.isfile(path):
+                os.remove(path)
+                logger.info("[amo] 姿势参考图已删除：%s" % path)
+                return True
+        except Exception as exc:
+            logger.warning("[amo] 姿势参考图删除失败: %s" % exc)
+        return False
 
     def _save(self, data=None):
         data = data if isinstance(data, dict) else self._load()
@@ -253,12 +269,16 @@ class PoseLibrary:
         with self._lock:
             data = self._load()
             poses = list(data.get("poses") or [])
+            gone = [p for p in poses if str(p.get("id") or "") == pose_id]
             keep = [p for p in poses if str(p.get("id") or "") != pose_id]
             if len(keep) == len(poses):
                 return {"ok": False, "msg": "没找到这个姿势"}
             data["poses"] = keep
             if not self._save(data):
                 return {"ok": False, "msg": "保存失败，看日志"}
+            # 姿势删了，参考图也一起删掉
+            for pose in gone:
+                self._remove_ref(pose)
             return {"ok": True, "msg": "已删除"}
 
     def save_all(self, items):
@@ -296,6 +316,11 @@ class PoseLibrary:
             data["poses"] = poses
             if not self._save(data):
                 return {"ok": False, "msg": "保存失败，看日志"}
+            # 被删掉的姿势，参考图一起清掉
+            keep = {pose["name"] for pose in poses}
+            for name, pose in old.items():
+                if name not in keep:
+                    self._remove_ref(pose)
             return {"ok": True, "msg": "已保存 %d 个姿势" % len(poses)}
 
 
