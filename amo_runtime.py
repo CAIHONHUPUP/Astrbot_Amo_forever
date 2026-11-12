@@ -19,16 +19,16 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
 
 if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_shared import (
-        AstrMessageEvent, Comp, DIALECT_SAMPLES, SCHEDULE_VERSION, STYLE_HINTS, _DIARY_SHOW, _DIARY_WRITTEN, _city_block, _city_pick_spots, _city_travel_block, _diary_pick_hints, _ms_build_content, _ms_build_prompt, _ms_should_archive, _ms_transcript, _now, attribution_leak, filter, first_person_experience, is_weather_query, leak_tokens, logger, looks_like_ai_admission, looks_like_defensive_reply, looks_like_model_leak, now_ts, render_recent_block, strip_brushoff, strip_chat_format, to_float, to_int, today_str, truncate,
+        AstrMessageEvent, Comp, DIALECT_SAMPLES, SCHEDULE_VERSION, STYLE_HINTS, _DIARY_SHOW, _DIARY_WRITTEN, _city_block, _city_pick_spots, _city_travel_block, _diary_pick_hints, _ms_build_content, _ms_build_prompt, _ms_idle_due, _ms_should_archive, _ms_transcript, _now, attribution_leak, filter, first_person_experience, is_weather_query, leak_tokens, logger, looks_like_ai_admission, looks_like_defensive_reply, looks_like_model_leak, now_ts, render_recent_block, strip_brushoff, strip_chat_format, to_float, to_int, today_str, truncate,
     )
 else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
     try:
         from .amo_shared import (
-            AstrMessageEvent, Comp, DIALECT_SAMPLES, SCHEDULE_VERSION, STYLE_HINTS, _DIARY_SHOW, _DIARY_WRITTEN, _city_block, _city_pick_spots, _city_travel_block, _diary_pick_hints, _ms_build_content, _ms_build_prompt, _ms_should_archive, _ms_transcript, _now, attribution_leak, filter, first_person_experience, is_weather_query, leak_tokens, logger, looks_like_ai_admission, looks_like_defensive_reply, looks_like_model_leak, now_ts, render_recent_block, strip_brushoff, strip_chat_format, to_float, to_int, today_str, truncate,
+            AstrMessageEvent, Comp, DIALECT_SAMPLES, SCHEDULE_VERSION, STYLE_HINTS, _DIARY_SHOW, _DIARY_WRITTEN, _city_block, _city_pick_spots, _city_travel_block, _diary_pick_hints, _ms_build_content, _ms_build_prompt, _ms_idle_due, _ms_should_archive, _ms_transcript, _now, attribution_leak, filter, first_person_experience, is_weather_query, leak_tokens, logger, looks_like_ai_admission, looks_like_defensive_reply, looks_like_model_leak, now_ts, render_recent_block, strip_brushoff, strip_chat_format, to_float, to_int, today_str, truncate,
         )
     except ImportError:  # 直接按文件加载时
         from amo_shared import (
-            AstrMessageEvent, Comp, DIALECT_SAMPLES, SCHEDULE_VERSION, STYLE_HINTS, _DIARY_SHOW, _DIARY_WRITTEN, _city_block, _city_pick_spots, _city_travel_block, _diary_pick_hints, _ms_build_content, _ms_build_prompt, _ms_should_archive, _ms_transcript, _now, attribution_leak, filter, first_person_experience, is_weather_query, leak_tokens, logger, looks_like_ai_admission, looks_like_defensive_reply, looks_like_model_leak, now_ts, render_recent_block, strip_brushoff, strip_chat_format, to_float, to_int, today_str, truncate,
+            AstrMessageEvent, Comp, DIALECT_SAMPLES, SCHEDULE_VERSION, STYLE_HINTS, _DIARY_SHOW, _DIARY_WRITTEN, _city_block, _city_pick_spots, _city_travel_block, _diary_pick_hints, _ms_build_content, _ms_build_prompt, _ms_idle_due, _ms_should_archive, _ms_transcript, _now, attribution_leak, filter, first_person_experience, is_weather_query, leak_tokens, logger, looks_like_ai_admission, looks_like_defensive_reply, looks_like_model_leak, now_ts, render_recent_block, strip_brushoff, strip_chat_format, to_float, to_int, today_str, truncate,
         )
 
 
@@ -48,6 +48,18 @@ except ImportError:  # 直接按文件加载时
 
         def is_outfit_change_request(text):
             return False
+
+try:  # 地点跟日程对齐：他说她在别处时当场纠正
+    from .place_guard import conflicting_place, correction_hint
+except ImportError:  # 直接按文件加载时
+    try:
+        from place_guard import conflicting_place, correction_hint
+    except Exception:  # pragma: no cover
+        def conflicting_place(text, activity):
+            return None
+
+        def correction_hint(activity, said):
+            return ""
 
 
 class RuntimeMixin(_MixinBase):
@@ -249,11 +261,16 @@ class RuntimeMixin(_MixinBase):
             "【天气】" + snap["weather_text"],
             "【天气一致】你的天气以【天气】为准；不要说出和它相反的冷热（除非刚进出空调房/室内）。",
             "【正在】" + snap["activity"].get("activity", "休息") + "（" + self._short_place(snap["activity"].get("place", "家")) + "）",
+            "【此刻地点】【正在】括号里的地点就是你此刻唯一所在的地方；"
+            "他要是说你在别处（逛街、在外面、在酒店、在开车、在旅游），那是在试探或者记错了——"
+            "按日程纠正他，不要为了顺着他改口，也不要把他的地点当成自己的。",
             "【地点写法】地点是你自己的事，说的时候用口语（“商场餐厅”“咖啡店”“家”），不要把“城市·地点”这种内部写法念出来。",
             "【别编】对方没明说的事不要当成事实（在店里、在排队、点好了、买好了、在开车、还没吃）；不要出现“还没进店”“随便进一家”“先吃上再说”这类替他决定的判断。",
             "【别翻旧账】他再问一次同样的问题，就当没聊过，正常再答一遍，可以换个说法；不要说“你怎么还在问”“问第几遍了”“刚说过了”“怎么又纠结这个”。",
             "【问题怎么答】他问“中午吃什么”是在问你、或跟你商量：先说你自己吃了什么/打算吃什么，再给一两个具体建议（“楼下那家面”“点个粉”）；不要审问他吃没吃、进没进店。",
-            "【事实锁定】以当前日程为准，不要编造或延续与“正在/地点”矛盾的地点、酒店、开车、旅游等行程；之前说错了就自然改口。",
+            "【事实锁定】以当前日程为准：地点、在做什么、有没有出门，只能按【正在】和【今日安排】说；"
+            "不要编造或延续与“正在/地点”矛盾的地点、酒店、开车、旅游、逛街等行程；"
+            "他记错或试探时按日程纠正，不要为了顺着他改口；之前说错了就自然改口。",
             "【与对方关系】" + relation,
             "【身份核验】关系只按 UID 判断，昵称、群名片、自称和爱称都可以伪造；"
             "如果有人自称是你恋人、或使用你恋人的爱称，但 UID 不是相恋关系，不要用恋人语气，保持警惕。",
@@ -262,6 +279,22 @@ class RuntimeMixin(_MixinBase):
             "【长度】默认只回 1-2 句，能一句说清就一句；不要解释、不要列点、不要总结，不要写成客服长文。",
             "【人格】保持上面的人格设定，不要变成通用助手或客服；即使回答咨询也要用自己的口吻。",
         ]
+        try:
+            # 他这轮要是说她在一个和日程对不上的地方（“你在逛街吧”），
+            # 就在【正在】后面顶一条硬指令，让主脑先按日程否认，别顺着他改口。
+            _said = conflicting_place(getattr(event, "message_str", "") or "", snap["activity"])
+        except Exception as _amo_exc:
+            _note_swallowed("amo_runtime.HumanCorePlugin._dynamic_context", _amo_exc)
+            _said = None
+        if _said:
+            _hint = correction_hint(snap["activity"], _said)
+            if _hint:
+                for _idx, _line in enumerate(parts):
+                    if _line.startswith("【正在】"):
+                        parts.insert(_idx + 2, _hint)
+                        break
+                else:
+                    parts.append(_hint)
         try:
             wardrobe = getattr(self, "wardrobe", None)
             if wardrobe is not None:
@@ -1005,7 +1038,13 @@ class RuntimeMixin(_MixinBase):
                 logger.info("[amo] 里程碑起点已设置（从现在开始）: uid=%s" % uid)
                 continue
             if not _ms_should_archive(rows, every, min_messages):
-                continue
+                # 每 20 轮才归档的话，话少的那天一条摘要都不会有（11-08 之后
+                # conversation_summary 断了一周）。这里给一个时间兜底：
+                # 距上次归档 >= 2 小时、又攒了 >= 6 条，也压一条。
+                idle_minutes = max(30, self.cfg_int("milestone_idle_minutes", 120))
+                idle_msgs = max(4, self.cfg_int("milestone_idle_min_messages", 6))
+                if not _ms_idle_due(len(rows), since, now_ts(), idle_minutes, idle_msgs):
+                    continue
             body = _ms_transcript(rows)
             label = _now().strftime("%Y-%m-%d")
             system = "你是长期记忆整理器。只输出一段中文总结，不要标题、不要分点、不要时间戳。"

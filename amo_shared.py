@@ -294,6 +294,7 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
 if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .milestone import (
         should_archive as _ms_should_archive,
+        idle_archive_due as _ms_idle_due,
         transcript as _ms_transcript,
         build_prompt as _ms_build_prompt,
         build_content as _ms_build_content,
@@ -302,6 +303,7 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
     try:
         from .milestone import (
             should_archive as _ms_should_archive,
+            idle_archive_due as _ms_idle_due,
             transcript as _ms_transcript,
             build_prompt as _ms_build_prompt,
             build_content as _ms_build_content,
@@ -310,12 +312,16 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
         try:
             from milestone import (
                 should_archive as _ms_should_archive,
+                idle_archive_due as _ms_idle_due,
                 transcript as _ms_transcript,
                 build_prompt as _ms_build_prompt,
                 build_content as _ms_build_content,
             )
         except Exception:
             def _ms_should_archive(*args, **kwargs):
+                return False
+
+            def _ms_idle_due(*args, **kwargs):
                 return False
 
             def _ms_transcript(*args, **kwargs):

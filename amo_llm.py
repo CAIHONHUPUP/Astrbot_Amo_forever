@@ -266,7 +266,9 @@ class LlmMixin(_MixinBase):
             "【引用规则】引用内容可能来自别人，引用头是谁就按谁算；不要把别人的话当成自己说过的。",
             "【世界观】\n" + world,
             "【此刻状态】\n" + state_text,
-            "【事实锁定】以当前日程为准，不要编造或延续与“正在/地点”矛盾的地点、酒店、开车、旅游等行程；之前说错了就自然改口。",
+            "【事实锁定】以当前日程为准：地点、在做什么、有没有出门，只能按【此刻状态】说；"
+            "不要编造或延续与“正在/地点”矛盾的地点、酒店、开车、旅游、逛街等行程；"
+            "他记错或试探时按日程纠正，不要为了顺着他改口；之前说错了就自然改口。",
             "【语气】" + tone + " " + style,
             "【关系】你和" + name + "的关系是「" + relation + "」。",
             "【聊天格式】不要把 @昵称、QQ号、群号、ID 或后台记录念出来；识人时只自然回应，不要复述。",
@@ -393,7 +395,7 @@ class LlmMixin(_MixinBase):
                 persona=persona, style=style, consult=consult,
             )
             reply = self._trim_reply(reply)
-            reply = self._guard_self_location(reply, (snap.get("activity") or {}).get("place"))
+            reply = self._guard_self_location(reply, snap.get("activity") or {})
         return reply
 
     def _remember_sent_reply(self, event, text):

@@ -103,13 +103,27 @@ try:  # 视角后缀：她出镜=自拍视角，她拍环境=她的拍摄视角�
 except ImportError:  # 直接按文件加载时
     from photo_view import SCENERY_ONLY, VIEW_POV, VIEW_SELFIE
 
+try:  # 场景：日程地点 → 背景（在家=家里、逛街=商场、旅游=景区）
+    from .photo_scene import (
+        OUTFIT_CATEGORY,
+        SHOPPING_WORDS,
+        TRAVEL_WORDS,
+        matches_kind,
+        scene_for,
+    )
+except ImportError:  # 直接按文件加载时
+    from photo_scene import (
+        OUTFIT_CATEGORY,
+        SHOPPING_WORDS,
+        TRAVEL_WORDS,
+        matches_kind,
+        scene_for,
+    )
+
 # 生图可能卡住/返回超大图：都设上限，别把事件循环和数据库拖死
 GENERATE_TIMEOUT_SECONDS = 180
 _MAX_IMAGE_BYTES = 16 * 1024 * 1024
 
-TRAVEL_WORDS = ("旅游", "旅行", "景区", "景点", "古镇", "海边", "爬山", "公园", "游乐园")
-SHOPPING_WORDS = ("逛街", "商场", "专柜", "步行街")
-OUTFIT_CATEGORY = ("commute", "work")
 
 # 同一天所有自拍都用同一套穿搭；按日期稳定挑选，换场景也不换衣服
 OUTFIT_POOL = (
@@ -295,10 +309,13 @@ class PhotoEngine:
         scenic = zone == "scenic" or any(word in blob for word in TRAVEL_WORDS)
         mall = zone == "mall" or any(word in blob for word in SHOPPING_WORDS)
         if scenic:
-            out.append(("travel", "%s·%s" % (place, act) if place else act,
-                        self._prob("photo_travel_prob", 60), "travel:" + (place or act)))
+            # scene 留空：真正的地点由 scene_for(activity) 从日程里取，
+            # 以前拼的「地点·活动」会把「逛景区：看猴子」这种动作塞进空镜
+            out.append(("travel", "", self._prob("photo_travel_prob", 60),
+                        "travel:" + (place or act)))
         elif mall:
-            out.append(("shopping", place or act, self._prob("photo_shopping_prob", 40), "shopping:" + (place or act)))
+            out.append(("shopping", "", self._prob("photo_shopping_prob", 40),
+                        "shopping:" + (place or act)))
 
         if weekday >= 5 and 10 * 60 <= minutes <= 20 * 60:
             out.append(("weekend", "", self._prob("photo_weekend_prob", 50), "weekend"))
@@ -498,36 +515,35 @@ class PhotoEngine:
         以前这里会把「她在做什么」原样拼进去（比如「边对边打哈欠」），
         那句话要求画面里有个人，和「不出现她」打架，模型只能自己现编一张脸
         —— 2026-11-11 那批「长相画风全变」的照片就是这么来的。
+
+        地点统一走 ``scene_for()``：日程说在家就出家里的陈设，说逛街就出商场，
+        旅游就出景区（带景点名），不再拿「他桌面上」这种词去糊。
         """
         prefix = self._cfg_str("photo_prompt_prefix", "手机随手拍，真实自然，生活感，")
-        place = self._clean_place(activity.get("place"))
-        act = str(activity.get("activity") or "")
+        activity = dict(activity or {})
+        where = str(scene or "").strip() or scene_for(activity, kind)
         if kind == "travel":
-            head = prefix + (scene or act or "风景区") + "，风景照"
+            head = prefix + (where or "风景区") + "，风景照，背景就是这个地点"
         elif kind == "shopping":
-            head = prefix + (scene or "商场街边") + "，街景，生活感"
+            head = prefix + (where or "商场街边") + "，街景，生活感，背景就是这个地点"
         elif kind == "weekend":
-            head = prefix + (act or "周末出门走走") + "，街景，生活感"
+            head = prefix + (where or "周末出门走走") + "，街景，生活感，背景就是这个地点"
         elif kind == "outfit":
             # 自拍失败时的兜底：没有参考图就别硬画脸，只拍今天这套衣服
-            head = prefix + "%s，%s的衣服细节，生活感" % (place or "家门口", self.outfit_today())
+            head = prefix + "%s，%s的衣服细节，生活感" % (where or "家门口", self.outfit_today())
         else:
             # 日常：只留地点，不带「她在做什么」（否则和空镜打架）
-            head = prefix + (place or "日常") + "，生活空镜，生活感"
+            head = prefix + (where or "日常") + "，生活空镜，生活感，背景就是这个地点"
         light = self._time_light() if hasattr(self, "_time_light") else "自然光"
         # 她拍的空镜里她本人不出镜，但最多露出的手/袖口仍要跟今天的穿搭一致
         outfit_line = "她今天穿的是%s，画面边缘露出的手或袖口必须和这套一致" % self.outfit_today()
         return (head + "，" + light + "，" + outfit_line + "，" + SCENERY_ONLY + "，" + VIEW_POV).strip("，")
 
     def _selfie_prompt_for(self, kind, scene, activity):
-        place = self._clean_place(activity.get("place"))
+        activity = dict(activity or {})
+        # 地点跟着日程走：在家=家里的客厅/卧室，逛街=商场，旅游=景区（带景点名）
+        where = str(scene or "").strip() or scene_for(activity, kind)
         act = str(activity.get("activity") or "")
-        if kind == "travel":
-            where = scene or place or "景点"
-        elif kind == "shopping":
-            where = scene or place or "商场"
-        else:
-            where = place or "家附近"
         # 视角：她本人出镜 → 自拍视角（前置摄像头、手臂伸出、人物占主体）
         light = self._time_light() if hasattr(self, "_time_light") else "自然光"
         # 自拍最容易出的问题是两只手都入镜、手腕错位；动作里要用手时也让另一只手自然放好
@@ -536,8 +552,9 @@ class PhotoEngine:
                                         "打字", "梳")):
             act = "刚换好衣服，随手拍"
         hand_line = "只有一只手举手机，另一只手自然垂下、不要出现在镜头前，不要多手或手腕错位"
-        return "自拍，穿着%s，衣服就这一套、不要换成别的，在%s，%s，%s，%s，生活感，%s" % (
-            self.outfit_today(), where, act or "随手拍", hand_line, light, VIEW_SELFIE
+        where_line = "在%s，背景要能看出这个地方、不要换成别的场景" % (where or "家附近")
+        return "自拍，穿着%s，衣服就这一套、不要换成别的，%s，%s，%s，%s，生活感，%s" % (
+            self.outfit_today(), where_line, act or "随手拍", hand_line, light, VIEW_SELFIE
         )
 
     def _find_omni(self):
@@ -702,18 +719,19 @@ class PhotoEngine:
         return True
 
     @staticmethod
-    def _scene_for_kind(kind, place=""):
-        """测试/手动发图时按类别给明确场景，避免“旅游”沿用当前在家的地点。"""
+    def _scene_for_kind(kind, place="", activity=None):
+        """测试/手动发图时按类别给明确场景，避免“旅游”沿用当前在家的地点。
+
+        自动发照片那条链路不传 ``scene``，地点完全由日程决定；这里是面板
+        「发一张旅游照/逛街照」用的：类别和当前日程对不上时，给该类别的固定场景。
+        """
         kind = str(kind or "daily")
-        if kind == "travel":
-            return "户外风景区/旅游景点，有天空、远景和游客"
-        if kind == "shopping":
-            return "商场街边/商业街，有店铺招牌、路人和街道"
-        if kind == "weekend":
-            return "周末街头/公园，有散步的人和绿化"
-        if kind == "outfit":
-            return str(place or "家里")
-        return str(place or "日常")
+        data = dict(activity) if isinstance(activity, dict) else {}
+        if place and not data.get("place"):
+            data["place"] = place
+        if kind in ("travel", "shopping", "weekend") and not matches_kind(kind, data):
+            return scene_for({}, kind)
+        return scene_for(data, kind)
 
     async def share_now(self, kind="daily", umo=""):
         """面板「测试」/``/amo photo test``：无视概率，立刻按类别发一张。"""
@@ -726,7 +744,7 @@ class PhotoEngine:
             return "没有可发送的会话（先和他聊一句）。"
         activity = self._activity()
         kind = str(kind or "daily").strip() or "daily"
-        scene = self._scene_for_kind(kind, str(activity.get("place") or ""))
+        scene = self._scene_for_kind(kind, str(activity.get("place") or ""), activity)
         if self._cfg_bool("photo_dry_run", False):
             if kind == "outfit":
                 prompt = self._selfie_prompt_for(kind, scene, activity)
@@ -1080,17 +1098,15 @@ class PhotoEngine:
         return ""
 
     def _scene_place(self):
+        """日程里她现在这个地方（具体场景，比如「家里的客厅，沙发、抱枕和茶几」）。"""
         try:
             activity = self.plugin.state.current_activity() or {}
         except Exception:
             return ""
-        place = str(activity.get("place") or "").strip()
-        if "桌" in place or place.startswith(("他", "她")):
-            return "家里"
-        return place[:16]
+        return scene_for(activity)
 
     def smart_prompt(self, text):
-        """面板输入像「拍照给我看看」时，自动补上她最近说的地点 + 今天的穿搭。"""
+        """面板输入像「拍照给我看看」时，自动补上她此刻的地点 + 今天的穿搭。"""
         raw = str(text or "").strip()
         if not any(word in raw for word in PHOTO_INTENT_WORDS):
             return raw
@@ -1109,6 +1125,7 @@ class PhotoEngine:
             parts.append("穿着" + outfit)
         parts.append("在" + place)
         parts.extend([
+            "背景要能看出这个地方，不要换成别的场景",
             "自然光", "手机前置摄像头", "生活感",
             "人物长相参考模板，衣服锁定为上面的今日穿搭，不要换别的衣服，也不要照搬模板里的衣服",
         ])

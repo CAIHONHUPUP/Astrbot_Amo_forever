@@ -61,6 +61,23 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
             truncate,
         )
 
+try:  # 地点跟日程对齐：主动消息里说错地方也改回来
+    from .place_guard import rewrite_reply as _rewrite_place
+except ImportError:  # 直接按文件加载时
+    try:
+        from place_guard import rewrite_reply as _rewrite_place
+    except Exception:  # pragma: no cover
+        def _rewrite_place(text, activity):
+            return str(text or "")
+
+
+def _align_place(text, snap):
+    """主动消息里说的地方和日程对不上时，改回日程地点（兜底，正常不该触发）。"""
+    try:
+        return _rewrite_place(text, (snap or {}).get("activity") or {})
+    except Exception:  # pragma: no cover - 纯文本兜底，不该把主流程带崩
+        return str(text or "")
+
 
 class LLMService:
     def __init__(self, plugin):
@@ -358,6 +375,7 @@ class LLMService:
             return prompt
 
         text = await self.chat(umo, system, build_prompt(build_task()), limit=limit)
+        text = _align_place(text, snap)
         if _pg_near_duplicate is None or not self.p.cfg_bool("proactive_dedupe_enabled", True):
             return text
         threshold = self.p.cfg_float("proactive_dedupe_threshold", 0.62)
@@ -367,6 +385,7 @@ class LLMService:
         retry = await self.chat(
             umo, system, build_prompt(build_task(duplicate_hint=hit[0])), limit=limit,
         )
+        retry = _align_place(retry, snap)
         if retry and not _pg_near_duplicate(retry, analysis["recent_bot_texts"], threshold):
             return retry
         logger.info("[amo] 主动消息和最近的发言重复，跳过本次：%s" % str(text or retry or "")[:60])

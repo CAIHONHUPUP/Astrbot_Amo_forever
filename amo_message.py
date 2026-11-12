@@ -38,6 +38,15 @@ if TYPE_CHECKING:
 else:  # 运行时用 object：协议里的声明不能进 MRO，否则会挡掉别的 mixin 的真实实现
     _MixinBase = object
 
+try:  # 地点跟日程对齐：她嘴里说的地方和日程对不上时改回来
+    from .place_guard import rewrite_reply as _rewrite_reply
+except ImportError:  # 直接按文件加载时
+    try:
+        from place_guard import rewrite_reply as _rewrite_reply
+    except Exception:  # pragma: no cover
+        def _rewrite_reply(text, activity):
+            return str(text or "")
+
 
 class MessageMixin(_MixinBase):
     def _recent(self, umo, limit=10):
@@ -592,19 +601,13 @@ class MessageMixin(_MixinBase):
         return value or "家"
 
     def _guard_self_location(self, text, place):
+        """把她嘴里和日程对不上的地点改回来（日程说在上班，就不能说在逛街）。
+
+        ``place`` 既接受日程里那条活动（dict，带 zone/category），也接受老签名里的
+        地点字符串——只给地点时由 ``zone_of()`` 从地点名反推。
+        """
         value = str(text or "")
-        place = self._short_place(place)
-        if not value or not place:
+        if not value:
             return value
-        if place in ("家", "家里"):
-            value = re.sub(
-                r"我(?:刚|正|一直|还|才)?(?:在|回|去|到)(?:酒店|咖啡店|景区|外面|路上)",
-                "我在家", value,
-            )
-            value = re.sub(r"(?:酒店|咖啡店|景区)", "家", value)
-        else:
-            value = re.sub(
-                r"我(?:刚|正|一直|还|才)?(?:窝)?在(?:家|家里)",
-                "我在" + place, value,
-            )
-        return value
+        activity = place if isinstance(place, dict) else {"place": place}
+        return _rewrite_reply(value, activity)

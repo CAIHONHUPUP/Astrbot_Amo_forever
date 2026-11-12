@@ -92,6 +92,11 @@ try:  # 视角后缀：她出镜=自拍视角，她拍环境=她的拍摄视角�
 except ImportError:  # 直接按文件加载时
     from photo_view import SCENERY_ONLY, looks_like_her, view_suffix
 
+try:  # 场景：日程地点 → 背景（在家=家里、逛街=商场、旅游=景区）
+    from .photo_scene import has_place_hint, scene_for
+except ImportError:  # 直接按文件加载时
+    from photo_scene import has_place_hint, scene_for
+
 # 生图可能卡死；最多等 3 分钟就放弃这一次
 GENERATE_TIMEOUT_SECONDS = 180
 # data_url 是 base64，超过这个长度就不进 kv（否则数据库会被撑大）
@@ -355,30 +360,30 @@ class DrawEngine:
                 best = text
         return best
 
-    def _place_text(self):
+    def _activity(self):
+        """她此刻在日程里那条（拿不到就空 dict）。"""
         try:
-            activity = self.plugin.state.current_activity() or {}
-            return "%s %s" % (activity.get("place") or "", activity.get("activity") or "")
+            return self.plugin.state.current_activity() or {}
         except Exception as _amo_exc:
-            _note_swallowed("draw_engine.DrawEngine._place_text", _amo_exc)
-            return ""
+            _note_swallowed("draw_engine.DrawEngine._activity", _amo_exc)
+            return {}
+
+    def _place_text(self):
+        activity = self._activity()
+        return "%s %s" % (activity.get("place") or "", activity.get("activity") or "")
 
     @staticmethod
     def _clean_place(place):
         return clean_place(place)
 
     def _current_scene(self):
-        """她此刻真实在哪、在干嘛（来自日程）。"""
-        try:
-            activity = self.plugin.state.current_activity() or {}
-        except Exception as _amo_exc:
-            _note_swallowed("draw_engine.DrawEngine._current_scene", _amo_exc)
-            return ""
-        place = self._clean_place(activity.get("place"))
+        """她此刻真实在哪、在干嘛（来自日程），地点换成一整句具体场景。"""
+        activity = self._activity()
+        where = scene_for(activity)
         act = str(activity.get("activity") or "").strip()
-        if place and act:
-            return "%s，%s" % (place, act)
-        return place or act
+        if act and act not in where:
+            return "%s，%s" % (where, act) if where else act
+        return where or act
 
     def _scene_keywords(self, text):
         text = str(text or "")
@@ -553,6 +558,11 @@ class DrawEngine:
                 parts.append("穿着" + outfit)
             if subject and subject != "自拍":
                 parts.append(subject)
+            if not has_place_hint(subject):
+                # 「发张自拍」没说在哪：背景就用她此刻日程里的地点
+                where = scene_for(self._activity())
+                if where:
+                    parts.append("在" + where + "，背景要能看出这个地方、不要换成别的场景")
             parts.extend(["自然光", view_suffix(True), "生活感"])
             if locked_today:
                 parts.append("人物长相参考模板，衣服锁定为上面的今日穿搭，不要换别的衣服，也不要照搬模板里的衣服")

@@ -261,6 +261,12 @@ class RecallContextMixin(_MixinBase):
             # 老记忆里常有"今天/昨晚/刚才"这种相对说法：注入时补一个记录日期，
             # 免得她把 11-04 的事当成"昨晚"（用户反馈过一次）。
             body = str(item.get("content", ""))
+            # 单条记忆先截断：一条 4000 字摘要会吃光 1200 字注入预算，
+            # 后面的记忆一条都进不去（线上实测过，3 条长摘要召回次数全库最高）。
+            item_cap = self.cfg_int("memory_item_max_chars", 240)
+            item_cap = 0 if item_cap <= 0 else max(60, min(1000, item_cap))
+            if item_cap and len(body) > item_cap:
+                body = body[:item_cap].rstrip() + "…"
             rel_words = ("今天", "今晚", "昨天", "昨晚", "刚才", "刚刚", "前天", "这会儿", "这两天")
             created = to_int(item.get("created_at"))
             if created and any(w in body for w in rel_words):

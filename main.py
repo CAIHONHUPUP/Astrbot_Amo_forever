@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 
 
-PLUGIN_VERSION = "6.8.22"
+PLUGIN_VERSION = "6.8.24"
 
 if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
@@ -1062,7 +1062,7 @@ class HumanCorePlugin(MemoryMixin, CommandMixin, ConfigMixin, MessageMixin, Soci
         "【别编】": "【别编】对方没明说的（进店/点好/买好/在开车）不要替他当成事实。",
         "【别翻旧账】": "【别翻旧账】同一个问题再问就正常再答，不说“刚说过了/问几遍了”。",
         "【问题怎么答】": "【问题怎么答】问吃什么：先说你自己吃什么，再给一两个具体建议。",
-        "【事实锁定】": "【事实锁定】不编和地点矛盾的行程。",
+        "【事实锁定】": "【事实锁定】地点/在做什么/有没有出门以【正在】为准，不编和地点矛盾的行程；他记错或试探时按日程纠正，别顺着他改口。",
         "【聊天格式】": "【聊天格式】不要复述 @昵称、账号、群号、ID。",
         "【长度】": "【长度】默认 1-2 句，能一句说清就一句，不列点不总结。",
         "【人格】": "【人格】保持人格设定，不要变成客服或通用助手。",

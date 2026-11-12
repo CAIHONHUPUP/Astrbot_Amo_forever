@@ -266,6 +266,12 @@
     "description": "每次最多注入几条记忆",
     "default": 6
   },
+  "memory_item_max_chars": {
+    "type": "int",
+    "description": "【注入】单条记忆最多多少字",
+    "hint": "一条 4000 字的长摘要会吃光整块注入预算（默认 1200 字），后面的记忆一条都进不去；默认每条截到 240 字，超出用「…」收尾。",
+    "default": 240
+  },
   "memory_bridge_timeout_seconds": {
     "type": "float",
     "description": "外挂记忆插件检索超时（秒）",
@@ -1339,6 +1345,17 @@
     "type": "int",
     "description": "【里程碑】至少多少条消息才归档",
     "default": 12
+  },
+  "milestone_idle_minutes": {
+    "type": "int",
+    "description": "【里程碑】话少时的时间兜底（分钟）",
+    "hint": "不够 20 轮、但距上次归档超过这么久，又攒够下面的条数，也压一条；避免话少的那天一条摘要都没有。",
+    "default": 120
+  },
+  "milestone_idle_min_messages": {
+    "type": "int",
+    "description": "【里程碑】时间兜底至少多少条",
+    "default": 6
   },
   "diary_enabled": {
     "type": "bool",

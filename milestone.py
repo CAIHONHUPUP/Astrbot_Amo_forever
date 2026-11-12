@@ -50,6 +50,22 @@ def should_archive(messages: Iterable[Dict[str, Any]],
     return count_turns(rows) >= max(1, int(every_turns))
 
 
+def idle_archive_due(message_count: int, since_ts: int, now_ts: int,
+                     idle_minutes: int = 120, min_messages: int = 6) -> bool:
+    """长聊不够 20 轮时的兜底：隔了足够久、又攒了几条，也压一条。
+
+    只有「每 20 轮」一条触发的话，话少的那天会一条摘要都不产生（线上 11-08
+    之后 conversation_summary 断了一周，就是只有日报在兜）。这里给一个时间兜底：
+    距上次归档 >= idle_minutes 且新消息 >= min_messages 就归档，避免"聊了很多
+    但没到 20 轮"的日子什么都不留下。
+    """
+    if int(message_count or 0) < max(1, int(min_messages or 1)):
+        return False
+    if not int(since_ts or 0):
+        return False
+    return int(now_ts or 0) - int(since_ts) >= max(1, int(idle_minutes or 1)) * 60
+
+
 def build_prompt(date_label: str, body: str) -> str:
     return (
         "下面是" + str(date_label or "最近") + "这段时间的聊天记录（[他] 是主人，[我] 是你自己）。\n"
