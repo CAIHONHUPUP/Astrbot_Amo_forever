@@ -5,8 +5,8 @@
 面板「姿势库」可以加/删姿势、保存，并能逐张生成「姿势参考图」给生图当参考。
 
 数据：``plugin_data/Astrbot_Amo_forever/poses.json``
-参考图：``plugin_data/Astrbot_Amo_forever/pose_refs/<姿势名>.png``
-（和 outfit_refs 一样放在 plugin_data 里，备份时一起带走。）
+参考图：``plugin_data/Astrbot_Amo_forever/outfit_refs/姿势库/<姿势名>.png``
+（和衣服参考图放在一起，备份 plugin_data 时统一带走。）
 """
 
 from __future__ import annotations
@@ -37,7 +37,10 @@ except Exception:  # pragma: no cover
     except Exception:
         find_omni = None
 
-REF_DIR_NAME = "pose_refs"
+OUTFIT_REF_DIR_NAME = "outfit_refs"
+REF_DIR_NAME = "姿势库"
+#: 老版本把姿势图放在 plugin_data/pose_refs 下，启动时自动搬到 outfit_refs/姿势库
+LEGACY_REF_DIR_NAME = "pose_refs"
 MAX_POSES = 60
 _SAFE_RE = re.compile(r'[\\/:*?"<>|\r\n]+')
 
@@ -102,8 +105,34 @@ class PoseLibrary:
             base = str(getattr(plugin, "plugin_dir", "") or ".")
         self.base = base
         self.path = os.path.join(base, "poses.json")
-        self.ref_dir = os.path.join(base, REF_DIR_NAME)
+        # 姿势图跟衣服参考图放一起：outfit_refs/姿势库/<姿势名>.png
+        self.ref_dir = os.path.join(base, OUTFIT_REF_DIR_NAME, REF_DIR_NAME)
+        self.legacy_ref_dir = os.path.join(base, LEGACY_REF_DIR_NAME)
+        self._migrate_legacy_refs()
         logger.info("[amo] 姿势库已加载（%s）" % self.path)
+
+    def _migrate_legacy_refs(self):
+        """把旧版 plugin_data/pose_refs/*.png 搬进 outfit_refs/姿势库/（只搬一次）。"""
+        try:
+            if not os.path.isdir(self.legacy_ref_dir):
+                return
+            for name in os.listdir(self.legacy_ref_dir):
+                if not name.lower().endswith(".png"):
+                    continue
+                source = os.path.join(self.legacy_ref_dir, name)
+                target = os.path.join(self.ref_dir, name)
+                if not os.path.isfile(source) or os.path.isfile(target):
+                    continue
+                os.makedirs(self.ref_dir, exist_ok=True)
+                os.replace(source, target)
+                logger.info("[amo] 姿势参考图已搬到 outfit_refs/姿势库：%s" % name)
+            try:
+                if not os.listdir(self.legacy_ref_dir):
+                    os.rmdir(self.legacy_ref_dir)
+            except OSError:
+                pass
+        except Exception as exc:
+            logger.warning("[amo] 姿势参考图搬迁失败: %s" % exc)
 
     # ---------- 存储 ----------
 

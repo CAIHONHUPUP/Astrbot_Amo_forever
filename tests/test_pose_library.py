@@ -136,6 +136,28 @@ class RandomAndRefTests(unittest.TestCase):
         self.assertTrue(library.has_ref(pose))
         self.assertEqual(library.ref_for(pose), path)
 
+    def test_ref_dir_is_under_outfit_refs(self):
+        library = make_library()
+        pose = library.snapshot()["poses"][0]
+        path = library.ref_path(pose)
+        self.assertIn(os.path.join("outfit_refs", "姿势库"), path)
+        self.assertTrue(path.endswith(pose["name"] + ".png"))
+
+    def test_legacy_pose_refs_are_migrated(self):
+        root = tempfile.mkdtemp(prefix="amo-poses-")
+        os.makedirs(os.path.dirname(FakeDB(root).path), exist_ok=True)
+        plugin = FakePlugin(root)
+        legacy = os.path.join(root, "plugin_data", "Astrbot_Amo_forever", "pose_refs")
+        os.makedirs(legacy, exist_ok=True)
+        with open(os.path.join(legacy, "托腮.png"), "wb") as handle:
+            handle.write(b"\x89PNG\r\n\x1a\n")
+        library = PoseLibrary(plugin)
+        target = os.path.join(library.ref_dir, "托腮.png")
+        self.assertTrue(os.path.isfile(target))
+        self.assertFalse(os.path.isfile(os.path.join(legacy, "托腮.png")))
+        pose = [p for p in library.snapshot()["poses"] if p["name"] == "托腮"][0]
+        self.assertTrue(pose["has_ref"])
+
     def test_pending_poses(self):
         library = make_library()
         self.assertEqual(len(pending_poses(library)), library.snapshot()["count"])
