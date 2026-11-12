@@ -282,6 +282,16 @@ SCENIC_BANK = [
     "排队买票", "拍照", "慢慢逛", "找地方坐一会儿", "买奶茶",
     "看路边的小摊", "跟着人群往前走",
 ]
+#: 休息日偶尔去玩水（不是每周都去）：游泳馆 / 海边 / 水上乐园 随机挑一个
+SWIM_PLACES = (
+    ("游泳馆", "在泳池里游了几圈", "水有点凉，游一会儿就上岸歇"),
+    ("海边", "在海边踩浪、玩水", "浪打过来，裤子湿了一截"),
+    ("水上乐园", "在水上乐园排队玩滑道", "排队排了好久，滑下来那一下特别爽"),
+)
+SWIM_DETAILS = (
+    "水有点凉，下去那一下打了个激灵", "游了几圈就喘，趴在池边歇",
+    "被晒得有点晕，赶紧补防晒", "人比想象中多，等了好久才轮到",
+)
 ROAD_BANK = [
     "开车去景区", "堵在路上", "找停车位", "导航绕路", "等红绿灯",
 ]
@@ -559,6 +569,11 @@ class ScheduleEngine:
         good_weather = self._good_weather(weather)
         event = self._pick_event(day, meta, weather, health, period, seed, world)
         scenic = self._pick_scenic(day, meta, weather, health, period, event, good_weather, seed, city)
+        swim = None
+        if not scenic:
+            # 一天只安排一件事：去景区就不去玩水，反之亦然
+            swim = self._pick_swim(day, meta, weather, health, period, event,
+                                   good_weather, seed, city)
 
         mood_now = {key: clamp(mood.get(key, MOOD_BASE[key])) for key in MOOD_KEYS}
         return {
@@ -583,6 +598,7 @@ class ScheduleEngine:
             "good_weather": good_weather,
             "event": event,
             "scenic": scenic,
+            "swim": swim,
             "profile": profile,
             "location": (event.get("where") if event.get("kind") == "business_trip" else city),
             "seed": seed,
@@ -868,6 +884,118 @@ class ScheduleEngine:
     # ------------------------------------------------------------------
     # 2. 主干骨架
     # ------------------------------------------------------------------
+    def _pick_swim(self, day, meta, weather, health, period, event, good_weather, seed, city):
+        """休息日偶尔去玩水：游泳馆 / 海边 / 水上乐园，随机一个。
+
+        规则（用户 2026-11-12）：
+        - 不是每周都去，也不是每个休息日都去；一周最多一次；
+        - 冬天（温度低于 ``schedule_swim_min_temp``）或天气不好不去；
+        - 这一周已经去过一次，就整周不再安排（旅游时例外）；
+        - 三个地方随机挑，去了哪个就记在 kv 里，同一周不重复。
+        """
+        if not (meta or {}).get("rest"):
+            return None
+        if (event or {}).get("kind") in ("overtime", "business_trip"):
+            return None
+        if (health or {}).get("sick") or int((period or {}).get("pain") or 0) >= 8:
+            return None
+        try:
+            temp = float((weather or {}).get("temp"))
+        except (TypeError, ValueError):
+            temp = 0.0
+        min_temp = 22.0
+        try:
+            min_temp = self.p.cfg_float("schedule_swim_min_temp", 22.0)
+        except Exception as _amo_exc:
+            _note_swallowed("schedule_engine.ScheduleEngine._pick_swim.temp", _amo_exc)
+        if not good_weather or temp < float(min_temp):
+            return None
+        try:
+            iso = date.fromisoformat(str(day)).isocalendar()
+            weekday = date.fromisoformat(str(day)).weekday()
+        except Exception as _amo_exc:
+            _note_swallowed("schedule_engine.ScheduleEngine._pick_swim.day", _amo_exc)
+            return None
+        week_key = "swim_week:%04d-%02d" % (iso[0], iso[1])
+        used = ""
+        try:
+            used = str(self.p.db.kv_get(week_key, "") or "")
+        except Exception as _amo_exc:
+            _note_swallowed("schedule_engine.ScheduleEngine._pick_swim.kv", _amo_exc)
+            used = ""
+        used_kind, _, used_day = used.partition("|")
+        traveling = int((meta or {}).get("holiday_days") or 0) >= 4
+        if used_kind and traveling and used_day != str(day):
+            # 旅游期间不受「这周已经去过」的限制
+            used_kind, used_day = "", ""
+        if used_day and used_day != str(day) and not traveling:
+            return None
+        rng = random.Random("amo-swim:" + week_key)
+        preferred = rng.choice([5, 6])
+        if used_day != str(day) and not traveling and weekday != preferred:
+            return None
+        if not used_kind:
+            chance = 0.32
+            try:
+                chance = clamp(self.p.cfg_float("schedule_swim_prob", 0.32), 0.0, 1.0)
+            except Exception as _amo_exc:
+                _note_swallowed("schedule_engine.ScheduleEngine._pick_swim.prob", _amo_exc)
+            if rng.random() > chance:
+                return None
+            place, activity, detail = SWIM_PLACES[rng.randrange(len(SWIM_PLACES))]
+        else:
+            match = [item for item in SWIM_PLACES if item[0] == used_kind]
+            place, activity, detail = match[0] if match else SWIM_PLACES[0]
+        where = ("%s·%s" % (str(city or "").strip(), place)).strip("·")
+        try:
+            if not used_kind:
+                self.p.db.kv_set(week_key, place + "|" + str(day))
+        except Exception as _amo_exc:
+            _note_swallowed("schedule_engine.ScheduleEngine._pick_swim.save", _amo_exc)
+        return {
+            "place": where,
+            "spot": place,
+            "activity": activity,
+            "detail": detail,
+            "zone": "scenic",
+            "why": "天气挺热，想去玩水",
+        }
+
+    def _swim_segments(self, ctx):
+        """去游泳/海边/水上乐园那天：上午出门，中午吃个饭，下午接着玩，傍晚回家。"""
+        ctx = dict(ctx or {})
+        home = ctx.get("home") or "家"
+        swim = ctx.get("swim") or {}
+        where = str(swim.get("place") or "")
+        place_name = str(swim.get("spot") or "泳池")
+        return [
+            self._seg("00:00", "07:00", "睡觉", home, "home", "sleep"),
+            self._seg("07:00", "08:00", "起床洗漱、吃早餐", home, "home", "life"),
+            self._seg("08:00", "09:00", "收拾泳衣和毛巾，装进包里", home, "home", "life",
+                      detail="还带了防晒和换洗衣服"),
+            self._seg("09:00", "10:00", "出门去" + where, "路上", "road", "commute",
+                      transit="subway", vehicle="地铁"),
+            self._seg("10:00", "12:00", str(swim.get("activity") or ("在%s玩水" % place_name)),
+                      where, "scenic", "play", spot=place_name,
+                      detail=str(swim.get("detail") or "")),
+            self._seg("12:00", "13:00", "上岸冲一下，在附近吃午饭", where + "·附近小馆子",
+                      "restaurant", "meal"),
+            self._seg("13:00", "15:00", "下午接着在%s玩" % place_name, where, "scenic", "play",
+                      spot=place_name, detail=self._choose(list(SWIM_DETAILS),
+                                                           random.Random(place_name), "")),
+            self._seg("15:00", "16:00", "冲个澡换好衣服，头发还没干", where, "scenic", "rest",
+                      spot=place_name, detail="头发湿着，懒得吹"),
+            self._seg("16:00", "17:00", "坐车回家，路上有点犯困", "路上", "road", "commute",
+                      transit="subway", vehicle="地铁"),
+            self._seg("17:00", "18:00", "到家把泳衣洗了晾上", home, "home", "life",
+                      detail="晒了一下午，脸有点红"),
+            self._seg("18:00", "19:00", "吃晚饭", home, "home", "meal"),
+            self._seg("19:00", "20:00", "窝在沙发上刷手机，腿有点酸", home, "home", "rest"),
+            self._seg("20:00", "22:00", "洗完澡敷个面膜", home, "home", "rest"),
+            self._seg("22:00", "23:00", "吹头发、护肤", home, "home", "life"),
+            self._seg("23:00", "24:00", "睡觉", home, "home", "sleep"),
+        ]
+
     def _outing_segments(self, ctx):
         """外出日骨架：早上出门，白天在外面玩，傍晚回家。
 
@@ -907,6 +1035,9 @@ class ScheduleEngine:
         good_weather = bool(ctx.get("good_weather", True))
         if event_kind == "business_trip" and not meta.get("rest"):
             segments = self._business_trip_segments(ctx)
+        elif ctx.get("swim") and not sick and good_weather:
+            # 去游泳/海边/水上乐园：整天按玩水安排，衣柜会自动换泳装
+            segments = self._swim_segments(ctx)
         elif day_id == "outing":
             # 生病、天气不好就别硬出门，按宅家过
             segments = self._outing_segments(ctx) if (good_weather and not sick) else self._rest_segments(ctx)
@@ -1369,6 +1500,10 @@ class ScheduleEngine:
             return self._choose(bank, rng, "")
 
         if zone == "scenic":
+            text = str(item.get("place") or "") + " " + activity
+            if any(word in text for word in ("游泳", "泳池", "海边", "沙滩", "水上乐园",
+                                             "水世界", "玩水")):
+                return pick(list(SWIM_DETAILS))
             return pick([
                 "看到猴子抢游客的水", "排队买奶茶排了二十分钟", "停车位找了半小时",
                 "拍照拍到手机快没电", "被路边小吃香得走不动",

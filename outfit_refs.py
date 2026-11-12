@@ -30,6 +30,7 @@ SCOPE_FOLDERS = (
     ("day", "白天搭配"),
     ("night", "晚上搭配"),
     ("hotel", "酒店睡衣"),
+    ("swim", "泳装"),
 )
 CATEGORY_FOLDERS = {
     "coat": "上衣（外套）",
@@ -62,6 +63,8 @@ def safe_name(name):
 
 def scope_of(item):
     item = item if isinstance(item, dict) else {}
+    if item.get("swim"):
+        return "swim"
     if item.get("hotel"):
         return "hotel"
     if item.get("sleep"):

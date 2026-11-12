@@ -565,13 +565,27 @@
       <section class="card" style="margin-top:14px">
         <div class="row between">
           <div>
+            <div class="label">今天泳装（游泳 / 海边 / 水上乐园）</div>
+            <div class="sub">只有去游泳馆、海边、水上乐园才会穿；只穿上衣（泳衣）和裤子（泳裤），没有鞋子</div>
+          </div>
+        </div>
+        <div id="wardrobeSwimBox" class="profile-list"><div class="sub">加载中…</div></div>
+        <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap;align-items:center">
+          <span class="sub" id="wardrobeSwimMeta"></span>
+        </div>
+      </section>
+
+      <section class="card" style="margin-top:14px">
+        <div class="row between">
+          <div>
             <div class="label">搭配编辑</div>
-            <div class="sub" id="wardrobeEditorHint">先选白天还是晚上，再展开上衣 / 裤子 / 鞋子</div>
+            <div class="sub" id="wardrobeEditorHint">先选白天、晚上、酒店睡衣还是泳衣，再展开上衣 / 裤子 / 鞋子</div>
           </div>
           <div class="row" style="gap:8px;flex-wrap:wrap">
             <button class="wardrobe-add-btn" id="wardrobeModeDay" type="button">白天搭配</button>
             <button class="wardrobe-add-btn" id="wardrobeModeNight" type="button">晚上搭配</button>
             <button class="wardrobe-add-btn" id="wardrobeModeHotel" type="button">酒店睡衣</button>
+            <button class="wardrobe-add-btn" id="wardrobeModeSwim" type="button">泳衣</button>
             <button class="ghost" id="wardrobeEditorClose" type="button" hidden>关闭</button>
           </div>
         </div>
@@ -691,9 +705,10 @@
       <section class="card" style="margin-top:14px">
         <div class="sub" style="line-height:1.7;font-size:14px">
           每天从搭配模板里随机一套（按天气筛掉太厚或太薄的），当天所有照片、自拍都锁这一套；<br>
+          去游泳馆 / 海边 / 水上乐园时自动换泳装（只有上衣和泳裤，不穿鞋）；<br>
           他送的衣服（衬衫、外套、裤子、鞋）会自动进到对应分类，并和现有的衣服配成新模板；<br>
           衣服参考图保存文件夹：<code>D:\dafeiyu\astrbot\data\plugin_data\Astrbot_Amo_forever\outfit_refs\</code><br>
-          白天搭配 / 晚上搭配 / 酒店睡衣 三个文件夹，里面再分上衣（外套）/ 裤子 / 裙子 / 鞋子，按衣服名字保存（如「米色雪纺衬衫.png」），备份会一起带走
+          白天搭配 / 晚上搭配 / 酒店睡衣 / 泳装 四个文件夹，里面再分上衣（外套）/ 裤子 / 裙子 / 鞋子，按衣服名字保存（如「米色雪纺衬衫.png」），备份会一起带走
         </div>
       </section>
     </div>
@@ -2098,6 +2113,7 @@
 
     let wardrobeData = {};
     let wardrobeSel = { top: "", bottom: "", shoes: "" };
+    let wardrobeSwimSel = { top: "", bottom: "" };
     let wardrobeDirty = false;
     let wardrobeMode = "";
 
@@ -2112,11 +2128,12 @@
     }
 
     function wardrobeChip(item, category) {
-      const sel = wardrobeSel;
-      const selected = wardrobeMode === "day" && !!(item.id && item.id === sel[category]);
+      const selectable = wardrobeMode === "day" || wardrobeMode === "swim";
+      const sel = wardrobeMode === "swim" ? wardrobeSwimSel : wardrobeSel;
+      const selected = selectable && !!(item.id && item.id === sel[category]);
       const chip = document.createElement("span");
       chip.className = "wardrobe-chip" + (item.source === "gift" ? " gift" : "") + (selected ? " selected" : "");
-      chip.title = wardrobeMode !== "day"
+      chip.title = !selectable
         ? "点 × 删除"
         : (selected ? "已选中（点别的可换）" : (item.source === "gift" ? "他送的，点一下选它" : "点一下选它"));
       const name = document.createElement("span");
@@ -2138,7 +2155,15 @@
     }
 
     function selectWardrobeItem(item, category) {
-      if (!item || !item.id || wardrobeMode !== "day") return;
+      if (!item || !item.id) return;
+      if (wardrobeMode === "swim") {
+        if (category !== "top" && category !== "bottom") return;
+        wardrobeSwimSel[category] = item.id;
+        wardrobeDirty = true;
+        renderWardrobe(wardrobeData);
+        return;
+      }
+      if (wardrobeMode !== "day") return;
       wardrobeSel[category] = item.id;
       if (category === "skirt" && /连衣裙|长裙|连身裙|睡裙/.test(item.name || "")) {
         wardrobeSel.top = "";
@@ -2163,14 +2188,22 @@
       const categories = Array.isArray(data.categories) ? data.categories : [];
       const sleepCategories = Array.isArray(data.sleep_categories) ? data.sleep_categories : [];
       const hotelCategories = Array.isArray(data.hotel_categories) ? data.hotel_categories : [];
+      const swimCategories = Array.isArray(data.swim_categories) ? data.swim_categories : [];
+      if (!wardrobeDirty) {
+        const swimIds = data.swim && Array.isArray(data.swim.items) ? data.swim.items : [];
+        wardrobeSwimSel = { top: swimIds[1] || "", bottom: swimIds[2] || "" };
+      }
       const exists = {};
-      categories.concat(sleepCategories).concat(hotelCategories).forEach((cat) => {
+      categories.concat(sleepCategories).concat(hotelCategories).concat(swimCategories).forEach((cat) => {
         const set = exists[cat.key] || new Set();
         (cat.items || []).forEach((item) => set.add(item.id));
         exists[cat.key] = set;
       });
       ["coat", "top", "bottom", "skirt", "shoes"].forEach((key) => {
         if (wardrobeSel[key] && exists[key] && !exists[key].has(wardrobeSel[key])) wardrobeSel[key] = "";
+        if (wardrobeSwimSel[key] && exists[key] && !exists[key].has(wardrobeSwimSel[key])) {
+          wardrobeSwimSel[key] = "";
+        }
       });
       const names = wardrobeNames(wardrobeSel);
       const todayBox = document.getElementById("wardrobeToday");
@@ -2202,6 +2235,7 @@
               : (daySeed ? "（手工）" : ""))
             + " · 白天已锁定";
           if (data.current && data.current.sleep) meta.textContent += " · 现在在家已换睡衣";
+          if (data.current && data.current.swim) meta.textContent += " · 现在在玩水，已换泳装";
         }
       }
       const nightBox = document.getElementById("wardrobeNight");
@@ -2234,6 +2268,26 @@
           nightMeta.textContent += " · 想换就跟她说「睡衣不好看」";
         }
       }
+      const swimBox = document.getElementById("wardrobeSwimBox");
+      const swim = data.swim && typeof data.swim === "object" ? data.swim : {};
+      if (swimBox) {
+        swimBox.innerHTML = "";
+        if (data.enabled === false) {
+          swimBox.appendChild(wardrobeRow("泳装还没加载", ""));
+        } else if (swim.pending) {
+          swimBox.appendChild(wardrobeRow("泳装", "点「泳衣」加一件"));
+        } else {
+          swimBox.appendChild(wardrobeRow("上衣（泳衣）", swim.top || "—"));
+          swimBox.appendChild(wardrobeRow("裤子（泳裤）", swim.bottom || "—"));
+          swimBox.appendChild(wardrobeRow("鞋子", "—"));
+        }
+      }
+      const swimMeta = document.getElementById("wardrobeSwimMeta");
+      if (swimMeta) {
+        swimMeta.textContent = "泳装 " + (Number(data.swim_outfit_count) || 0) + " 套"
+          + " · 只有去游泳/海边/水上乐园才穿"
+          + (data.at_swim ? " · 现在正在玩水，已经换上了" : "");
+      }
       const editor = document.getElementById("wardrobeEditor");
       const closeButton = document.getElementById("wardrobeEditorClose");
       const hint = document.getElementById("wardrobeEditorHint");
@@ -2244,25 +2298,48 @@
           hint.textContent = "酒店睡衣：只在出门旅游住店时穿，可添加/删除（" + (Number(data.hotel_seed_count) || 0) + " 套内置）";
         } else if (wardrobeMode === "night") {
           hint.textContent = "晚上搭配（睡衣）：点衣服选中，点 × 删除";
+        } else if (wardrobeMode === "swim") {
+          hint.textContent = "泳衣：只有上衣（泳衣）和裤子（泳裤），没有鞋子；去游泳/海边/水上乐园会自动换上";
         } else if (wardrobeMode === "day") {
           hint.textContent = "白天搭配：点衣服选中，点 × 删除";
         } else {
-          hint.textContent = "先选白天、晚上还是酒店睡衣，再展开上衣 / 裤子 / 裙子 / 鞋子";
+          hint.textContent = "先选白天、晚上、酒店睡衣还是泳衣，再展开上衣 / 裤子 / 鞋子";
         }
       }
+      // 泳装模式只留上衣和裤子，鞋/裙子/外套都不显示
+      const swimMode = wardrobeMode === "swim";
+      WARDROBE_CATS.forEach((cat) => {
+        const list = document.getElementById("wardrobeList-" + cat.key);
+        const card = list ? list.closest("section") : null;
+        if (card) card.hidden = swimMode && cat.key !== "top" && cat.key !== "bottom";
+      });
+      const topCard = document.getElementById("wardrobeList-top");
+      if (topCard && topCard.closest("section")) {
+        const label = topCard.closest("section").querySelector(".label");
+        if (label) label.textContent = swimMode ? "上衣（泳衣）" : "上衣（外套）";
+      }
+      const bottomCard = document.getElementById("wardrobeList-bottom");
+      if (bottomCard && bottomCard.closest("section")) {
+        const label = bottomCard.closest("section").querySelector(".label");
+        if (label) label.textContent = swimMode ? "裤子（泳裤）" : "裤子";
+      }
       if (!wardrobeMode) return;
-      const placeholders = wardrobeMode === "hotel"
-        ? { top: "例如：白色酒店浴袍", bottom: "例如：酒店睡裤", shoes: "例如：一次性棉拖鞋" }
-        : (wardrobeMode === "night"
-          ? { top: "例如：真丝睡衣上衣", bottom: "例如：棉质睡裤", shoes: "例如：毛绒拖鞋" }
-          : { top: "例如：白色雪纺衬衫", bottom: "例如：黑色包臀裙", shoes: "例如：淡蓝色运动鞋" });
+      const placeholders = swimMode
+        ? { top: "例如：黑色比基尼上衣", bottom: "例如：黑色高腰泳裤" }
+        : (wardrobeMode === "hotel"
+          ? { top: "例如：白色酒店浴袍", bottom: "例如：酒店睡裤", shoes: "例如：一次性棉拖鞋" }
+          : (wardrobeMode === "night"
+            ? { top: "例如：真丝睡衣上衣", bottom: "例如：棉质睡裤", shoes: "例如：毛绒拖鞋" }
+            : { top: "例如：白色雪纺衬衫", bottom: "例如：黑色包臀裙", shoes: "例如：淡蓝色运动鞋" }));
       WARDROBE_CATS.forEach((cat) => {
         const input = document.getElementById("wardrobeInput-" + cat.key);
         if (input) input.placeholder = placeholders[cat.key] || "";
       });
-      const source = wardrobeMode === "hotel"
-        ? hotelCategories
-        : (wardrobeMode === "night" ? sleepCategories : categories);
+      const source = swimMode
+        ? swimCategories
+        : (wardrobeMode === "hotel"
+          ? hotelCategories
+          : (wardrobeMode === "night" ? sleepCategories : categories));
       WARDROBE_CATS.forEach((cat) => {
         const box = document.getElementById("wardrobeList-" + cat.key);
         if (!box) return;
@@ -2487,9 +2564,10 @@
       }
       const cat = WARDROBE_CATS.find((item) => item.key === category) || { label: "衣服" };
       const hotel = wardrobeMode === "hotel";
-      const sleep = wardrobeMode === "night" || hotel;
+      const swim = wardrobeMode === "swim";
+      const sleep = (wardrobeMode === "night" || hotel) && !swim;
       try {
-        const res = await call("wardrobe/add", { category: category, name: name, sleep: sleep, hotel: hotel });
+        const res = await call("wardrobe/add", { category: category, name: name, sleep: sleep, hotel: hotel, swim: swim });
         toast((res && res.msg) || ("已添加" + cat.label));
         closeWardrobeForm(category);
         await loadWardrobe();
@@ -2537,6 +2615,29 @@
     }
 
     async function saveWardrobeToday() {
+      if (wardrobeMode === "swim") {
+        if (!wardrobeSwimSel.top) {
+          toast("先选一件泳衣上衣", true);
+          return;
+        }
+        if (!wardrobeSwimSel.bottom) {
+          toast("先选一条泳裤", true);
+          return;
+        }
+        try {
+          const res = await call("wardrobe/today", {
+            swim: true,
+            top: wardrobeSwimSel.top,
+            bottom: wardrobeSwimSel.bottom,
+          });
+          toast((res && res.msg) || "泳装已保存");
+          wardrobeDirty = false;
+          await loadWardrobe();
+        } catch (error) {
+          toast("保存泳装失败：" + (error && error.message ? error.message : error), true);
+        }
+        return;
+      }
       const names = wardrobeNames(wardrobeSel);
       const skirtIsDress = /连衣裙|长裙|连身裙|睡裙/.test(names.skirt || "");
       if (!skirtIsDress) {
@@ -3249,6 +3350,8 @@
     if (wardrobeModeNightButton) wardrobeModeNightButton.addEventListener("click", () => openWardrobeMode("night"));
     const wardrobeModeHotelButton = document.getElementById("wardrobeModeHotel");
     if (wardrobeModeHotelButton) wardrobeModeHotelButton.addEventListener("click", () => openWardrobeMode("hotel"));
+    const wardrobeModeSwimButton = document.getElementById("wardrobeModeSwim");
+    if (wardrobeModeSwimButton) wardrobeModeSwimButton.addEventListener("click", () => openWardrobeMode("swim"));
     const wardrobeEditorCloseButton = document.getElementById("wardrobeEditorClose");
     if (wardrobeEditorCloseButton) wardrobeEditorCloseButton.addEventListener("click", () => closeWardrobeEditor());
     const poseOpenButton = document.getElementById("poseOpen");

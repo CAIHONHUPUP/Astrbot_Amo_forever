@@ -27,6 +27,8 @@ except ImportError:  # 直接按文件加载时
 
 #: 日程/活动里出现这些词就算「在旅游」
 TRAVEL_WORDS = ("旅游", "旅行", "景区", "景点", "古镇", "海边", "爬山", "公园", "游乐园")
+#: 日程/活动里出现这些词就算「在玩水」（衣柜会换泳装，照片背景是泳池/海边）
+SWIM_WORDS = ("游泳", "泳池", "泳馆", "海边", "沙滩", "水上乐园", "水世界", "海里", "玩水")
 #: 出现这些词就算「在逛街」
 SHOPPING_WORDS = ("逛街", "商场", "专柜", "步行街")
 #: 工作日早上要发「出门穿搭」的类别
@@ -135,6 +137,20 @@ def is_shopping(activity):
     return zone_of(activity) == "mall" or any(word in scene_blob(activity) for word in SHOPPING_WORDS)
 
 
+def is_swim(activity):
+    """在游泳馆/海边/水上乐园玩水（这时候穿的是泳装，背景也得对）。"""
+    return any(word in scene_blob(activity) for word in SWIM_WORDS)
+
+
+def _swim_scene(activity):
+    text = scene_blob(_activity_dict(activity))
+    if any(word in text for word in ("海边", "沙滩", "海浪", "海里")):
+        return "海边，沙滩、海浪和远处的海面，旁边放着毛巾和防晒"
+    if any(word in text for word in ("水上乐园", "水世界")):
+        return "水上乐园，彩色的滑道、水池和玩水的人"
+    return "游泳馆的泳池边，蓝色水面、泳道和池边的躺椅"
+
+
 def matches_kind(kind, activity):
     """当前日程配不配得上这个生图类别（不配时用手动类别自己的固定场景）。"""
     kind = str(kind or "")
@@ -202,6 +218,10 @@ def scene_for(activity, kind=""):
     zone = zone_of(activity)
     place = place_of(activity)
     spot = str(activity.get("spot") or "").strip()
+
+    if is_swim(activity):
+        # 她去玩水：背景是泳池/海边/水上乐园，不能画成普通街景或客厅
+        return _swim_scene(activity)
 
     if not zone:
         specific = spot or place

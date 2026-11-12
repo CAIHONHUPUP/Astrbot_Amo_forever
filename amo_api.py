@@ -1052,6 +1052,7 @@ class ApiMixin(_MixinBase):
             data.get("name", ""),
             sleep=bool(data.get("sleep")),
             hotel=bool(data.get("hotel")),
+            swim=bool(data.get("swim")),
         )
         if not result.get("ok"):
             return {"code": 1, "msg": result.get("msg") or "添加失败"}
@@ -1137,6 +1138,15 @@ class ApiMixin(_MixinBase):
         wardrobe = getattr(self, "wardrobe", None)
         if wardrobe is None:
             return {"code": 1, "msg": "穿搭衣柜没加载"}
+        if bool(data.get("swim")):
+            # 泳衣模式：只保存上衣（泳衣）+ 裤子（泳裤），没有鞋
+            result = wardrobe.set_swim(
+                top=str(data.get("top") or ""),
+                bottom=str(data.get("bottom") or ""),
+            )
+            if not result.get("ok"):
+                return {"code": 1, "msg": result.get("msg") or "保存失败"}
+            return {"code": 0, "msg": "泳装已保存", "data": wardrobe.snapshot()}
         try:
             result = wardrobe.set_today(
                 coat=data.get("coat", ""),
