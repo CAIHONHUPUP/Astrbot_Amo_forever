@@ -41,6 +41,8 @@ READ_HANDLERS = (
     "api_schedule",
     "api_gift",
     "api_wardrobe",
+    "api_poses",
+    "api_poses_refs_status",
     "api_photo_prompt_saved",
     "api_photo_template_dir",
     "api_draw_status",
@@ -146,6 +148,13 @@ class ApiReadTests(unittest.TestCase):
         self.assertTrue(data.get("enabled"))
         self.assertIn("categories", data)
         self.assertIn("outfit_count", data)
+
+    def test_poses_panel_shape(self):
+        data = self._call("api_poses")["data"]
+        self.assertGreaterEqual(data.get("count"), 20)
+        names = [pose["name"] for pose in data.get("poses") or []]
+        self.assertIn("托腮", names)
+        self.assertIn("with_ref", data)
 
     def test_schedule_returns_hourly_items(self):
         data = self._call("api_schedule")["data"]

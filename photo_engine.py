@@ -120,6 +120,15 @@ except ImportError:  # 直接按文件加载时
         scene_for,
     )
 
+try:  # 自拍姿势库：随机挑一个姿势进提示词
+    from .pose_library import pose_line
+except ImportError:  # 直接按文件加载时
+    try:
+        from pose_library import pose_line
+    except Exception:  # pragma: no cover
+        def pose_line(pose):
+            return ""
+
 # 生图可能卡住/返回超大图：都设上限，别把事件循环和数据库拖死
 GENERATE_TIMEOUT_SECONDS = 180
 _MAX_IMAGE_BYTES = 16 * 1024 * 1024
@@ -539,11 +548,42 @@ class PhotoEngine:
         outfit_line = "她今天穿的是%s，画面边缘露出的手或袖口必须和这套一致" % self.outfit_today()
         return (head + "，" + light + "，" + outfit_line + "，" + SCENERY_ONLY + "，" + VIEW_POV).strip("，")
 
-    def _selfie_prompt_for(self, kind, scene, activity):
+    def _pick_pose(self):
+        """从姿势库随机挑一个自拍姿势；没有姿势库/条目就返回 None。"""
+        library = getattr(getattr(self, "plugin", None), "pose", None)
+        if library is None:
+            return None
+        try:
+            return library.random_pose()
+        except Exception as _amo_exc:
+            _note_swallowed("photo_engine.PhotoEngine._pick_pose", _amo_exc)
+            return None
+
+    def _pose_ref(self, pose):
+        """姿势参考图路径（面板里生成过才有；没有就空串，不在这里现生成）。"""
+        library = getattr(getattr(self, "plugin", None), "pose", None)
+        if library is None or not pose:
+            return ""
+        try:
+            return library.ref_for(pose)
+        except Exception as _amo_exc:
+            _note_swallowed("photo_engine.PhotoEngine._pose_ref", _amo_exc)
+            return ""
+
+    def _selfie_prompt_for(self, kind, scene, activity, pose=None):
         activity = dict(activity or {})
         # 地点跟着日程走：在家=家里的客厅/卧室，逛街=商场，旅游=景区（带景点名）
         where = str(scene or "").strip() or scene_for(activity, kind)
         act = str(activity.get("activity") or "")
+        # 姿势：优先从姿势库随机挑一个，避免每张都是「随手拍」
+        if pose is None:
+            picker = getattr(self, "_pick_pose", None)
+            if callable(picker):
+                try:
+                    pose = picker()
+                except Exception:
+                    pose = None
+        pose_text = pose_line(pose) if pose else ""
         # 视角：她本人出镜 → 自拍视角（前置摄像头、手臂伸出、人物占主体）
         light = self._time_light() if hasattr(self, "_time_light") else "自然光"
         # 自拍最容易出的问题是两只手都入镜、手腕错位；动作里要用手时也让另一只手自然放好
@@ -551,10 +591,11 @@ class PhotoEngine:
                                         "抓", "捏", "擦", "洗", "穿", "脱", "整理", "拨", "翻",
                                         "打字", "梳")):
             act = "刚换好衣服，随手拍"
+        motion = pose_text or act or "随手拍"
         hand_line = "只有一只手举手机，另一只手自然垂下、不要出现在镜头前，不要多手或手腕错位"
         where_line = "在%s，背景要能看出这个地方、不要换成别的场景" % (where or "家附近")
         return "自拍，穿着%s，衣服就这一套、不要换成别的，%s，%s，%s，%s，生活感，%s" % (
-            self.outfit_today(), where_line, act or "随手拍", hand_line, light, VIEW_SELFIE
+            self.outfit_today(), where_line, motion, hand_line, light, VIEW_SELFIE
         )
 
     def _find_omni(self):
@@ -618,8 +659,9 @@ class PhotoEngine:
         ratio = self._prob("photo_selfie_ratio", 50)
         return random.random() * 100 < ratio
 
-    async def _generate(self, omni, prompt, selfie):
+    async def _generate(self, omni, prompt, selfie, pose=None):
         refs = []
+        pose_ref = ""
         if selfie:
             try:
                 outfit = {}
@@ -633,19 +675,26 @@ class PhotoEngine:
                     names = [part.strip() for part in text.split("，") if part.strip()]
                 if names:
                     from .outfit_refs import ensure_many
-                    refs = await ensure_many(self.plugin, names, limit=5)
+                    refs = await ensure_many(self.plugin, names, limit=4)
             except Exception as exc:
                 logger.debug("[amo] 服装参考图准备失败: %s" % exc)
                 refs = []
+            # 姿势参考图：面板里生成过的才有，放在服装参考图前面（它是「动作」参考）
+            try:
+                pose_ref = self._pose_ref(pose)
+            except Exception as exc:
+                logger.debug("[amo] 姿势参考图准备失败: %s" % exc)
+                pose_ref = ""
+            if pose_ref:
+                refs = [pose_ref] + list(refs)
         args = {"prompt": prompt, "count": 1, "record_usage": True}
         if refs:
             args["refs"] = refs
             args["allow_local_refs"] = True
-            args["prompt"] = (
-                prompt
-                + "\n（服装参考：参考图最后几张是今天这套衣服的平铺图，"
-                  "衣服颜色和款式必须和它一致，不能改；长相和发型仍按人设三视图。）"
-            )
+            hint = "（服装参考：参考图最后几张是今天这套衣服的平铺图，衣服颜色和款式必须和它一致，不能改；长相和发型仍按人设三视图。"
+            if pose_ref:
+                hint += "参考图第一张是姿势参考，只学动作和手的位置，不要照搬那张的脸和衣服。"
+            args["prompt"] = prompt + "\n" + hint + "）"
         if selfie:
             args["mode"] = "selfie"
         try:
@@ -691,12 +740,15 @@ class PhotoEngine:
         selfie = self._pick_selfie(kind)
         if selfie and not self._selfie_ready(omni):
             selfie = False
-        prompt = self._selfie_prompt_for(kind, scene, activity) if selfie else self._prompt_for(kind, scene, activity)
+        # 自拍：这一次用哪个姿势先定下来，提示词和参考图用同一个姿势
+        pose = self._pick_pose() if selfie else None
+        prompt = (self._selfie_prompt_for(kind, scene, activity, pose=pose) if selfie
+                  else self._prompt_for(kind, scene, activity))
         if self._cfg_bool("photo_dry_run", False):
             logger.info("[amo] 照片（dry-run）%s：%s" % ("自拍" if selfie else "街景", prompt))
             return False
         started = time.monotonic()
-        item = await self._generate(omni, prompt, selfie)
+        item = await self._generate(omni, prompt, selfie, pose=pose)
         if not item and selfie:
             # 自拍链路失败（没参考图/节点不支持）→ 退回空镜，别让这一次白掷；
             # 注意不能退回 selfie 提示词，那样会画出一张「没有她的自拍」

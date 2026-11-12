@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 
 
-PLUGIN_VERSION = "6.8.28"
+PLUGIN_VERSION = "6.8.30"
 
 if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
     from .amo_observability import note as _note_swallowed
@@ -186,6 +186,18 @@ else:  # 运行时：包模式优先，按文件直接加载时退回绝对导�
             from wardrobe import Wardrobe
         except Exception:  # 没装/导入失败时不影响主脑启动
             Wardrobe = None  # type: ignore[assignment,misc]
+
+# ---- 自拍姿势库（面板「姿势库」/ 自拍随机挑姿势）----
+if TYPE_CHECKING:  # 只给类型检查看：包内相对导入
+    from .pose_library import PoseLibrary
+else:  # 运行时：包模式优先，按文件直接加载时退回绝对导入
+    try:
+        from .pose_library import PoseLibrary
+    except ImportError:  # 直接按文件加载时
+        try:
+            from pose_library import PoseLibrary
+        except Exception:  # 没装/导入失败时不影响主脑启动
+            PoseLibrary = None  # type: ignore[assignment,misc]
 
 
 
@@ -490,6 +502,8 @@ WRITE_ROUTES = frozenset({
     "/wardrobe/reroll",
     "/wardrobe/today",
     "/wardrobe/night",
+    "/poses/save",
+    "/poses/refs",
     "/diary/write", "/diary/import", "/diary/open",
     "/refresh_status",
 })
@@ -576,6 +590,12 @@ class HumanCorePlugin(MemoryMixin, CommandMixin, ConfigMixin, MessageMixin, Soci
                 self.wardrobe = Wardrobe(self)
             except Exception as exc:
                 logger.warning("[amo] 穿搭衣柜初始化失败: %s" % exc)
+        self.pose = None
+        if PoseLibrary is not None:
+            try:
+                self.pose = PoseLibrary(self)
+            except Exception as exc:
+                logger.warning("[amo] 姿势库初始化失败: %s" % exc)
         self.state = None
         self.llm = LLMService(self)
         self.gate = ReplyGate(self)

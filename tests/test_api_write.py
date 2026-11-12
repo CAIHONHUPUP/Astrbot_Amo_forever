@@ -189,6 +189,26 @@ class ApiWriteTests(unittest.TestCase):
     def test_wardrobe_today_needs_top(self):
         self.assertEqual(self._call("api_wardrobe_today", {}).get("code"), 1)
 
+    # ---------- 姿势库 ----------
+
+    def test_poses_save_replaces_list(self):
+        result = self._call("api_poses_save", {
+            "poses": [{"name": "托腮笑", "note": "单手托腮看镜头"},
+                      {"name": "比个耶", "note": ""}],
+        })
+        self.assertEqual(result.get("code"), 0)
+        snapshot = self._call("api_poses")["data"]
+        self.assertEqual(snapshot["count"], 2)
+        self.assertEqual([pose["name"] for pose in snapshot["poses"]], ["托腮笑", "比个耶"])
+
+    def test_poses_save_rejects_empty(self):
+        self.assertEqual(self._call("api_poses_save", {"poses": []}).get("code"), 1)
+
+    def test_poses_refs_status_idle(self):
+        result = self._call("api_poses_refs_status")
+        self.assertEqual(result.get("code"), 0)
+        self.assertFalse(result["data"].get("running"))
+
     # ---------- 画图调试 ----------
 
     def test_draw_decide_returns_plan(self):

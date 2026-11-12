@@ -249,6 +249,15 @@ class DecideTests(unittest.TestCase):
         self.assertIn("新裙子", plan["prompt"])
         self.assertTrue(plan["prompt"].startswith("自拍"))
 
+    def test_selfie_takes_a_random_pose_from_library(self):
+        engine, plugin = engine_for()
+        plugin.pose = type("PoseLib", (), {
+            "random_pose": lambda self: {"name": "比耶", "note": "脸颊旁边比耶"},
+        })()
+        plan = engine.decide(FakeEvent("发张自拍"), "好呀")
+        self.assertIsNotNone(plan)
+        self.assertIn("姿势：比耶", plan["prompt"])
+
     def test_same_question_cross_platform_uses_shared_last_line(self):
         engine, plugin = engine_for()
         plugin.db.by_uid["u1"] = [{"role": "bot", "content": "今天中午吃了牛肉面"}]

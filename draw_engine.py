@@ -97,6 +97,15 @@ try:  # 场景：日程地点 → 背景（在家=家里、逛街=商场、旅�
 except ImportError:  # 直接按文件加载时
     from photo_scene import has_place_hint, scene_for
 
+try:  # 自拍姿势库：随机挑一个姿势
+    from .pose_library import pose_line
+except ImportError:  # 直接按文件加载时
+    try:
+        from pose_library import pose_line
+    except Exception:  # pragma: no cover
+        def pose_line(pose):
+            return ""
+
 # 生图可能卡死；最多等 3 分钟就放弃这一次
 GENERATE_TIMEOUT_SECONDS = 180
 # data_url 是 base64，超过这个长度就不进 kv（否则数据库会被撑大）
@@ -563,6 +572,17 @@ class DrawEngine:
                 where = scene_for(self._activity())
                 if where:
                     parts.append("在" + where + "，背景要能看出这个地方、不要换成别的场景")
+            # 姿势：只要他没点名动作，就从姿势库随机挑一个
+            if "姿势" not in str(subject or ""):
+                try:
+                    library = getattr(self.plugin, "pose", None)
+                    pose = library.random_pose() if library is not None else None
+                except Exception as _amo_exc:
+                    _note_swallowed("draw_engine.DrawEngine.decide", _amo_exc)
+                    pose = None
+                text = pose_line(pose) if pose else ""
+                if text:
+                    parts.append(text)
             parts.extend(["自然光", view_suffix(True), "生活感"])
             if locked_today:
                 parts.append("人物长相参考模板，衣服锁定为上面的今日穿搭，不要换别的衣服，也不要照搬模板里的衣服")

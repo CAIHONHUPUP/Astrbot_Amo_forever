@@ -54,6 +54,25 @@ except ImportError:  # 直接按文件加载时
         def diary_manual_target(now, requested):
             return requested, ""
 
+try:  # 姿势库的参考图任务（双模式导入：按文件加载时相对 import 会失败）
+    from .pose_library import batch_status as pose_batch_status
+    from .pose_library import ensure_batch as pose_ensure_batch
+    from .pose_library import pending_poses as pose_pending
+except ImportError:  # 直接按文件加载时
+    try:
+        from pose_library import batch_status as pose_batch_status
+        from pose_library import ensure_batch as pose_ensure_batch
+        from pose_library import pending_poses as pose_pending
+    except Exception:  # pragma: no cover
+        def pose_batch_status():
+            return {}
+
+        async def pose_ensure_batch(plugin, poses, force=False):
+            return {"ok": False}
+
+        def pose_pending(library):
+            return []
+
 
 class ApiMixin(_MixinBase):
     def _register_web_apis(self):
@@ -159,6 +178,10 @@ class ApiMixin(_MixinBase):
             ("/wardrobe/night", self.api_wardrobe_night, ["GET", "POST"]),
             ("/wardrobe/refs", self.api_wardrobe_refs, ["GET", "POST"]),
             ("/wardrobe/refs/status", self.api_wardrobe_refs_status, ["GET", "POST"]),
+            ("/poses", self.api_poses, ["GET", "POST"]),
+            ("/poses/save", self.api_poses_save, ["GET", "POST"]),
+            ("/poses/refs", self.api_poses_refs, ["GET", "POST"]),
+            ("/poses/refs/status", self.api_poses_refs_status, ["GET", "POST"]),
             ("/photo/test", self.api_photo_test, ["GET", "POST"]),
             ("/photo/prompt", self.api_photo_prompt, ["GET", "POST"]),
             ("/photo/prompt_saved", self.api_photo_prompt_saved, ["GET", "POST"]),
@@ -1154,6 +1177,64 @@ class ApiMixin(_MixinBase):
         except Exception as exc:
             logger.debug("[amo] 设置睡衣失败: %s" % exc)
             return {"code": 1, "msg": "设置睡衣失败：" + str(exc)}
+
+    # ---------- 自拍姿势库 ----------
+
+    async def api_poses(self):
+        """面板「姿势库」：列出姿势 + 有没有参考图。"""
+        await self._ensure_ready()
+        library = getattr(self, "pose", None)
+        if library is None:
+            return {"code": 1, "msg": "姿势库没加载（看日志）"}
+        return {"code": 0, "data": library.snapshot()}
+
+    async def api_poses_save(self):
+        """保存姿势库：整份替换（面板点「保存」时调用）。"""
+        await self._ensure_ready()
+        library = getattr(self, "pose", None)
+        if library is None:
+            return {"code": 1, "msg": "姿势库没加载（看日志）"}
+        payload = await self._body()
+        items = payload.get("poses") if isinstance(payload, dict) else None
+        if items is None:
+            items = payload if isinstance(payload, list) else []
+        result = library.save_all(items)
+        if not result.get("ok"):
+            return {"code": 1, "msg": result.get("msg") or "保存失败"}
+        return {"code": 0, "msg": result.get("msg") or "已保存", "data": library.snapshot()}
+
+    async def api_poses_refs(self):
+        """逐张生成姿势参考图：已有跳过，只补没有的。"""
+        await self._ensure_ready()
+        library = getattr(self, "pose", None)
+        if library is None:
+            return {"code": 1, "msg": "姿势库没加载（看日志）"}
+        status = pose_batch_status()
+        if status.get("running"):
+            return {"code": 0,
+                    "msg": "正在生成 %d/%d：%s" % (status.get("done", 0), status.get("total", 0),
+                                                status.get("current", "")),
+                    "data": status}
+        poses = library.poses()
+        if not poses:
+            return {"code": 1, "msg": "姿势库里还没有姿势"}
+        pending = pose_pending(library)
+        if not pending:
+            return {"code": 0,
+                    "msg": "全部姿势都有参考图了（%d 个），没有要补的" % len(poses),
+                    "data": {"running": False, "total": len(poses), "done": len(poses)}}
+        asyncio.create_task(pose_ensure_batch(self, pending))
+        return {"code": 0,
+                "msg": "开始补 %d 个姿势的参考图" % len(pending),
+                "data": {"running": True, "total": len(pending), "done": 0}}
+
+    async def api_poses_refs_status(self):
+        await self._ensure_ready()
+        status = pose_batch_status()
+        return {"code": 0, "data": status,
+                "msg": ("生成中 %d/%d：%s" % (status.get("done", 0), status.get("total", 0),
+                                            status.get("current", ""))
+                        if status.get("running") else "空闲")}
 
     def _photo_job_start(self, kind, coro):
         """后台跑生图任务，接口立刻返回 job id，避免桥接请求超时。"""

@@ -263,6 +263,99 @@ class PhotoTests(unittest.TestCase):
         self.assertIn("街", PhotoEngine._scene_for_kind("shopping", "家"))
         self.assertIn("公园", PhotoEngine._scene_for_kind("weekend", "家"))
 
+
+class PhotoSceneFollowTests(unittest.TestCase):
+    """背景跟着日程地点走（2026-11-12）。"""
+
+    def test_daily_prompt_follows_home_scene(self):
+        engine, _ = engine_for()
+        activity = {"activity": "瘫在沙发上刷手机", "place": "他桌面上",
+                    "zone": "home", "category": "rest"}
+        prompt = engine._prompt_for("daily", "", activity)
+        self.assertIn("客厅", prompt)
+        self.assertIn("沙发", prompt)
+        self.assertNotIn("桌面上", prompt)
+
+    def test_travel_prompt_uses_scenic_spot(self):
+        engine, _ = engine_for()
+        activity = {"activity": "逛黔灵山公园", "place": "贵阳·黔灵山公园",
+                    "spot": "黔灵山公园", "zone": "scenic", "category": "play"}
+        prompt = engine._prompt_for("travel", "", activity)
+        self.assertIn("黔灵山公园", prompt)
+        self.assertIn("风景区", prompt)
+
+    def test_selfie_prompt_at_mall_is_mall(self):
+        engine, _ = engine_for()
+        activity = {"activity": "逛街试衣服", "place": "商场", "zone": "mall", "category": "life"}
+        prompt = engine._selfie_prompt_for("daily", "", activity)
+        self.assertIn("商场", prompt)
+        self.assertIn("背景要能看出这个地方", prompt)
+
+    def test_selfie_prompt_at_office_is_desk(self):
+        engine, _ = engine_for()
+        activity = {"activity": "敲周报", "place": "莞城区的写字楼", "zone": "office",
+                    "category": "work"}
+        prompt = engine._selfie_prompt_for("outfit", "", activity)
+        self.assertIn("工位", prompt)
+
+    def test_manual_travel_ignores_home_place(self):
+        scene = PhotoEngine._scene_for_kind("travel", "家", {"zone": "home", "place": "他桌面上"})
+        self.assertIn("风景", scene)
+        self.assertNotIn("客厅", scene)
+
+    def test_manual_kind_keeps_real_scenic_spot(self):
+        scene = PhotoEngine._scene_for_kind(
+            "travel", "贵阳·黔灵山公园",
+            {"zone": "scenic", "place": "贵阳·黔灵山公园", "spot": "黔灵山公园"},
+        )
+        self.assertIn("黔灵山公园", scene)
+
+    def test_share_now_dry_run_prompt_follows_schedule(self):
+        engine, plugin = engine_for({"photo_dry_run": True})
+        plugin.state.activity = {"activity": "窝在沙发上追剧", "place": "他桌面上",
+                                 "zone": "home", "category": "rest"}
+        message = asyncio.run(engine.share_now("daily"))
+        self.assertIn("客厅", message)
+
+    def test_smart_prompt_falls_back_to_schedule_scene(self):
+        engine, plugin = engine_for()
+        plugin.state.activity = {"activity": "瘫在沙发上", "place": "他桌面上",
+                                 "zone": "home", "category": "rest"}
+        text = engine.smart_prompt("拍照给我看看")
+        self.assertIn("客厅", text)
+
+
+class FakePoseLibrary:
+    def random_pose(self):
+        return {"name": "托腮", "note": "单手托腮看镜头"}
+
+    def ref_for(self, pose):
+        return ""
+
+
+class PosePromptTests(unittest.TestCase):
+    def test_selfie_prompt_uses_library_pose(self):
+        engine, plugin = engine_for()
+        plugin.pose = FakePoseLibrary()
+        activity = {"activity": "瘫在沙发上刷手机", "place": "他桌面上",
+                    "zone": "home", "category": "rest"}
+        prompt = engine._selfie_prompt_for("daily", "", activity)
+        self.assertIn("姿势：托腮", prompt)
+        # 用了姿势库就不再沿用日程里的动作（两个动作会打架）
+        self.assertNotIn("瘫在沙发上", prompt)
+
+    def test_selfie_prompt_without_library_keeps_activity(self):
+        engine, plugin = engine_for()
+        plugin.state.activity = {"activity": "在咖啡馆坐着", "place": "咖啡馆",
+                                 "zone": "mall", "category": "life"}
+        prompt = engine._selfie_prompt_for("daily", "", plugin.state.activity)
+        self.assertNotIn("姿势：", prompt)
+        self.assertIn("在咖啡馆坐着", prompt)
+
+    def test_pick_pose_without_library(self):
+        engine, _ = engine_for()
+        self.assertIsNone(engine._pick_pose())
+
     def test_selfie_kind_forces_selfie(self):
         engine, _ = engine_for()
         self.assertTrue(engine._pick_selfie("selfie"))
